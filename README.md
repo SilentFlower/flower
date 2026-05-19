@@ -169,10 +169,10 @@ pi.on("tool_call", async (event) => {
 
 ```
 packages/flower-code-reviewer/skills/
-├── general-review.md       # 通用清单
-├── backend-review.md       # 后端(并发、数据库、安全)
-├── frontend-review.md      # 前端(性能、可访问性)
-└── security-review.md      # 安全专项
+├── general.md       # 通用清单
+├── backend.md       # 后端(并发、数据库、安全)
+├── frontend.md      # 前端(性能、可访问性)
+└── security.md      # 安全专项
 ```
 
 入口脚本根据变更文件类型自动选 skill。
@@ -225,19 +225,29 @@ packages/flower-code-reviewer/skills/
 **必须用钉钉的"流式 stream API"**(企业内部应用 sessionWebhook 机制)。
 
 ```typescript
-agent.on("message_update", (event) => {
-  accumulator += event.delta.text ?? "";
-  throttle(() => pushToDingTalk(sessionWebhook, accumulator));  // 500ms 节流
+const unsubscribe = agent.subscribe(async (event) => {
+  if (event.type === "message_update") {
+    accumulator += extractDelta(event);
+    await pushToSession(sessionWebhook, accumulator, false);   // 500ms 节流
+  } else if (event.type === "agent_end") {
+    await pushToSession(sessionWebhook, accumulator, true);    // final
+  }
 });
 ```
 
-#### c. ARMS 工具集
+#### c. 工具集
+
+ARMS / SLS(来自 `flower-tools-arms`):
 
 - `arms_query_logs` — SLS 日志查询(支持 SLS 查询语句)
 - `arms_query_metrics` — APM 指标(QPS / RT / 错误率 / 慢调用)
 - `arms_list_alerts` — 列出活跃告警
 - `arms_get_trace` — 查 traceId 的调用链
-- `arms_get_topology` — 服务拓扑
+
+通用知识检索(来自 `flower-tools-common`):
+
+- `zentao_search` — 禅道任务 / 需求 / bug 检索
+- `dingtalk_doc_search` — 钉钉知识库 / 文档检索
 
 #### d. 权限边界
 
@@ -277,7 +287,10 @@ pi.registerProvider("company", {
 
 ### packages/flower-tools-common
 
-跨产品通用的工具:Jira、Wiki、内部文档检索等。
+跨产品通用的工具,面向使用禅道 / 钉钉的团队:
+
+- **禅道**(`zentao.ts`)— 项目管理工具(查任务、需求、bug 等)
+- **钉钉文档**(`dingtalk-doc.ts`)— 钉钉知识库 / 文档检索
 
 ### packages/flower-tools-arms
 
@@ -315,22 +328,26 @@ flower/
     ├── flower-tools-gitlab/                 # 共享:GitLab 工具(给 code-reviewer)
     ├── flower-compliance/                   # 共享:合规 + 审计扩展
     │
-    ├── code-reviewer/                   # 产品 1
+    ├── flower-code-reviewer/            # 产品 1
     │   ├── src/
-    │   │   ├── cli.ts                   # 入口
+    │   │   ├── cli.ts                   # CLI 入口
+    │   │   ├── args.ts                  # 命令行参数解析
+    │   │   ├── run.ts                   # 主流程(初始化 pi、跑评审、退出码)
     │   │   ├── extension.ts             # pi 扩展(注册工具/合规)
-    │   │   ├── triggers/                # CI 触发逻辑
-    │   │   └── prompts/                 # 评审 prompt
+    │   │   ├── skill-selector.ts        # 按变更文件类型挑 skill
+    │   │   └── prompts.ts               # 评审 prompt
     │   ├── skills/                      # 评审清单(skill 文件)
     │   └── Dockerfile                   # 容器构建
     │
-    └── ops-bot/                         # 产品 2
+    └── flower-ops-bot/                  # 产品 2
         ├── src/
         │   ├── server.ts                # HTTP 入口
+        │   ├── handler.ts               # webhook 请求处理与回复编排
         │   ├── dingtalk/                # 钉钉 webhook / 签名 / 推送
         │   ├── agent-factory.ts         # Agent 实例构造
         │   ├── session-store.ts         # Redis 会话存储
-        │   └── auth.ts                  # 钉钉用户 → 权限
+        │   ├── tools.ts                 # ARMS 等工具组装与权限拦截
+        │   └── prompts.ts               # 系统 prompt
         └── Dockerfile
 ```
 
