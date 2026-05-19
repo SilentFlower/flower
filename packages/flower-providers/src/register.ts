@@ -26,6 +26,9 @@ function toProviderModelConfig(m: BuiltinModelEntry) {
 		cost: { ...m.cost },
 		contextWindow: m.contextWindow,
 		maxTokens: m.maxTokens,
+		// 仅当 entry 显式声明 thinkingLevelMap 时挂上,避免显式 undefined 污染对象
+		// (pi 注册时遇到 undefined 字段会保留键,后续 JSON 序列化也会带空字段)
+		...(m.thinkingLevelMap ? { thinkingLevelMap: m.thinkingLevelMap } : {}),
 	};
 }
 

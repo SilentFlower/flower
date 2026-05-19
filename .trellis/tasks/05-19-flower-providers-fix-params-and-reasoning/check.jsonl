@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/flower-providers/backend/index.md", "reason": "复核关键设计点 #1-#5 是否仍成立(本任务新增 env + 新公开 API 不应破坏『env.ts 唯一读 process.env』『index.ts 仅 re-export』等约束)"}
+{"file": ".trellis/spec/flower-providers/backend/error-handling.md", "reason": "核验 R3 LLM_REASONING_EFFORT 非法值错误信息与矩阵格式一致(中文 + 变量名 + 合法值列出);确认 R8 已在矩阵新增 1 行"}
+{"file": ".trellis/spec/flower-providers/backend/directory-structure.md", "reason": "核验新代码归属正确:getLLMReasoningEffort 在 env.ts、getDefaultReasoningEffort 在 runtime.ts、ModelThinkingLevel re-export 在 index.ts,未出现 utils/helpers 兜底文件"}
+{"file": ".trellis/spec/flower-providers/backend/logging-guidelines.md", "reason": "核验 env 错误信息及 README 示例中无 apiKey 任何片段"}
+{"file": ".trellis/spec/flower-providers/backend/quality-guidelines.md", "reason": "通用质量约束;biome/typecheck/test 全过对应 AC1,公开 API JSDoc 中文注释对应 DoD"}
+{"file": ".trellis/spec/flower-ops-bot/backend/index.md", "reason": "核验 agent-factory.ts streamFn 改动仅限装配层,未越界进入 handler.ts / session-store.ts 等其他模块"}
+{"file": ".trellis/spec/guides/debugging-llm-integration.md", "reason": "核验 R8 新增『pi-ai anthropic.js:544 注释过时』案例与既有案例文风一致(症状/误判/根因/修复/教训 五段式)"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查改 BUILTIN_MODELS 字段后,所有引用方(test / register / runtime / 下游 ops-bot)是否同步;Pre-Modification Rule 的 grep 是否被遵守"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨 flower-providers → flower-ops-bot 两个包:thinkingLevelMap 在 catalog 声明 → register/runtime 透传 → ops-bot streamFn 读取,核验跨层数据流一致性"}

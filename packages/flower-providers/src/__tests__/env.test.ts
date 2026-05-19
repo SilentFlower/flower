@@ -6,16 +6,25 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+	ALLOWED_REASONING_EFFORTS,
 	getExtraModels,
 	getLLMApiKeyEnvName,
 	getLLMBaseUrl,
 	getLLMModel,
 	getLLMProvider,
+	getLLMReasoningEffort,
 	getMergedModels,
 } from "../env.js";
 
 // 备份原始 env 值,逐 case 清理
-const ENV_KEYS = ["LLM_BASE_URL", "LLM_API_KEY", "LLM_PROVIDER", "LLM_MODEL", "LLM_EXTRA_MODELS_JSON"];
+const ENV_KEYS = [
+	"LLM_BASE_URL",
+	"LLM_API_KEY",
+	"LLM_PROVIDER",
+	"LLM_MODEL",
+	"LLM_EXTRA_MODELS_JSON",
+	"LLM_REASONING_EFFORT",
+];
 
 function snapshotEnv(): Record<string, string | undefined> {
 	const snap: Record<string, string | undefined> = {};
@@ -124,6 +133,44 @@ describe("getLLMModel", () => {
 	});
 });
 
+describe("getLLMReasoningEffort", () => {
+	let snap: Record<string, string | undefined>;
+	beforeEach(() => {
+		snap = snapshotEnv();
+		clearEnv();
+	});
+	afterEach(() => restoreEnv(snap));
+
+	it("缺失 → 返回 undefined(由 runtime 层 fallback)", () => {
+		expect(getLLMReasoningEffort()).toBeUndefined();
+	});
+
+	it("空字符串 / 纯空白 → 返回 undefined", () => {
+		process.env.LLM_REASONING_EFFORT = "   ";
+		expect(getLLMReasoningEffort()).toBeUndefined();
+	});
+
+	it.each(["off", "minimal", "low", "medium", "high", "xhigh"] as const)("合法值 %s → 原值返回", (v) => {
+		process.env.LLM_REASONING_EFFORT = v;
+		expect(getLLMReasoningEffort()).toBe(v);
+	});
+
+	it("非法值 → 抛错,且错误信息列出 6 个合法值", () => {
+		process.env.LLM_REASONING_EFFORT = "max";
+		expect(() => getLLMReasoningEffort()).toThrow(/LLM_REASONING_EFFORT 非法值/);
+		// 错误信息应包含所有 6 个合法值
+		for (const v of ALLOWED_REASONING_EFFORTS) {
+			expect(() => getLLMReasoningEffort()).toThrow(new RegExp(v));
+		}
+	});
+
+	it("ALLOWED_REASONING_EFFORTS 长度为 6 且包含 off + 5 个 ThinkingLevel", () => {
+		expect(ALLOWED_REASONING_EFFORTS.length).toBe(6);
+		expect(ALLOWED_REASONING_EFFORTS).toContain("off");
+		expect(ALLOWED_REASONING_EFFORTS).toContain("xhigh");
+	});
+});
+
 describe("getExtraModels", () => {
 	let snap: Record<string, string | undefined>;
 	beforeEach(() => {
@@ -200,6 +247,24 @@ describe("getExtraModels", () => {
 			reasoning: true,
 			nativeApi: "openai-completions",
 		});
+	});
+
+	it("entry 带 thinkingLevelMap → 原样透传", () => {
+		process.env.LLM_EXTRA_MODELS_JSON = JSON.stringify([
+			{
+				id: "claude-opus-4-x-custom",
+				nativeApi: "anthropic-messages",
+				thinkingLevelMap: { off: "off", xhigh: "max", high: "high" },
+			},
+		]);
+		const list = getExtraModels();
+		expect(list[0]?.thinkingLevelMap).toEqual({ off: "off", xhigh: "max", high: "high" });
+	});
+
+	it("entry 不带 thinkingLevelMap → 字段为 undefined", () => {
+		process.env.LLM_EXTRA_MODELS_JSON = JSON.stringify([{ id: "grok-4.20-fast", nativeApi: "openai-completions" }]);
+		const list = getExtraModels();
+		expect(list[0]?.thinkingLevelMap).toBeUndefined();
 	});
 });
 

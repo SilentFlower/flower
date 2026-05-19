@@ -32,6 +32,7 @@
 | `LLM_EXTRA_MODELS_JSON` 不是数组 | `env.ts:getExtraModels` | `LLM_EXTRA_MODELS_JSON 必须是数组结构` |
 | `LLM_EXTRA_MODELS_JSON[i]` 缺 `id` / `nativeApi` | `env.ts:getExtraModels` | `LLM_EXTRA_MODELS_JSON[i].id / nativeApi 必填` |
 | `LLM_EXTRA_MODELS_JSON[i].nativeApi` 非法值 | `env.ts:getExtraModels` | `nativeApi 非法值 "<x>":合法值:openai-completions / ...` |
+| `LLM_REASONING_EFFORT` 非法值 | `env.ts:getLLMReasoningEffort` | `LLM_REASONING_EFFORT 非法值 "<x>":合法值:off / minimal / low / medium / high / xhigh` |
 | `options.appSource` 为空字符串 | `register.ts:registerHavefunProviders` | `registerHavefunProviders:options.appSource 必填(非空字符串)` |
 
 约定:

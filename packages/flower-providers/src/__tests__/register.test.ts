@@ -130,6 +130,34 @@ describe("registerHavefunProviders — 4 个 provider 全部注册", () => {
 			}
 		}
 	});
+
+	it("Opus 4.7 注册到 havefun-anthropic 时 model.thinkingLevelMap 透传(xhigh → max)", () => {
+		const { pi, calls } = createStubPi();
+		registerHavefunProviders(pi, { appSource: "code-reviewer" });
+
+		const anthropic = calls.find((c) => c.name === "havefun-anthropic");
+		expect(anthropic).toBeDefined();
+		const opus = anthropic?.config.models.find((m: { id: string }) => m.id === "claude-opus-4-7");
+		expect(opus).toBeDefined();
+		expect(opus.thinkingLevelMap).toBeDefined();
+		expect(opus.thinkingLevelMap.xhigh).toBe("max");
+	});
+
+	it("未显式声明 thinkingLevelMap 的 model 注册时该字段缺席(避免空字段污染)", () => {
+		const { pi, calls } = createStubPi();
+		registerHavefunProviders(pi, { appSource: "code-reviewer" });
+
+		const anthropic = calls.find((c) => c.name === "havefun-anthropic");
+		const sonnet = anthropic?.config.models.find((m: { id: string }) => m.id === "claude-sonnet-4-6");
+		expect(sonnet).toBeDefined();
+		expect(Object.hasOwn(sonnet, "thinkingLevelMap")).toBe(false);
+
+		// gemini 系列也不应该有该字段
+		const gemini = calls.find((c) => c.name === "havefun-gemini");
+		for (const m of gemini?.config.models as { id: string }[]) {
+			expect(Object.hasOwn(m, "thinkingLevelMap")).toBe(false);
+		}
+	});
 });
 
 describe("registerHavefunProviders — extras 注入", () => {

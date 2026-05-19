@@ -3,9 +3,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildHavefunModel, getDefaultModel } from "../runtime.js";
+import { buildHavefunModel, getDefaultModel, getDefaultReasoningEffort } from "../runtime.js";
 
-const ENV_KEYS = ["LLM_BASE_URL", "LLM_API_KEY", "LLM_PROVIDER", "LLM_MODEL", "LLM_EXTRA_MODELS_JSON"];
+const ENV_KEYS = [
+	"LLM_BASE_URL",
+	"LLM_API_KEY",
+	"LLM_PROVIDER",
+	"LLM_MODEL",
+	"LLM_EXTRA_MODELS_JSON",
+	"LLM_REASONING_EFFORT",
+];
 
 function snapshotEnv(): Record<string, string | undefined> {
 	const snap: Record<string, string | undefined> = {};
@@ -134,8 +141,8 @@ describe("buildHavefunModel — 字段对照", () => {
 			api: "anthropic-messages",
 			provider: "havefun-anthropic",
 			baseUrl: "https://jp-ai.havefun.eu.cc",
-			contextWindow: 200_000,
-			maxTokens: 32_000,
+			contextWindow: 1_000_000,
+			maxTokens: 128_000,
 			reasoning: true,
 		});
 	});
@@ -183,5 +190,92 @@ describe("buildHavefunModel — 字段对照", () => {
 		expect(model.id).toBe("grok-4.20-fast");
 		expect(model.api).toBe("openai-completions");
 		expect(model.name).toBe("Grok 4.20");
+	});
+
+	it("Opus 4.7 构造出的 Model 含 thinkingLevelMap(只 override xhigh → max)", () => {
+		process.env.LLM_BASE_URL = "https://jp-ai.havefun.eu.cc";
+		const model = buildHavefunModel("havefun-anthropic", "claude-opus-4-7");
+		// 精简到 1 key:其他 level 由 pi anthropic.js switch fallback 自动恒等映射
+		expect(model.thinkingLevelMap).toEqual({ xhigh: "max" });
+	});
+
+	it("Sonnet 4.6 构造出的 Model 不含 thinkingLevelMap(避免 undefined 污染)", () => {
+		process.env.LLM_BASE_URL = "https://jp-ai.havefun.eu.cc";
+		const model = buildHavefunModel("havefun-anthropic", "claude-sonnet-4-6");
+		// 走 pi 默认 mapping;对象上根本没有这个键(而不是 undefined 字段)
+		expect(Object.hasOwn(model, "thinkingLevelMap")).toBe(false);
+	});
+
+	it("extras 注入带 thinkingLevelMap 的 model → 也透传到 Model", () => {
+		process.env.LLM_BASE_URL = "https://jp-ai.havefun.eu.cc";
+		process.env.LLM_EXTRA_MODELS_JSON = JSON.stringify([
+			{
+				id: "claude-opus-4-x-custom",
+				nativeApi: "anthropic-messages",
+				thinkingLevelMap: { off: "off", xhigh: "max" },
+			},
+		]);
+		const model = buildHavefunModel("havefun-anthropic", "claude-opus-4-x-custom");
+		expect(model.thinkingLevelMap).toEqual({ off: "off", xhigh: "max" });
+	});
+});
+
+describe("getDefaultReasoningEffort", () => {
+	let snap: Record<string, string | undefined>;
+	beforeEach(() => {
+		snap = snapshotEnv();
+		clearEnv();
+	});
+	afterEach(() => restoreEnv(snap));
+
+	it("env 未配置 + 不传 modelId → 全局 fallback 'high'", () => {
+		expect(getDefaultReasoningEffort()).toBe("high");
+	});
+
+	it("env 未配置 + 传 'claude-opus-4-7' → 'xhigh'(每模型默认)", () => {
+		expect(getDefaultReasoningEffort("claude-opus-4-7")).toBe("xhigh");
+	});
+
+	it("env 未配置 + 传 'claude-sonnet-4-6' → 'high'(每模型默认)", () => {
+		expect(getDefaultReasoningEffort("claude-sonnet-4-6")).toBe("high");
+	});
+
+	it("env 未配置 + 传 'claude-haiku-4-5-20251001' → 'off'(reasoning=false 模型跳过 thinking)", () => {
+		expect(getDefaultReasoningEffort("claude-haiku-4-5-20251001")).toBe("off");
+	});
+
+	it("env 未配置 + 传 'gemini-2.5-flash-lite' → 'off'", () => {
+		expect(getDefaultReasoningEffort("gemini-2.5-flash-lite")).toBe("off");
+	});
+
+	it("env 未配置 + 传 'gemini-2.5-pro' → 'high'", () => {
+		expect(getDefaultReasoningEffort("gemini-2.5-pro")).toBe("high");
+	});
+
+	it("env 未配置 + 传 'gpt-5.5' → 'xhigh'", () => {
+		expect(getDefaultReasoningEffort("gpt-5.5")).toBe("xhigh");
+	});
+
+	it("env 未配置 + 传未知 model id → 全局 fallback 'high'", () => {
+		expect(getDefaultReasoningEffort("unknown-id-foo")).toBe("high");
+	});
+
+	it("env 配 'low' → 覆盖任何 model 的默认", () => {
+		process.env.LLM_REASONING_EFFORT = "low";
+		expect(getDefaultReasoningEffort()).toBe("low");
+		expect(getDefaultReasoningEffort("claude-opus-4-7")).toBe("low");
+		expect(getDefaultReasoningEffort("claude-haiku-4-5-20251001")).toBe("low");
+		expect(getDefaultReasoningEffort("unknown-id")).toBe("low");
+	});
+
+	it("env 配 'off' → 所有 model 都返回 'off'", () => {
+		process.env.LLM_REASONING_EFFORT = "off";
+		expect(getDefaultReasoningEffort("claude-opus-4-7")).toBe("off");
+	});
+
+	it("env 配非法值 → 调用时立即抛错", () => {
+		process.env.LLM_REASONING_EFFORT = "max";
+		expect(() => getDefaultReasoningEffort()).toThrow(/LLM_REASONING_EFFORT 非法值/);
+		expect(() => getDefaultReasoningEffort("claude-opus-4-7")).toThrow(/LLM_REASONING_EFFORT 非法值/);
 	});
 });

@@ -6,6 +6,7 @@
  * 经由本包,任何 baseUrl / 模型清单 / header 的变更只改这一处。
  */
 
+export type { ModelThinkingLevel, ThinkingLevelMap } from "@earendil-works/pi-ai";
 export type { ProviderName } from "./catalog.js";
 export { registerHavefunProviders } from "./register.js";
-export { buildHavefunModel, getDefaultModel } from "./runtime.js";
+export { buildHavefunModel, getDefaultModel, getDefaultReasoningEffort } from "./runtime.js";

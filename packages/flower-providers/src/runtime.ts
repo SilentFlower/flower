@@ -5,9 +5,67 @@
  * code-reviewer 走 `pi.registerProvider`(在 register.ts)。
  */
 
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { PROVIDER_TO_API, type ProviderName } from "./catalog.js";
-import { getLLMModel, getLLMProvider, getMergedModels, resolveProviderBaseUrl } from "./env.js";
+import { getLLMModel, getLLMProvider, getLLMReasoningEffort, getMergedModels, resolveProviderBaseUrl } from "./env.js";
+
+/**
+ * 每个 builtin model 在 `LLM_REASONING_EFFORT` 未配置时的默认 effort
+ *
+ * @remarks 设计原则:env 不配时拉到该 model 实际"上限",运维省心。
+ *          - Opus 4.7:xhigh → 经 thinkingLevelMap 映射到 anthropic 实际最高 max
+ *          - Sonnet 4.6:high(pi 默认 mapping,实际最高 high)
+ *          - Haiku 4.5 / Gemini Flash Lite:off(reasoning=false 模型实际跳过 thinking)
+ *          - GPT-5.x:xhigh(OpenAI Responses 直接发 reasoningEffort 字段)
+ *          - Gemini Pro / Flash:high(对应 thinkingBudgets.high 上限)
+ *          - 未列入的 model id:走 `GLOBAL_FALLBACK_EFFORT`
+ */
+const PER_MODEL_DEFAULT_EFFORT: Record<string, ModelThinkingLevel> = {
+	"claude-opus-4-7": "xhigh",
+	"claude-sonnet-4-6": "high",
+	"claude-haiku-4-5-20251001": "off",
+	"gemini-2.5-pro": "high",
+	"gemini-2.5-flash": "high",
+	"gemini-2.5-flash-lite": "off",
+	"gpt-5.4": "xhigh",
+	"gpt-5.5": "xhigh",
+};
+
+/**
+ * 全局兜底 effort(`LLM_REASONING_EFFORT` 未配置且 modelId 不在 `PER_MODEL_DEFAULT_EFFORT` 时使用)
+ */
+const GLOBAL_FALLBACK_EFFORT: ModelThinkingLevel = "high";
+
+/**
+ * 返回当前调用应使用的默认 reasoning effort
+ *
+ * 决策优先级(高 → 低):
+ * 1. `LLM_REASONING_EFFORT` env 显式配置(全局开关)
+ * 2. `PER_MODEL_DEFAULT_EFFORT[modelId]`(每模型默认上限)
+ * 3. `GLOBAL_FALLBACK_EFFORT`(全局兜底 = "high")
+ *
+ * @param modelId 模型 id;省略或不在 per-model 表时走全局 fallback
+ * @returns 6 个合法 `ModelThinkingLevel` 之一(off / minimal / low / medium / high / xhigh)
+ *
+ * @remarks 仅 ops-bot 形态(`streamFn` 内)需要调用本函数,把返回值传给 `streamSimple` 的
+ *          `reasoning` 字段(注意 streamSimple 的 `reasoning` 类型是 `ThinkingLevel`,不接受
+ *          `"off"`,调用方负责把 `"off"` 转为 `undefined`)。
+ *          code-reviewer 形态由 pi CLI 自己管 thinking level(通过 `/thinking` 命令 / config),
+ *          不调本函数。
+ */
+export function getDefaultReasoningEffort(modelId?: string): ModelThinkingLevel {
+	const fromEnv = getLLMReasoningEffort();
+	if (fromEnv !== undefined) {
+		return fromEnv;
+	}
+	if (modelId !== undefined) {
+		const perModel = PER_MODEL_DEFAULT_EFFORT[modelId];
+		if (perModel !== undefined) {
+			return perModel;
+		}
+	}
+	return GLOBAL_FALLBACK_EFFORT;
+}
 
 /**
  * 读取并校验 `LLM_PROVIDER` + `LLM_MODEL`,返回当前部署单元的默认模型选择
@@ -93,6 +151,8 @@ export function buildHavefunModel(provider: ProviderName, modelId: string): Mode
 		cost: { ...model.cost },
 		contextWindow: model.contextWindow,
 		maxTokens: model.maxTokens,
+		// 仅当 entry 显式声明 thinkingLevelMap 时挂上,避免 undefined 字段污染对象
+		...(model.thinkingLevelMap ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
 	};
 	return result as unknown as Model<Api>;
 }

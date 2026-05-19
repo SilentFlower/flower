@@ -16,7 +16,10 @@
 | `registerHavefunProviders(pi, options)` | 函数 | 给 pi-coding-agent 形态(CLI)注册 4 个 provider |
 | `getDefaultModel()` | 函数 | 读 `LLM_PROVIDER` + `LLM_MODEL`,返回 `{ provider, modelId }` |
 | `buildHavefunModel(provider, modelId)` | 函数 | 构造 pi-ai `Model<Api>` 对象,给 pi-agent-core 形态(Agent 实例)用 |
+| `getDefaultReasoningEffort(modelId?)` | 函数 | 返回该 model 的默认 reasoning effort,优先级:env > per-model 默认 > 全局 fallback `"high"` |
 | `ProviderName` | 类型 | 4 个 provider 名的联合类型 |
+| `ModelThinkingLevel` | 类型 | pi 统一 6 级思考强度:`off / minimal / low / medium / high / xhigh` |
+| `ThinkingLevelMap` | 类型 | 把 pi level 映射到 provider 自家实际 effort 字符串(`Partial<Record<ModelThinkingLevel, string \| null>>`) |
 
 ## 4 个 provider
 
@@ -73,8 +76,9 @@ new Agent({
 | `LLM_PROVIDER` | ✓ | 默认 provider,合法值:`havefun-openai` / `havefun-openai-responses` / `havefun-anthropic` / `havefun-gemini` |
 | `LLM_MODEL` | ✓ | 默认模型 id,必须存在于合并模型清单(builtin + extras),且其 `nativeApi` 与 `LLM_PROVIDER` 对应协议一致 |
 | `LLM_EXTRA_MODELS_JSON` |   | (可选)JSON 数组,注入额外模型,格式见下文 |
+| `LLM_REASONING_EFFORT` |   | (可选)统一调节"思考预算",合法值 `off / minimal / low / medium / high / xhigh`。配置后覆盖所有 model 的默认 effort;不配则按 per-model 默认拉到该 model 的实际上限 |
 
-任一必填 env 缺失或非法,启动期 fail-fast 抛错。
+任一必填 env 缺失或非法,启动期 fail-fast 抛错。可选 env 若有值但非法,首次调用对应函数时也会 fail-fast。
 
 ### `LLM_EXTRA_MODELS_JSON` 示例
 
@@ -113,6 +117,48 @@ shell / docker env 多行 JSON 转义麻烦时,推荐:
 - `havefun-openai` 默认空(供 extras 注入)
 
 cost 字段当前全填 0(占位),接通计费系统后再补真实数据。
+
+## Reasoning Effort
+
+`getDefaultReasoningEffort(modelId?)` 提供"取该 model 的默认 reasoning effort"的统一入口,
+**仅 ops-bot 形态(`streamFn` 内)需要调用**,把返回值传给 `streamSimple` 的 `reasoning` 字段。
+code-reviewer 形态由 pi CLI 自己管 thinking level(通过 `/thinking` 命令 / config),不调本函数。
+
+### 决策优先级
+
+1. `LLM_REASONING_EFFORT` env 显式配置(全局开关)
+2. `PER_MODEL_DEFAULT_EFFORT` 每模型默认(下表)
+3. 全局兜底 `"high"`
+
+### Per-model 默认(env 未配时)
+
+| 模型 | 默认 effort | 实际效果 |
+|---|---|---|
+| `claude-opus-4-7` | `xhigh` | 经 `thinkingLevelMap` 映射到 anthropic 实际最高 `"max"` |
+| `claude-sonnet-4-6` | `high` | pi 默认 mapping,实际拿到 effort `"high"` |
+| `claude-haiku-4-5-20251001` | `off` | reasoning=false,跳过 thinking |
+| `gemini-2.5-pro` | `high` | 经 ops-bot `thinkingBudgets.high` 算 budget |
+| `gemini-2.5-flash` | `high` | 同上 |
+| `gemini-2.5-flash-lite` | `off` | reasoning=false,跳过 thinking |
+| `gpt-5.4` | `xhigh` | OpenAI Responses 直接发 `reasoning.effort: "xhigh"` |
+| `gpt-5.5` | `xhigh` | 同上 |
+
+### 调用方对接
+
+```typescript
+import { getDefaultReasoningEffort } from "@flower-ai/flower-providers";
+import { streamSimple } from "@earendil-works/pi-ai";
+
+// streamFn 内:
+const effort = getDefaultReasoningEffort(model.id);
+// streamSimple.reasoning 类型是 ThinkingLevel(不含 off),需自行把 "off" 转 undefined
+const reasoning = effort === "off" ? undefined : effort;
+
+return streamSimple(model, ctx, { ...opts, apiKey, reasoning });
+```
+
+Gemini 系列还需额外注入 `thinkingBudgets`(数字阶梯,见 ops-bot `agent-factory.ts`),
+其他 provider 走 `model.thinkingLevelMap` 自动映射。
 
 ## TODO
 

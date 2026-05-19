@@ -125,6 +125,21 @@ curl -sS -X POST https://your-gateway.example.com/v1/messages \
 
 ---
 
+## 真实案例(pi-ai anthropic.js:544 过时注释 vs Anthropic 官方文档)
+
+**症状**:接 thinking effort 抽象时,想给 Claude Opus 4.7 拿到 anthropic 实际最高的 `effort: "max"`,但翻 pi-ai 源码 `node_modules/@earendil-works/pi-ai/dist/providers/anthropic.js:544` 看到一行注释 "max only Opus 4.6",于是怀疑 Opus 4.7 不支持 max。
+
+**误判**:第一反应是"pi-ai 已经记录了这条规则,Opus 4.7 大概只能拿到 high",准备给项目代码加"按 model id 区分是否发 max"的特判分支。
+
+**根因**:翻 Anthropic 官方 [Extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking) + [What's new in Opus 4.7](https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-7),发现 Opus 4.7 文档原话:effort 范围 `low / medium / high / xhigh / max`,且 "xhigh sits between high and max",**官方明确说最高是 max**。pi-ai 注释是 Opus 4.6 时代留下的、没跟上 4.7 发布;**中间层 SDK 的代码注释不是事实依据,过时风险高**。
+
+**修复**:不要给上层项目加 "model id → 是否支持 max" 的特判;改用 pi-ai 暴露的 `ThinkingLevelMap` 显式声明 `{ xhigh: "max", ... }`,把 pi 统一的 `xhigh` 映射到 anthropic 实际的 `"max"`。这样上层只需调 `LLM_REASONING_EFFORT=xhigh`,无需感知 model 差异。
+
+**教训**:
+1. **官方文档 > 中间层 SDK 代码注释**:当两者冲突时,以官方为准;SDK 注释经常滞后于上游模型版本迭代
+2. **"中间层告诉我不支持" 不是结论**:验证流程必须包含官方文档对照;如果有 API 访问权,curl 实测一次成本更低
+3. **绕开中间层的方式是声明式映射,不是特判分支**:用 `ThinkingLevelMap`(配置)而非 `if (modelId === ...)`(代码),后者会在每接入新 model 时膨胀
+
 ## Related Specs
 
 - [flower-providers/backend/error-handling.md](../flower-providers/backend/error-handling.md) — Common Mistakes 章节有具体修复模板

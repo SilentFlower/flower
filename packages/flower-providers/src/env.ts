@@ -7,6 +7,7 @@
  * - 永不打印 / 返回 `LLM_API_KEY` 真实值(spec 强约束)
  */
 
+import type { ModelThinkingLevel, ThinkingLevelMap } from "@earendil-works/pi-ai";
 import {
 	ALLOWED_APIS,
 	ALLOWED_PROVIDER_NAMES,
@@ -15,6 +16,20 @@ import {
 	PROVIDER_PATH_SUFFIX,
 	type ProviderName,
 } from "./catalog.js";
+
+/**
+ * `LLM_REASONING_EFFORT` env 合法值集合(pi `ModelThinkingLevel` 6 级:含 off)
+ *
+ * @remarks 顺序按"推理强度从弱到强"排列,便于错误信息阅读
+ */
+export const ALLOWED_REASONING_EFFORTS: readonly ModelThinkingLevel[] = [
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+];
 
 /**
  * 读取 LLM 网关 baseUrl(**根 URL,不含任何路径后缀**)
@@ -109,6 +124,29 @@ export function getLLMModel(): string {
 }
 
 /**
+ * 读取并校验 `LLM_REASONING_EFFORT` 环境变量(可选)
+ *
+ * @returns 6 个合法 `ModelThinkingLevel` 之一;env 缺失或为空字符串返回 `undefined`
+ * @throws 当值不在 `ALLOWED_REASONING_EFFORTS` 中时抛错,错误信息列出 6 个合法值
+ *
+ * @remarks 此 env 是运维侧统一调节"思考预算"的开关:
+ *          - 不配置 → 由 `runtime.ts:getDefaultReasoningEffort` 按 per-model 默认决定
+ *          - 配置一个合法值 → 覆盖所有 model 的默认 effort
+ *          - 配置非法值 → fail-fast,避免带病运行
+ */
+export function getLLMReasoningEffort(): ModelThinkingLevel | undefined {
+	const value = process.env.LLM_REASONING_EFFORT;
+	if (!value || value.trim() === "") {
+		return undefined;
+	}
+	const trimmed = value.trim();
+	if (!(ALLOWED_REASONING_EFFORTS as readonly string[]).includes(trimmed)) {
+		throw new Error(`LLM_REASONING_EFFORT 非法值 "${trimmed}":合法值:${ALLOWED_REASONING_EFFORTS.join(" / ")}`);
+	}
+	return trimmed as ModelThinkingLevel;
+}
+
+/**
  * 读取并解析 `LLM_EXTRA_MODELS_JSON` 环境变量(可选)
  *
  * @returns 额外模型清单数组;若 env 缺失或为空字符串则返回空数组
@@ -153,6 +191,12 @@ export function getExtraModels(): BuiltinModelEntry[] {
 		}
 
 		// 其余字段缺失走默认值
+		// 透传 thinkingLevelMap(运维通过 LLM_EXTRA_MODELS_JSON 注入的模型也允许带此字段;
+		// 不做深度校验,信任用户 — 类型由 pi-ai 在运行时解释)
+		const thinkingLevelMap =
+			typeof obj.thinkingLevelMap === "object" && obj.thinkingLevelMap !== null
+				? (obj.thinkingLevelMap as ThinkingLevelMap)
+				: undefined;
 		result.push({
 			id: obj.id,
 			name: typeof obj.name === "string" ? obj.name : obj.id,
@@ -172,6 +216,7 @@ export function getExtraModels(): BuiltinModelEntry[] {
 						}
 					: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			nativeApi: obj.nativeApi as BuiltinModelEntry["nativeApi"],
+			thinkingLevelMap,
 		});
 	}
 

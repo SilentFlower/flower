@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/flower-providers/backend/index.md", "reason": "5 文件布局 + 关键设计点;本任务改 catalog/env/runtime/register/index 四件套,先确认每个文件的职责边界(env.ts 是唯一直接读 process.env 的文件,index.ts 仅 re-export)"}
+{"file": ".trellis/spec/flower-providers/backend/directory-structure.md", "reason": "模块单一职责 / 不创 utils;R3 新增 getLLMReasoningEffort 必须写在 env.ts,R4 新增 getDefaultReasoningEffort 必须写在 runtime.ts,index.ts 仅 re-export"}
+{"file": ".trellis/spec/flower-providers/backend/error-handling.md", "reason": "fail-fast 矩阵;R3 新加 LLM_REASONING_EFFORT 非法值错误格式必须与既有矩阵一致(中文 + 变量名 + 给出合法值),并按 R8 在矩阵中补 1 行"}
+{"file": ".trellis/spec/flower-providers/backend/logging-guidelines.md", "reason": "不打 apiKey 任何片段;新增 env 错误信息时复核此约束"}
+{"file": ".trellis/spec/flower-providers/backend/quality-guidelines.md", "reason": "前后端共用质量约束;Step 9 综合验证需对照"}
+{"file": ".trellis/spec/flower-ops-bot/backend/index.md", "reason": "agent-factory.ts 的职责声明(按 conversationId 装配 Agent);R6 在 streamFn 注入 reasoning + Gemini thinkingBudgets 需符合此模块边界"}
+{"file": ".trellis/spec/guides/debugging-llm-integration.md", "reason": "pi-ai 集成调试决策树;R8 要在『真实案例』后追加新案例(pi-ai anthropic.js:544 过时注释 vs Anthropic 官方文档),实现前先读已有案例文风,保持一致"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Pre-Modification Rule:改 BUILTIN_MODELS 任一字段前 grep 全仓引用,避免漏改下游(本任务 contextWindow/maxTokens/reasoning 都被改)"}
