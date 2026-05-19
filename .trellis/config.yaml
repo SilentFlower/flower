@@ -105,4 +105,4 @@ packages:
     path: packages/flower-tools-common
   flower-tools-gitlab:
     path: packages/flower-tools-gitlab
-default_package: @flower-ai/flower-code-reviewer
+default_package: flower-code-reviewer
