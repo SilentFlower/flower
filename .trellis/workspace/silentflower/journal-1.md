@@ -73,3 +73,38 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: flower-providers: 修真实模型参数 + 接入 reasoning effort 抽象
+
+**Date**: 2026-05-19
+**Task**: flower-providers: 修真实模型参数 + 接入 reasoning effort 抽象
+**Package**: flower-code-reviewer
+**Branch**: `main`
+
+### Summary
+
+8 模型 contextWindow/maxTokens/reasoning 按官方文档更新真实值;新增 BuiltinModelEntry.thinkingLevelMap 字段,Opus 4.7 声明 { xhigh: "max" } 让运维通过 LLM_REASONING_EFFORT=xhigh 拿到 anthropic 实际最高 effort;新增 env LLM_REASONING_EFFORT(6 级合法值 fail-fast)+ 公开 API getDefaultReasoningEffort(env > per-model > "high");ops-bot agent-factory.ts streamFn 注入 reasoning + Gemini thinkingBudgets + xhigh→high clamp(pi-ai 0.75.3 google.js 内置 budget 表无 xhigh 键);测试 62 → 100;README + .env.example + 3 个 spec 同步。核心发现沉淀进 debugging-llm-integration.md:pi-ai anthropic.js:544 'max only Opus 4.6' 注释过时,以 Anthropic 官方文档为准。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `19cb96b` | (see git log) |
+| `86ef1ca` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
