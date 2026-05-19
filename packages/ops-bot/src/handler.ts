@@ -2,10 +2,11 @@
  * 消息处理主流程
  *
  * - 按 conversationId 维度复用 Agent(每个会话独立的对话历史)
- * - 流式触发 onChunk,把 LLM 的输出实时推回钉钉
+ * - 通过 agent.subscribe() 订阅事件,把文本累积起来推回钉钉
  * - 每轮结束后,把 messages 写回 Redis
  */
 
+import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { getOrCreateAgent, persistAgent } from "./agent-factory.js";
 
 /**
@@ -37,20 +38,9 @@ export async function handleMessage(input: HandleMessageInput): Promise<void> {
 
 	let accumulator = "";
 
-	// 订阅 agent 事件,把文本累积起来推回
-	// pi-agent-core 的 Agent 类暴露 events 接口,这里用 stream 模式
-	// TODO: 真实接入时,根据 pi-agent-core 的 API 调整
-	const promptStream = await agent.prompt([
-		{
-			role: "user",
-			content: [{ type: "text", text: input.text }],
-			timestamp: Date.now(),
-		},
-	]);
-
-	for await (const event of promptStream) {
+	// 订阅 agent 事件,把文本累积起来推回钉钉
+	const unsubscribe = agent.subscribe(async (event: AgentEvent) => {
 		if (event.type === "message_update") {
-			// 从增量事件中提取文本(简化版,真实需要解析 event.assistantMessageEvent)
 			const delta = extractDelta(event);
 			if (delta) {
 				accumulator += delta;
@@ -63,11 +53,23 @@ export async function handleMessage(input: HandleMessageInput): Promise<void> {
 			// 整个对话流程结束
 			await input.onChunk(accumulator, true);
 		}
-	}
+	});
 
-	// 持久化
-	await persistAgent(input.conversationId, agent);
-	dispose();
+	try {
+		await agent.prompt([
+			{
+				role: "user",
+				content: [{ type: "text", text: input.text }],
+				timestamp: Date.now(),
+			},
+		]);
+
+		// 持久化对话历史
+		await persistAgent(input.conversationId, agent);
+	} finally {
+		unsubscribe();
+		dispose();
+	}
 }
 
 /**

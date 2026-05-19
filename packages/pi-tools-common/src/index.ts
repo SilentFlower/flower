@@ -31,6 +31,7 @@ export const jiraSearchTool = defineTool({
 					text: `[Stub] Jira 查询: ${params.query}\n实际接入后会返回真实结果。`,
 				},
 			],
+			details: undefined,
 		};
 	},
 });
@@ -58,6 +59,7 @@ export const wikiSearchTool = defineTool({
 					text: `[Stub] Wiki 检索: ${params.query}`,
 				},
 			],
+			details: undefined,
 		};
 	},
 });

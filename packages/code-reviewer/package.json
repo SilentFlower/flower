@@ -3,7 +3,15 @@
   "version": "0.1.0",
   "type": "module",
   "description": "GitLab Pipeline 代码评审 Agent,运行在 CI 容器内,自动评审 MR 并发表行内/整体评论",
-  "keywords": ["pi", "agent", "gitlab", "code-review", "ci", "merge-request", "llm"],
+  "keywords": [
+    "pi",
+    "agent",
+    "gitlab",
+    "code-review",
+    "ci",
+    "merge-request",
+    "llm"
+  ],
   "homepage": "https://github.com/SilentFlower/flower/tree/main/packages/code-reviewer#readme",
   "repository": {
     "type": "git",
@@ -19,10 +27,13 @@
     "access": "public"
   },
   "bin": {
-    "flower-review": "./dist/cli.js"
+    "flower-review": "dist/cli.js"
   },
   "main": "./dist/cli.js",
-  "files": ["dist", "skills"],
+  "files": [
+    "dist",
+    "skills"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js 2>/dev/null || true",
     "clean": "tsc -p tsconfig.json --clean",

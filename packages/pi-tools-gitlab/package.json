@@ -3,7 +3,14 @@
   "version": "0.1.0",
   "type": "module",
   "description": "GitLab 工具集,供 pi agent 读 MR、发评论、做代码评审",
-  "keywords": ["pi", "agent", "tools", "gitlab", "merge-request", "code-review"],
+  "keywords": [
+    "pi",
+    "agent",
+    "tools",
+    "gitlab",
+    "merge-request",
+    "code-review"
+  ],
   "homepage": "https://github.com/SilentFlower/flower/tree/main/packages/pi-tools-gitlab#readme",
   "repository": {
     "type": "git",
@@ -26,7 +33,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "tsc -p tsconfig.json --clean"

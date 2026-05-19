@@ -3,7 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "description": "自定义 LLM provider 统一注册扩展,用于把内部 / 私有 LLM 网关接入 pi 系列 agent",
-  "keywords": ["pi", "agent", "llm", "provider"],
+  "keywords": [
+    "pi",
+    "agent",
+    "llm",
+    "provider"
+  ],
   "homepage": "https://github.com/SilentFlower/flower/tree/main/packages/pi-providers#readme",
   "repository": {
     "type": "git",
@@ -26,7 +31,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "tsc -p tsconfig.json --clean"

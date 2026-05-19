@@ -3,7 +3,17 @@
   "version": "0.1.0",
   "type": "module",
   "description": "钉钉运维机器人 HTTP 服务,基于 pi-agent-core 实现,接入阿里云 ARMS 实时查日志/指标/告警",
-  "keywords": ["pi", "agent", "dingtalk", "ops", "sre", "arms", "aliyun", "chatbot", "llm"],
+  "keywords": [
+    "pi",
+    "agent",
+    "dingtalk",
+    "ops",
+    "sre",
+    "arms",
+    "aliyun",
+    "chatbot",
+    "llm"
+  ],
   "homepage": "https://github.com/SilentFlower/flower/tree/main/packages/ops-bot#readme",
   "repository": {
     "type": "git",
@@ -19,10 +29,12 @@
     "access": "public"
   },
   "bin": {
-    "flower-ops-bot": "./dist/server.js"
+    "flower-ops-bot": "dist/server.js"
   },
   "main": "./dist/server.js",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/server.js 2>/dev/null || true",
     "clean": "tsc -p tsconfig.json --clean",

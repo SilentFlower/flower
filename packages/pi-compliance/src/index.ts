@@ -83,7 +83,7 @@ function registerAudit(pi: ExtensionAPI, product: string): void {
 		void sendAudit({
 			kind: "session_start",
 			product,
-			sessionId: event.sessionId,
+			reason: event.reason,
 			ts: Date.now(),
 		});
 	});
@@ -105,7 +105,7 @@ function registerAudit(pi: ExtensionAPI, product: string): void {
 			kind: "tool_result",
 			product,
 			tool: event.toolName,
-			isError: event.result.isError ?? false,
+			isError: event.isError,
 			ts: Date.now(),
 		});
 		return undefined;

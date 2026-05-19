@@ -3,7 +3,13 @@
   "version": "0.1.0",
   "type": "module",
   "description": "pi agent 的合规拦截 + 全量审计扩展(CI 只读 / 生产只读模式)",
-  "keywords": ["pi", "agent", "compliance", "audit", "security"],
+  "keywords": [
+    "pi",
+    "agent",
+    "compliance",
+    "audit",
+    "security"
+  ],
   "homepage": "https://github.com/SilentFlower/flower/tree/main/packages/pi-compliance#readme",
   "repository": {
     "type": "git",
@@ -26,7 +32,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "tsc -p tsconfig.json --clean"

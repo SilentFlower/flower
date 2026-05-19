@@ -3,7 +3,13 @@
   "version": "0.1.0",
   "type": "module",
   "description": "pi agent 通用工具集合(Jira、Wiki、文档检索等),可在多个 pi agent 产品间复用",
-  "keywords": ["pi", "agent", "tools", "jira", "wiki"],
+  "keywords": [
+    "pi",
+    "agent",
+    "tools",
+    "jira",
+    "wiki"
+  ],
   "homepage": "https://github.com/SilentFlower/flower/tree/main/packages/pi-tools-common#readme",
   "repository": {
     "type": "git",
@@ -26,7 +32,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "tsc -p tsconfig.json --clean"

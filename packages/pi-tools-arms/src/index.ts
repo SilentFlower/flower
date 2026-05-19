@@ -78,6 +78,7 @@ export const armsQueryMetricsTool = defineTool({
 					text: `[Stub] arms_query_metrics\n  app=${params.app}\n  metric=${params.metric}`,
 				},
 			],
+			details: undefined,
 		};
 	},
 });
@@ -108,6 +109,7 @@ export const armsListAlertsTool = defineTool({
 					text: `[Stub] arms_list_alerts severity=${params.severity ?? "all"} app=${params.app ?? "all"}`,
 				},
 			],
+			details: undefined,
 		};
 	},
 });
@@ -128,6 +130,7 @@ export const armsGetTraceTool = defineTool({
 			content: [
 				{ type: "text", text: `[Stub] arms_get_trace traceId=${params.traceId}` },
 			],
+			details: undefined,
 		};
 	},
 });
