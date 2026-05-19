@@ -1,38 +1,36 @@
 # Backend Development Guidelines
 
-> Best practices for backend development in this project.
+> `@flower-ai/flower-tools-arms` 的内部实现层(脱敏规则、未来的 SDK 客户端)规范。
 
 ---
 
 ## Overview
 
-This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
+`flower-tools-arms` 当前内部只有一个真实实现模块:`src/mask.ts`(脱敏)。
+真实接入 ARMS / SLS SDK 后会再加 `src/client.ts`。
+
+| 模块 | 职责 |
+|------|------|
+| `src/mask.ts` | `maskSensitive(text)` + `RULES` 常量 |
+| `src/client.ts`(未来) | SDK 客户端单例、`signal` 透传、超时 |
 
 ---
 
 ## Guidelines Index
 
-| Guide | Description | Status |
-|-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
-| [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
+| Guide | 说明 |
+|-------|------|
+| [Directory Structure](./directory-structure.md) | 当前布局与未来拆分点 |
+| [Database Guidelines](./database-guidelines.md) | 不适用 |
+| [Error Handling](./error-handling.md) | SDK 错误转 user-friendly content,凭证缺失 throw |
+| [Logging Guidelines](./logging-guidelines.md) | 不打 query / 日志原文 / 凭证 |
+| [Quality Guidelines](./quality-guidelines.md) | 与 frontend/ 共用 + backend 强约束 |
 
 ---
 
-## How to Fill These Guidelines
+## 关键设计点
 
-For each guideline file:
-
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
----
-
-**Language**: All documentation should be written in **English**.
+1. **`maskSensitive` 是表驱动**:`RULES` 数组易扩展、易测试
+2. **脱敏是"防御纵深"**:不是替代权限边界(那是 `flower-compliance` / `ops-bot/auth` 的职责)
+3. **SDK 客户端必须惰性单例**:`import` 时不连接,首次 `execute` 时初始化
+4. **凭证从 env 读**:缺 `ALICLOUD_AK` / `SK` 在 `getClient()` 首次调用时 throw

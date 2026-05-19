@@ -1,51 +1,80 @@
 # Error Handling
 
-> How errors are handled in this project.
+> 审计与拦截的错误处理策略。
 
 ---
 
 ## Overview
 
-<!--
-Document your project's error handling conventions here.
+本包错误处理的**核心原则**:
 
-Questions to answer:
-- What error types do you define?
-- How are errors propagated?
-- How are errors logged?
-- How are errors returned to clients?
--->
-
-(To be filled by the team)
+> **合规与审计是辅助通道,绝不能阻塞主流程。**
 
 ---
 
 ## Error Types
 
-<!-- Custom error classes/types -->
-
-(To be filled by the team)
+不定义自定义错误类。统一使用 JavaScript 内置 `Error`,通过 `console.warn / console.error` 输出。
 
 ---
 
 ## Error Handling Patterns
 
-<!-- Try-catch patterns, error propagation -->
+### 审计失败:仅 warn
 
-(To be filled by the team)
+```typescript
+try {
+  await fetch(url, { ..., signal: AbortSignal.timeout(2000) });
+} catch (err) {
+  console.warn("[audit] 上报失败:", err);
+}
+```
+
+**约定**:
+
+1. **try/catch 必须包住 fetch**(网络抖动 / 超时 / DNS 解析失败都要兜住)
+2. **失败仅 `console.warn`**,不向上传播,不抛 Error
+3. **不重试**(失败就丢,主流程不能被审计拖慢)
+
+### 拦截失败:`return { block, reason }`,不要 `throw`
+
+```typescript
+pi.on("tool_call", async (event) => {
+  if (event.toolName === "write") {
+    return { block: true, reason: "CI 只读模式:禁止 write" };
+  }
+  return undefined;
+});
+```
+
+**约定**:
+
+1. **判断不通过时 `return { block: true, reason: "..." }`**,reason 是给 LLM 看的可读说明
+2. **绝不 `throw new Error("...")`**(会污染 pi 调用栈,LLM 看不到原因)
+3. **判断逻辑必须同步**(handler 是 async 但内部不 await 外部 IO)
+
+### 输入兜底:`String(... ?? "")` 而不是断言
+
+```typescript
+const cmd = String(event.input.command ?? "").trim();
+```
+
+LLM 偶尔会传非字符串,断言 `as string` 会运行期崩。
 
 ---
 
 ## API Error Responses
 
-<!-- Standard error response format -->
+本包无 API。
 
-(To be filled by the team)
+`sendAudit` 是单向调用,失败不向调用方传播。
 
 ---
 
 ## Common Mistakes
 
-<!-- Error handling mistakes your team has made -->
-
-(To be filled by the team)
+- ❌ `await sendAudit(...)` 阻塞主流程(SIEM 抖动会让所有工具调用变慢)
+- ❌ 拦截规则失败 `throw new Error("禁止 X")`(应 `return { block: true, reason }`)
+- ❌ 给 `fetch` 不配 `AbortSignal.timeout`(网络挂时进程会一直 hang)
+- ❌ `console.error` 用于审计失败(`warn` 即可,这不是 error)
+- ❌ 把 `err instanceof Error` 当兜底逻辑(`console.warn("...", err)` 直接传 err 即可,Node 会自动 stringify)

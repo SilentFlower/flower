@@ -1,38 +1,35 @@
 # Backend Development Guidelines
 
-> Best practices for backend development in this project.
+> `@flower-ai/flower-providers` 的内部实现层规范。
 
 ---
 
 ## Overview
 
-This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
+`flower-providers` 是 pi 扩展库,**只有 1 个文件**(`src/index.ts`)。
+没有真正意义的"后端实现层"(无 IO、无存储、无业务逻辑)。
+
+本目录(`backend/`)用于:
+
+- 记录"如果未来要拆分"时的边界
+- 记录 LLM 调用栈的错误处理 / 日志约定(虽然本包不直接发起调用)
 
 ---
 
 ## Guidelines Index
 
-| Guide | Description | Status |
-|-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
-| [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
+| Guide | 说明 |
+|-------|------|
+| [Directory Structure](./directory-structure.md) | 单文件布局,未来拆分边界 |
+| [Database Guidelines](./database-guidelines.md) | 不适用 |
+| [Error Handling](./error-handling.md) | fail-fast 启动期检查、provider 注册失败语义 |
+| [Logging Guidelines](./logging-guidelines.md) | 不打 apiKey / baseUrl |
+| [Quality Guidelines](./quality-guidelines.md) | 与 frontend/ 共用 |
 
 ---
 
-## How to Fill These Guidelines
+## 关键设计点
 
-For each guideline file:
-
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
----
-
-**Language**: All documentation should be written in **English**.
+1. **本包是初始化代码**,只跑一次,无运行时分支
+2. **fail-fast 是核心策略**:缺凭证立刻退出
+3. **`CUSTOM_MODELS` 是占位**:真实接入网关时要按目标模型清单替换

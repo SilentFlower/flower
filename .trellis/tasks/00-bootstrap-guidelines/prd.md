@@ -21,14 +21,14 @@ the rest conversationally.
 
 ## Status (update the checkboxes as you complete each item)
 
-- [ ] Fill guidelines for @flower-ai/flower-code-reviewer
-- [ ] Fill guidelines for @flower-ai/flower-compliance
-- [ ] Fill guidelines for @flower-ai/flower-ops-bot
-- [ ] Fill guidelines for @flower-ai/flower-providers
-- [ ] Fill guidelines for @flower-ai/flower-tools-arms
-- [ ] Fill guidelines for @flower-ai/flower-tools-common
-- [ ] Fill guidelines for @flower-ai/flower-tools-gitlab
-- [ ] Add code examples
+- [x] Fill guidelines for @flower-ai/flower-code-reviewer
+- [x] Fill guidelines for @flower-ai/flower-compliance
+- [x] Fill guidelines for @flower-ai/flower-ops-bot
+- [x] Fill guidelines for @flower-ai/flower-providers
+- [x] Fill guidelines for @flower-ai/flower-tools-arms
+- [x] Fill guidelines for @flower-ai/flower-tools-common
+- [x] Fill guidelines for @flower-ai/flower-tools-gitlab
+- [x] Add code examples
 
 ---
 

@@ -1,54 +1,56 @@
 # Directory Structure
 
-> How frontend code is organized in this project.
-
----
-
-## Overview
-
-<!--
-Document your project's frontend directory structure here.
-
-Questions to answer:
-- Where do components live?
-- How are features/modules organized?
-- Where are shared utilities?
-- How are assets organized?
--->
-
-(To be filled by the team)
+> `@flower-ai/flower-providers` 的目录布局。
 
 ---
 
 ## Directory Layout
 
 ```
-<!-- Replace with your actual structure -->
-src/
-├── ...
-└── ...
+packages/flower-providers/
+├── src/
+│   └── index.ts      # 唯一公开入口:registerCompanyProviders + getDefaultModelId + CUSTOM_MODELS
+├── dist/
+├── package.json
+└── tsconfig.json
 ```
+
+**本包只有 1 个文件**。
 
 ---
 
 ## Module Organization
 
-<!-- How should new features be organized? -->
+`src/index.ts` 包含:
 
-(To be filled by the team)
+| 元素 | 类型 | 是否导出 |
+|------|------|---------|
+| `CUSTOM_MODELS` | module-level const | ❌(内部) |
+| `registerCompanyProviders(pi, options)` | 函数 | ✅ |
+| `getDefaultModelId(appSource)` | 函数 | ✅ |
+
+---
+
+## 何时需要拆文件
+
+当下"单文件"够用。下列情况发生时再拆:
+
+- 模型清单超过 ~50 行 → 拆 `models.ts`
+- 引入多个 provider(非单一 `company`) → 拆 `providers/<name>.ts`
+- 出现 model 选择策略的复杂规则(基于 token 用量 / 时段 / 用户) → 拆 `selector.ts`
 
 ---
 
 ## Naming Conventions
 
-<!-- File and folder naming rules -->
-
-(To be filled by the team)
+- 公开函数:`register<Domain>Providers`(`registerCompanyProviders`)
+- 私有常量:全大写下划线(`CUSTOM_MODELS`)
+- 模型 id:lowercase 加横杠(`company-gpt-4` / `company-gpt-4-mini`),贴近 OpenAI 命名习惯
+- 环境变量:`LLM_BASE_URL` / `LLM_API_KEY`(通用,所有产品都用同一组凭证)
 
 ---
 
 ## Examples
 
-<!-- Link to well-organized modules as examples -->
-
-(To be filled by the team)
+- 干净的 provider 注册:`src/index.ts:45-69`
+- 简单的模型选择策略:`src/index.ts:77-82`
