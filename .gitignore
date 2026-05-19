@@ -24,3 +24,6 @@ coverage/
 # 临时文件
 .tmp/
 tmp/
+
+# skill-garden 安装时生成的 workflow.md 备份(本地回滚用)
+.trellis/workflow.md.bak
