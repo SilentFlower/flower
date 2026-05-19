@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/pi-providers" },
+    { "path": "./packages/pi-tools-common" },
+    { "path": "./packages/pi-tools-arms" },
+    { "path": "./packages/pi-tools-gitlab" },
+    { "path": "./packages/pi-compliance" },
+    { "path": "./packages/code-reviewer" },
+    { "path": "./packages/ops-bot" }
+  ]
+}

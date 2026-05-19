@@ -1,0 +1,23 @@
+# 示例:在业务项目的 .gitlab-ci.yml 里加上这个 job,
+# 即可让 code-reviewer 在每次 MR 自动评审。
+
+code-review:
+  stage: review
+  image: yourcompany/code-reviewer:latest
+  rules:
+    # 只在 MR pipeline 运行
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  variables:
+    # GitLab token 通过 CI/CD masked variable 注入
+    GITLAB_TOKEN: $REVIEWER_BOT_TOKEN
+    # LLM 网关
+    COMPANY_LLM_BASE_URL: $COMPANY_LLM_BASE_URL
+    COMPANY_AI_TOKEN: $COMPANY_AI_TOKEN
+    # 审计
+    SIEM_INGEST_URL: $SIEM_INGEST_URL
+  script:
+    # /workspace 是 code-reviewer 的工作目录,需要让它能 git 访问
+    - flower-review --mr-iid $CI_MERGE_REQUEST_IID
+  # 失败也不阻塞 pipeline(由 agent 内部根据 blocker 决定 exit 1)
+  allow_failure: false
+  timeout: 10 minutes

@@ -1,0 +1,42 @@
+{
+  "name": "@flower-ai/ops-bot",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "钉钉运维机器人 HTTP 服务,基于 pi-agent-core 实现,接入阿里云 ARMS 实时查日志/指标/告警",
+  "keywords": ["pi", "agent", "dingtalk", "ops", "sre", "arms", "aliyun", "chatbot", "llm"],
+  "homepage": "https://github.com/SilentFlower/flower/tree/main/packages/ops-bot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SilentFlower/flower.git",
+    "directory": "packages/ops-bot"
+  },
+  "bugs": {
+    "url": "https://github.com/SilentFlower/flower/issues"
+  },
+  "license": "MIT",
+  "author": "silentflower",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "flower-ops-bot": "./dist/server.js"
+  },
+  "main": "./dist/server.js",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/server.js 2>/dev/null || true",
+    "clean": "tsc -p tsconfig.json --clean",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "^0.75.0",
+    "@earendil-works/pi-ai": "^0.75.0",
+    "@flower-ai/pi-tools-arms": "*",
+    "@flower-ai/pi-tools-common": "*",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0"
+  }
+}

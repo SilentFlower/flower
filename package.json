@@ -1,0 +1,39 @@
+{
+  "name": "flower",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI Agent 套件:GitLab Code Review + 钉钉运维机器人,基于 pi-mono 构建",
+  "homepage": "https://github.com/SilentFlower/flower#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SilentFlower/flower.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SilentFlower/flower/issues"
+  },
+  "license": "MIT",
+  "author": "silentflower",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean",
+    "check": "biome check --write .",
+    "typecheck": "tsc --build --noEmit",
+    "test": "npm run test --workspaces --if-present",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm run build && changeset publish"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.5",
+    "@changesets/cli": "^2.31.0",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

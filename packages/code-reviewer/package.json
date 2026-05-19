@@ -1,0 +1,43 @@
+{
+  "name": "@flower-ai/code-reviewer",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "GitLab Pipeline 代码评审 Agent,运行在 CI 容器内,自动评审 MR 并发表行内/整体评论",
+  "keywords": ["pi", "agent", "gitlab", "code-review", "ci", "merge-request", "llm"],
+  "homepage": "https://github.com/SilentFlower/flower/tree/main/packages/code-reviewer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SilentFlower/flower.git",
+    "directory": "packages/code-reviewer"
+  },
+  "bugs": {
+    "url": "https://github.com/SilentFlower/flower/issues"
+  },
+  "license": "MIT",
+  "author": "silentflower",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "flower-review": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "files": ["dist", "skills"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js 2>/dev/null || true",
+    "clean": "tsc -p tsconfig.json --clean",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.75.0",
+    "@earendil-works/pi-coding-agent": "^0.75.0",
+    "@flower-ai/pi-compliance": "*",
+    "@flower-ai/pi-providers": "*",
+    "@flower-ai/pi-tools-common": "*",
+    "@flower-ai/pi-tools-gitlab": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0"
+  }
+}
