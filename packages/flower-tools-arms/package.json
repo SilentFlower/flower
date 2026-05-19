@@ -1,0 +1,49 @@
+{
+  "name": "@flower-ai/flower-tools-arms",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "阿里云 ARMS / SLS 工具集,供 pi agent 查询日志、指标、告警、调用链",
+  "keywords": [
+    "pi",
+    "agent",
+    "tools",
+    "arms",
+    "sls",
+    "aliyun",
+    "observability",
+    "sre"
+  ],
+  "homepage": "https://github.com/SilentFlower/flower/tree/main/packages/flower-tools-arms#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SilentFlower/flower.git",
+    "directory": "packages/flower-tools-arms"
+  },
+  "bugs": {
+    "url": "https://github.com/SilentFlower/flower/issues"
+  },
+  "license": "MIT",
+  "author": "silentflower",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "tsc -p tsconfig.json --clean"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.75.0",
+    "@earendil-works/pi-coding-agent": "^0.75.0"
+  }
+}

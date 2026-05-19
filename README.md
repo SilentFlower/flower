@@ -149,7 +149,7 @@ Agent.prompt(text)        ← pi-agent-core Agent 实例
 
 #### a. 只读模式
 
-CI 里的 agent **不能改代码**。在 `pi-compliance` 里注册全局拦截器:
+CI 里的 agent **不能改代码**。在 `flower-compliance` 里注册全局拦截器:
 
 ```typescript
 pi.on("tool_call", async (event) => {
@@ -168,7 +168,7 @@ pi.on("tool_call", async (event) => {
 #### b. Skill 文件存评审标准
 
 ```
-packages/code-reviewer/skills/
+packages/flower-code-reviewer/skills/
 ├── general-review.md       # 通用清单
 ├── backend-review.md       # 后端(并发、数据库、安全)
 ├── frontend-review.md      # 前端(性能、可访问性)
@@ -261,34 +261,34 @@ ARMS 日志里可能有 PII(手机、身份证、邮箱)。**在工具结果里�
 
 ## 共享层
 
-### packages/pi-providers
+### packages/flower-providers
 
 自定义 LLM 入口。两个产品都通过这里把 LLM provider(自部署网关 / 企业 AI Gateway / 任意 OpenAI 兼容服务)接入。
 
 ```typescript
 pi.registerProvider("company", {
   baseUrl: "https://ai-gateway.corp.internal/v1",
-  apiKey: "COMPANY_AI_TOKEN",
+  apiKey: "LLM_API_KEY",
   api: "openai-completions",
   models: [/* 允许使用的模型清单 */],
   headers: { "X-App-Source": process.env.APP_NAME },
 });
 ```
 
-### packages/pi-tools-common
+### packages/flower-tools-common
 
 跨产品通用的工具:Jira、Wiki、内部文档检索等。
 
-### packages/pi-tools-arms
+### packages/flower-tools-arms
 
 阿里云 ARMS / SLS 工具集。**仅 ops-bot 使用**(code-reviewer 不该看监控)。
 
-### packages/pi-tools-gitlab
+### packages/flower-tools-gitlab
 
 GitLab API 工具集。**仅 code-reviewer 使用**。
 > 注:ops-bot 不应该有写 GitLab 的能力,职责隔离。
 
-### packages/pi-compliance
+### packages/flower-compliance
 
 审计 + 合规扩展。两个产品都加载,但开启不同模式:
 
@@ -309,11 +309,11 @@ flower/
 ├── .env.example                         # 环境变量模板
 │
 └── packages/
-    ├── pi-providers/                    # 共享:LLM provider 注册
-    ├── pi-tools-common/                 # 共享:通用工具
-    ├── pi-tools-arms/                   # 共享:ARMS 工具(给 ops-bot)
-    ├── pi-tools-gitlab/                 # 共享:GitLab 工具(给 code-reviewer)
-    ├── pi-compliance/                   # 共享:合规 + 审计扩展
+    ├── flower-providers/                    # 共享:LLM provider 注册
+    ├── flower-tools-common/                 # 共享:通用工具
+    ├── flower-tools-arms/                   # 共享:ARMS 工具(给 ops-bot)
+    ├── flower-tools-gitlab/                 # 共享:GitLab 工具(给 code-reviewer)
+    ├── flower-compliance/                   # 共享:合规 + 审计扩展
     │
     ├── code-reviewer/                   # 产品 1
     │   ├── src/
@@ -368,11 +368,11 @@ npm run check
 
 ```bash
 # code-reviewer 本地试跑
-cd packages/code-reviewer
+cd packages/flower-code-reviewer
 npm run dev -- --mr-iid 123
 
 # ops-bot 本地起服务
-cd packages/ops-bot
+cd packages/flower-ops-bot
 npm run dev
 # 访问 http://localhost:3000/dingtalk/webhook
 ```
@@ -395,8 +395,8 @@ npm run dev
 
 ### 第 1 周:基础设施(本仓库当前阶段)
 - [x] 搭 monorepo 骨架
-- [ ] `pi-providers` 接通目标 LLM 网关
-- [ ] `pi-compliance` 接通审计
+- [ ] `flower-providers` 接通目标 LLM 网关
+- [ ] `flower-compliance` 接通审计
 
 ### 第 2 周:`code-reviewer` MVP
 - [ ] GitLab 工具集(get_diff / post_comment)
@@ -423,7 +423,7 @@ npm run dev
 ### 后续:`ops-bot` 进阶能力(未排期)
 
 > 这些能力当前版本**暂不实现**,作为后续演进方向。详细方案见
-> [packages/ops-bot/README.md](packages/ops-bot/README.md#未来规划进阶能力)。
+> [packages/flower-ops-bot/README.md](packages/flower-ops-bot/README.md#未来规划进阶能力)。
 
 - [ ] **Plan-then-Execute**:复杂任务先列计划再执行(改 prompt 即可,P0)
 - [ ] **Diagnostic Sub-Agent**:复杂诊断派给专项子 agent,小模型搞不定时升级到大模型

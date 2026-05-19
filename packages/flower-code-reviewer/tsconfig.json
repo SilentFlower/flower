@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../flower-providers" },
+    { "path": "../flower-tools-common" },
+    { "path": "../flower-tools-gitlab" },
+    { "path": "../flower-compliance" }
+  ]
+}
