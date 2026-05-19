@@ -8,7 +8,7 @@
 
 本包**几乎不打日志**(初始化代码,正常路径无需输出)。
 
-- 错误路径:`throw new Error("LLM_BASE_URL 环境变量未配置")`,无需再 console
+- 错误路径:`throw new Error("LLM_BASE_URL 未配置")`,无需再 console
 - 成功路径:静默(由调用方在更高层决定是否日志"扩展加载成功")
 
 ---
@@ -20,6 +20,8 @@
 | `console.log` | **不用**(本包不输出常规日志) |
 | `console.warn` | **不用** |
 | `console.error` | **不用**(错误直接 throw,让顶层 catch 决定怎么打) |
+
+`registerHavefunProviders` / `getDefaultModel` / `buildHavefunModel` 三个公开函数都遵守上述约束。
 
 ---
 
@@ -58,10 +60,10 @@ console.log("api key length:", apiKey.length);
 
 ```typescript
 // 错误
-console.log("registered models:", CUSTOM_MODELS);
+console.log("registered models:", BUILTIN_MODELS);
 ```
 
-模型清单不算敏感,但是噪音。如果一定要 debug,通过 `DEBUG=flower-providers` env 控制,**不要默认输出**。
+模型清单不算敏感,但是噪音。如果一定要 debug,通过 `DEBUG_PROVIDERS` env 控制,**不要默认输出**。
 
 ### ❌ `appSource`
 
@@ -84,3 +86,4 @@ if (process.env.DEBUG_PROVIDERS === "1") {
 - 用专门的 `DEBUG_PROVIDERS` env 控制
 - 前缀 `[providers]`
 - **绝不**输出 apiKey / baseUrl
+- 提交代码前移除(或确认 env 默认未设置)

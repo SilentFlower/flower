@@ -2,13 +2,13 @@
  * 评审流程主控
  */
 
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { main as piMain } from "@earendil-works/pi-coding-agent";
+import type { CliArgs } from "./args.js";
 import extensionFactory from "./extension.js";
 import { buildPrompt } from "./prompts.js";
 import { pickSkill } from "./skill-selector.js";
-import type { CliArgs } from "./args.js";
 
 /**
  * 评审结果

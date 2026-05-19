@@ -9,7 +9,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCompliance } from "@flower-ai/flower-compliance";
-import { registerCompanyProviders } from "@flower-ai/flower-providers";
+import { registerHavefunProviders } from "@flower-ai/flower-providers";
 import { registerCommonTools } from "@flower-ai/flower-tools-common";
 import { registerGitlabTools } from "@flower-ai/flower-tools-gitlab";
 
@@ -17,7 +17,7 @@ import { registerGitlabTools } from "@flower-ai/flower-tools-gitlab";
  * 注册 code-reviewer 所需的全部能力
  */
 export default function (pi: ExtensionAPI): void {
-	registerCompanyProviders(pi, { appSource: "code-reviewer" });
+	registerHavefunProviders(pi, { appSource: "code-reviewer" });
 	registerCompliance(pi, { mode: "ci-readonly", product: "code-reviewer" });
 	registerCommonTools(pi);
 	registerGitlabTools(pi);

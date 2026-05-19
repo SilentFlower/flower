@@ -30,10 +30,7 @@ export type ComplianceMode = "ci-readonly" | "production-readonly";
  * @param options.mode - 合规模式
  * @param options.product - 产品名,审计字段里会带上,便于 SIEM 区分
  */
-export function registerCompliance(
-	pi: ExtensionAPI,
-	options: { mode: ComplianceMode; product: string },
-): void {
+export function registerCompliance(pi: ExtensionAPI, options: { mode: ComplianceMode; product: string }): void {
 	const { mode, product } = options;
 
 	// CI 模式:拦截危险工具

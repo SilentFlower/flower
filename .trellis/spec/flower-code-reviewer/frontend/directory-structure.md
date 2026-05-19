@@ -46,7 +46,7 @@ packages/flower-code-reviewer/
 ### 主流程
 
 - `run.ts`:**评审编排**。读环境变量 → 选 skill → 拼 prompt → 调 `piMain` → 扫评论决定 exitCode。**不直接调用 GitLab API**(那是 `@flower-ai/flower-tools-gitlab` 的事)。
-- `extension.ts`:**pi 扩展工厂**,导出 `default function(pi: ExtensionAPI): void`,按固定顺序调 `registerCompanyProviders → registerCompliance → registerCommonTools → registerGitlabTools`。**顺序不可换**:provider 必须先于 compliance,compliance 必须先于业务工具。
+- `extension.ts`:**pi 扩展工厂**,导出 `default function(pi: ExtensionAPI): void`,按固定顺序调 `registerHavefunProviders → registerCompliance → registerCommonTools → registerGitlabTools`。**顺序不可换**:provider 必须先于 compliance,compliance 必须先于业务工具。
 
 ### 辅助
 

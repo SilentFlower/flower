@@ -31,12 +31,7 @@ export interface BotComment {
 export interface GitlabClient {
 	getMrDiff(projectId: string, mrIid: number): Promise<string>;
 	getMrFiles(projectId: string, mrIid: number): Promise<string[]>;
-	postMrComment(
-		projectId: string,
-		mrIid: number,
-		body: string,
-		severity: "info" | "warning" | "blocker",
-	): Promise<void>;
+	postMrComment(projectId: string, mrIid: number, body: string, severity: "info" | "warning" | "blocker"): Promise<void>;
 	postMrLineComment(projectId: string, mrIid: number, input: LineCommentInput): Promise<void>;
 	getBotComments(projectId: string, mrIid: number): Promise<BotComment[]>;
 }

@@ -1,12 +1,9 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "outDir": "./dist",
-    "rootDir": "./src"
-  },
-  "include": ["src/**/*"],
-  "references": [
-    { "path": "../flower-tools-arms" },
-    { "path": "../flower-tools-common" }
-  ]
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"rootDir": "./src"
+	},
+	"include": ["src/**/*"],
+	"references": [{ "path": "../flower-tools-arms" }, { "path": "../flower-tools-common" }]
 }

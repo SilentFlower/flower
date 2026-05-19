@@ -8,9 +8,9 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { verifySignature } from "./signature.js";
-import { pushToSession } from "./push.js";
 import { handleMessage } from "../handler.js";
+import { pushToSession } from "./push.js";
+import { verifySignature } from "./signature.js";
 
 /**
  * 钉钉 webhook 请求体(简化版)
@@ -38,10 +38,7 @@ interface DingTalkRequest {
 /**
  * 处理钉钉消息回调
  */
-export async function handleDingTalkWebhook(
-	req: IncomingMessage,
-	res: ServerResponse,
-): Promise<void> {
+export async function handleDingTalkWebhook(req: IncomingMessage, res: ServerResponse): Promise<void> {
 	const body = await readBody(req);
 	const timestamp = req.headers.timestamp as string | undefined;
 	const sign = req.headers.sign as string | undefined;

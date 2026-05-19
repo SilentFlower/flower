@@ -14,11 +14,7 @@
  * @param text - 当前累积的全文(注意:不是 delta,是全量)
  * @param isFinal - 是否最后一次推送
  */
-export async function pushToSession(
-	sessionWebhook: string,
-	text: string,
-	isFinal: boolean,
-): Promise<void> {
+export async function pushToSession(sessionWebhook: string, text: string, isFinal: boolean): Promise<void> {
 	// 节流:非 final 的推送有最小间隔
 	if (!isFinal) {
 		const now = Date.now();

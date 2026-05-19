@@ -7,7 +7,7 @@
 ## Overview
 
 本包不连数据库、不写文件、不维护进程内可变状态。
-所有"配置"通过环境变量 + module-level 常量(`CUSTOM_MODELS`)定义。
+所有"配置"通过环境变量 + module-level 常量(`BUILTIN_MODELS`)定义;运维侧的扩展通过 `LLM_EXTRA_MODELS_JSON` env 注入。
 
 ---
 

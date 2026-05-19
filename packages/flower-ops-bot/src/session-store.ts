@@ -52,10 +52,7 @@ export async function getSession(conversationId: string): Promise<StoredSession 
 /**
  * 保存会话
  */
-export async function saveSession(
-	conversationId: string,
-	session: StoredSession,
-): Promise<void> {
+export async function saveSession(conversationId: string, session: StoredSession): Promise<void> {
 	await getBackend().set(buildKey(conversationId), session);
 }
 

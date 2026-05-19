@@ -7,8 +7,9 @@
 
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { streamSimple } from "@earendil-works/pi-ai";
-import { getSession, saveSession } from "./session-store.js";
+import { buildHavefunModel, getDefaultModel } from "@flower-ai/flower-providers";
 import { OPS_SYSTEM_PROMPT } from "./prompts.js";
+import { getSession, saveSession } from "./session-store.js";
 import { buildToolList } from "./tools.js";
 
 /**
@@ -51,6 +52,8 @@ export async function getOrCreateAgent(input: AgentFactoryInput): Promise<AgentI
 		streamFn: async (model, context, options) => {
 			return streamSimple(model, context, {
 				...options,
+				// 与 flower-providers 用同一个 env 来源:LLM_API_KEY
+				// pi-agent-core 的 streamSimple 协议要求直接传 apiKey,无法绕开
 				apiKey: process.env.LLM_API_KEY ?? "",
 			});
 		},
@@ -78,20 +81,11 @@ export async function persistAgent(conversationId: string, agent: Agent): Promis
 /**
  * 选用的模型
  *
- * @remarks 真实实现应该从 model registry 拉,这里先写死占位。
+ * @remarks 全部通过 `@flower-ai/flower-providers` 统一管理 —
+ *          模型清单 / baseUrl / 默认选择均由本进程的 env 配置驱动
+ *          (`LLM_PROVIDER` + `LLM_MODEL`)。任何变更只改 flower-providers。
  */
-// biome-ignore lint/suspicious/noExplicitAny: pi 的 Model 类型有泛型,占位实现简化处理
-function pickModel(): any {
-	return {
-		id: "company-gpt-4-mini",
-		name: "Custom GPT-4 Mini",
-		api: "openai-completions",
-		provider: "company",
-		baseUrl: process.env.LLM_BASE_URL ?? "",
-		reasoning: false,
-		input: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 64_000,
-		maxTokens: 4096,
-	};
+function pickModel() {
+	const { provider, modelId } = getDefaultModel();
+	return buildHavefunModel(provider, modelId);
 }

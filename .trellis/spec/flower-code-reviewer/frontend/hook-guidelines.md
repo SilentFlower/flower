@@ -23,11 +23,12 @@
 
 ```typescript
 // ✅ 标准签名
-export function registerCompanyProviders(
+export function registerHavefunProviders(
   pi: ExtensionAPI,
   options: { appSource: string },
 ): void {
-  pi.registerProvider("company", { ... });
+  pi.registerProvider("havefun-anthropic", { ... });
+  // ... 一次性注册 4 个 havefun-* provider
 }
 ```
 
@@ -38,7 +39,7 @@ export function registerCompanyProviders(
 3. **同步注册**:在 factory 里不要 `await`(注册行为本身是同步的;真要 async,放到 `pi.on` 回调里)
 4. **校验环境**:factory 内可以读 `process.env`,缺关键变量直接 `throw new Error("XXX 未配置")`,在 pi 启动前就 fail-fast
 
-参考实现:`packages/flower-providers/src/index.ts:45-69`(检查 `LLM_BASE_URL` / `LLM_API_KEY`,缺就抛错)
+参考实现:`packages/flower-providers/src/register.ts:registerHavefunProviders`(检查 `LLM_BASE_URL` / `LLM_API_KEY`,缺就抛错;一次性注册 4 个 provider)
 
 ### 顶层扩展(等价于"组合根 hook")
 
@@ -46,7 +47,7 @@ export function registerCompanyProviders(
 
 ```typescript
 export default function (pi: ExtensionAPI): void {
-  registerCompanyProviders(pi, { appSource: "code-reviewer" });
+  registerHavefunProviders(pi, { appSource: "code-reviewer" });
   registerCompliance(pi, { mode: "ci-readonly", product: "code-reviewer" });
   registerCommonTools(pi);
   registerGitlabTools(pi);

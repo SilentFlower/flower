@@ -16,12 +16,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
  * 禅道支持的对象类型
  */
 const zentaoEntityType = Type.Union(
-	[
-		Type.Literal("bug"),
-		Type.Literal("task"),
-		Type.Literal("story"),
-		Type.Literal("case"),
-	],
+	[Type.Literal("bug"), Type.Literal("task"), Type.Literal("story"), Type.Literal("case")],
 	{ description: "限定对象类型:bug(缺陷)/ task(任务)/ story(需求)/ case(用例)" },
 );
 

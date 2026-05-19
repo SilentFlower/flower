@@ -23,6 +23,7 @@ These guides help you **ask the right questions before coding**.
 |-------|---------|-------------|
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
+| [Debugging LLM Integration](./debugging-llm-integration.md) | LLM 网关接入"streaming 错误"类问题的决策树(先 curl 网关再怀疑 SDK 配置) | 接入新 LLM 网关时拿到 parser 错误 / 空响应 / 404 |
 
 ---
 
@@ -46,6 +47,15 @@ These guides help you **ask the right questions before coding**.
 - [ ] **You're creating a new utility/helper function** ← Search first!
 
 → Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md)
+
+### When to Think About LLM Integration Debugging
+
+- [ ] 接入新 LLM 网关首次跑通
+- [ ] `pi-ai streamSimple` / `complete` 报 `Incomplete JSON segment` / `Stream ended without finish_reason` / done event 内容空
+- [ ] "流式响应看起来收到了但 text 是空字符串"
+- [ ] 怀疑 SDK 与网关 SSE 不兼容(先验证不是路径问题再说)
+
+→ Read [Debugging LLM Integration](./debugging-llm-integration.md)
 
 ---
 

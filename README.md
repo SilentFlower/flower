@@ -276,11 +276,11 @@ ARMS 日志里可能有 PII(手机、身份证、邮箱)。**在工具结果里�
 自定义 LLM 入口。两个产品都通过这里把 LLM provider(自部署网关 / 企业 AI Gateway / 任意 OpenAI 兼容服务)接入。
 
 ```typescript
-pi.registerProvider("company", {
+pi.registerProvider("havefun-anthropic", {
   baseUrl: "https://ai-gateway.corp.internal/v1",
   apiKey: "LLM_API_KEY",
-  api: "openai-completions",
-  models: [/* 允许使用的模型清单 */],
+  api: "anthropic-messages",
+  models: [/* 允许使用的模型清单(各家族走原生协议)*/],
   headers: { "X-App-Source": process.env.APP_NAME },
 });
 ```

@@ -23,8 +23,7 @@ export { maskSensitive };
 export const armsQueryLogsTool = defineTool({
 	name: "arms_query_logs",
 	label: "ARMS 日志查询",
-	description:
-		"在阿里云 SLS 中查询日志。支持 SLS 查询语法,例如 'level:ERROR | select count(*)'",
+	description: "在阿里云 SLS 中查询日志。支持 SLS 查询语法,例如 'level:ERROR | select count(*)'",
 	parameters: Type.Object({
 		project: Type.String({ description: "SLS project 名,例如 'prod-app'" }),
 		logstore: Type.String({ description: "logstore 名" }),
@@ -32,12 +31,8 @@ export const armsQueryLogsTool = defineTool({
 		from: Type.String({
 			description: "起始时间,ISO 字符串或相对时间('1h ago' / '15m ago')",
 		}),
-		to: Type.Optional(
-			Type.String({ description: "结束时间,默认 'now'" }),
-		),
-		limit: Type.Optional(
-			Type.Number({ description: "返回行数上限,默认 100" }),
-		),
+		to: Type.Optional(Type.String({ description: "结束时间,默认 'now'" })),
+		limit: Type.Optional(Type.Number({ description: "返回行数上限,默认 100" })),
 	}),
 	async execute(_id, params, _signal) {
 		// TODO: 接入阿里云 SLS SDK
@@ -91,13 +86,7 @@ export const armsListAlertsTool = defineTool({
 	label: "ARMS 告警列表",
 	description: "列出当前活跃告警",
 	parameters: Type.Object({
-		severity: Type.Optional(
-			Type.Union([
-				Type.Literal("critical"),
-				Type.Literal("warning"),
-				Type.Literal("info"),
-			]),
-		),
+		severity: Type.Optional(Type.Union([Type.Literal("critical"), Type.Literal("warning"), Type.Literal("info")])),
 		app: Type.Optional(Type.String({ description: "限定应用名" })),
 	}),
 	async execute(_id, params) {
@@ -127,9 +116,7 @@ export const armsGetTraceTool = defineTool({
 	async execute(_id, params) {
 		// TODO: 接入 ARMS Trace API
 		return {
-			content: [
-				{ type: "text", text: `[Stub] arms_get_trace traceId=${params.traceId}` },
-			],
+			content: [{ type: "text", text: `[Stub] arms_get_trace traceId=${params.traceId}` }],
 			details: undefined,
 		};
 	},

@@ -1,12 +1,12 @@
 {
-  "files": [],
-  "references": [
-    { "path": "./packages/flower-providers" },
-    { "path": "./packages/flower-tools-common" },
-    { "path": "./packages/flower-tools-arms" },
-    { "path": "./packages/flower-tools-gitlab" },
-    { "path": "./packages/flower-compliance" },
-    { "path": "./packages/flower-code-reviewer" },
-    { "path": "./packages/flower-ops-bot" }
-  ]
+	"files": [],
+	"references": [
+		{ "path": "./packages/flower-providers" },
+		{ "path": "./packages/flower-tools-common" },
+		{ "path": "./packages/flower-tools-arms" },
+		{ "path": "./packages/flower-tools-gitlab" },
+		{ "path": "./packages/flower-compliance" },
+		{ "path": "./packages/flower-code-reviewer" },
+		{ "path": "./packages/flower-ops-bot" }
+	]
 }

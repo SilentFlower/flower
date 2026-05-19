@@ -17,11 +17,7 @@ export { gitlabClient } from "./client.js";
 /**
  * 严重程度
  */
-const severitySchema = Type.Union([
-	Type.Literal("info"),
-	Type.Literal("warning"),
-	Type.Literal("blocker"),
-]);
+const severitySchema = Type.Union([Type.Literal("info"), Type.Literal("warning"), Type.Literal("blocker")]);
 
 /**
  * 获取 MR 的 diff
@@ -118,10 +114,7 @@ export const gitlabGetPreviousReviewTool = defineTool({
 			content: [
 				{
 					type: "text",
-					text:
-						comments.length === 0
-							? "无历史评论"
-							: comments.map((c) => `- ${c.file ?? "[整体]"}: ${c.body}`).join("\n"),
+					text: comments.length === 0 ? "无历史评论" : comments.map((c) => `- ${c.file ?? "[整体]"}: ${c.body}`).join("\n"),
 				},
 			],
 			details: { count: comments.length },
@@ -136,9 +129,7 @@ function readEnv(): { projectId: string; mrIid: number } {
 	const projectId = process.env.CI_PROJECT_ID;
 	const mrIidRaw = process.env.CI_MERGE_REQUEST_IID;
 	if (!projectId || !mrIidRaw) {
-		throw new Error(
-			"CI_PROJECT_ID / CI_MERGE_REQUEST_IID 未设置,gitlab 工具只能在 CI 环境运行",
-		);
+		throw new Error("CI_PROJECT_ID / CI_MERGE_REQUEST_IID 未设置,gitlab 工具只能在 CI 环境运行");
 	}
 	const mrIid = Number.parseInt(mrIidRaw, 10);
 	if (Number.isNaN(mrIid)) {

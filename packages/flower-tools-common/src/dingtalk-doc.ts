@@ -26,13 +26,10 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 export const dingtalkDocSearchTool = defineTool({
 	name: "dingtalk_doc_search",
 	label: "钉钉文档搜索",
-	description:
-		"在钉钉知识库 / 文档中搜索内容。可限定某个知识库空间,或全局搜索整个企业的文档",
+	description: "在钉钉知识库 / 文档中搜索内容。可限定某个知识库空间,或全局搜索整个企业的文档",
 	parameters: Type.Object({
 		query: Type.String({ description: "搜索关键词" }),
-		spaceId: Type.Optional(
-			Type.String({ description: "限定钉钉知识库空间 ID(可选,不填则全局搜)" }),
-		),
+		spaceId: Type.Optional(Type.String({ description: "限定钉钉知识库空间 ID(可选,不填则全局搜)" })),
 		limit: Type.Optional(Type.Number({ description: "返回数量,默认 10" })),
 	}),
 	async execute(_id, params, _signal) {
