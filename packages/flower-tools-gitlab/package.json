@@ -38,10 +38,14 @@
 	],
 	"scripts": {
 		"build": "tsc -p tsconfig.json",
-		"clean": "tsc -p tsconfig.json --clean"
+		"clean": "tsc -p tsconfig.json --clean",
+		"test": "vitest run"
 	},
 	"dependencies": {
 		"@earendil-works/pi-ai": "^0.75.0",
 		"@earendil-works/pi-coding-agent": "^0.75.0"
+	},
+	"devDependencies": {
+		"vitest": "^3.2.4"
 	}
 }

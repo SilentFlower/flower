@@ -9,4 +9,5 @@
 export type { ModelThinkingLevel, ThinkingLevelMap } from "@earendil-works/pi-ai";
 export type { ProviderName } from "./catalog.js";
 export { registerHavefunProviders } from "./register.js";
-export { buildHavefunModel, getDefaultModel, getDefaultReasoningEffort } from "./runtime.js";
+export type { BuildPiCliArgsInput } from "./runtime.js";
+export { buildHavefunModel, buildPiCliArgs, getDefaultModel, getDefaultReasoningEffort } from "./runtime.js";

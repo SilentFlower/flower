@@ -12,6 +12,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { gitlabClient } from "./client.js";
 
+export type { BotComment, GitlabClient, LineCommentInput } from "./client.js";
 export { gitlabClient } from "./client.js";
 
 /**

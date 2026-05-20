@@ -10,6 +10,14 @@ import { PROVIDER_TO_API, type ProviderName } from "./catalog.js";
 import { getLLMModel, getLLMProvider, getLLMReasoningEffort, getMergedModels, resolveProviderBaseUrl } from "./env.js";
 
 /**
+ * `buildPiCliArgs` 入参
+ */
+export interface BuildPiCliArgsInput {
+	/** 已构造好的 prompt 字符串(将作为 `-p <prompt>` 传给 pi-coding-agent) */
+	prompt: string;
+}
+
+/**
  * 每个 builtin model 在 `LLM_REASONING_EFFORT` 未配置时的默认 effort
  *
  * @remarks 设计原则:env 不配时拉到该 model 实际"上限",运维省心。
@@ -155,4 +163,63 @@ export function buildHavefunModel(provider: ProviderName, modelId: string): Mode
 		...(model.thinkingLevelMap ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
 	};
 	return result as unknown as Model<Api>;
+}
+
+/**
+ * 把 `LLM_MODEL` / `LLM_REASONING_EFFORT` env 翻译成 pi-coding-agent CLI argv
+ *
+ * 与 ops-bot 形态的 `buildHavefunModel` + `getDefaultReasoningEffort` 对称:
+ * 后者把 env 解析成 SDK 入参(`Model<Api>` + `ModelThinkingLevel`),本函数把同样的
+ * env 解析成 print 模式 argv(`string[]`),供 `piMain(argv, ...)` 直接消费。
+ *
+ * @param input - 入参,见 {@link BuildPiCliArgsInput}
+ * @returns pi-coding-agent CLI argv,起头固定 `["-p", prompt]`;附加 `--model <id>`(若 `LLM_MODEL` 已配置)
+ *          与 `--thinking <effort>`(若 `LLM_REASONING_EFFORT` 已配置且合法)
+ * @throws 当 `LLM_REASONING_EFFORT` 配置了非法值时,沿用 `getLLMReasoningEffort` 的 fail-fast 抛错
+ *
+ * @remarks 设计要点:
+ *          - **env 缺省则不传对应 argv**,让 pi CLI 走它自己的默认(prompt-only)
+ *          - **不**复用 `getDefaultReasoningEffort`:那是 ops-bot 形态在 env 缺省时填默认用的;
+ *            CLI 路径若 env 不配,应**透传**给 pi CLI 决定默认(避免本层与 pi CLI 双默认冲突)
+ *          - **`LLM_MODEL` 缺省允许**:try-catch `getLLMModel`,缺省走 pi CLI 默认 model
+ *          - **`LLM_REASONING_EFFORT` 非法值仍 fail-fast**:沿用 `getLLMReasoningEffort` 校验,避免带病运行
+ *
+ * @example
+ * ```typescript
+ * // env: LLM_MODEL=gpt-5.5 / LLM_REASONING_EFFORT=xhigh
+ * const argv = buildPiCliArgs({ prompt: "评审这个 MR" });
+ * // argv = ["-p", "评审这个 MR", "--model", "gpt-5.5", "--thinking", "xhigh"]
+ * await piMain(argv, { extensionFactories: [...] });
+ * ```
+ */
+export function buildPiCliArgs(input: BuildPiCliArgsInput): string[] {
+	const argv: string[] = ["-p", input.prompt];
+
+	// LLM_PROVIDER + LLM_MODEL 各自显式传给 pi CLI。
+	// **关键**:pi 内置 modelRegistry 可能有与我们 BUILTIN_MODELS 同名的 model id(如 `gpt-5.5`);
+	// 同时 ~/.pi/agent/settings.json 的 `defaultProvider` 也会影响 model 解析,
+	// 必须用 `--provider <name> --model <id>` 显式覆盖,确保精确命中我们注册的 havefun-* provider。
+	let provider: string | undefined;
+	try {
+		provider = getLLMProvider();
+	} catch {
+		provider = undefined; // LLM_PROVIDER 缺省 / 非法时降级到只传 model
+	}
+	if (provider !== undefined) {
+		argv.push("--provider", provider);
+	}
+	try {
+		const modelId = getLLMModel();
+		argv.push("--model", modelId);
+	} catch {
+		// LLM_MODEL 未配置或为空字符串,argv 不附加 --model
+	}
+
+	// LLM_REASONING_EFFORT 缺省允许(pi CLI 自己有默认);配置则透传,非法值 fail-fast 沿用 getLLMReasoningEffort 校验
+	const effort = getLLMReasoningEffort();
+	if (effort !== undefined) {
+		argv.push("--thinking", effort);
+	}
+
+	return argv;
 }

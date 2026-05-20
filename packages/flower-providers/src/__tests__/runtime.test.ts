@@ -1,9 +1,9 @@
 /**
- * `runtime.ts` 单元测试:getDefaultModel + buildHavefunModel
+ * `runtime.ts` 单元测试:getDefaultModel + buildHavefunModel + buildPiCliArgs
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildHavefunModel, getDefaultModel, getDefaultReasoningEffort } from "../runtime.js";
+import { buildHavefunModel, buildPiCliArgs, getDefaultModel, getDefaultReasoningEffort } from "../runtime.js";
 
 const ENV_KEYS = [
 	"LLM_BASE_URL",
@@ -277,5 +277,81 @@ describe("getDefaultReasoningEffort", () => {
 		process.env.LLM_REASONING_EFFORT = "max";
 		expect(() => getDefaultReasoningEffort()).toThrow(/LLM_REASONING_EFFORT 非法值/);
 		expect(() => getDefaultReasoningEffort("claude-opus-4-7")).toThrow(/LLM_REASONING_EFFORT 非法值/);
+	});
+});
+
+describe("buildPiCliArgs — env → pi-coding-agent CLI argv", () => {
+	let snap: Record<string, string | undefined>;
+	beforeEach(() => {
+		snap = snapshotEnv();
+		clearEnv();
+	});
+	afterEach(() => restoreEnv(snap));
+
+	const PROMPT = "评审这个 MR";
+
+	it("env 全空 → argv = ['-p', prompt],不附加 --model / --thinking", () => {
+		const argv = buildPiCliArgs({ prompt: PROMPT });
+		expect(argv).toEqual(["-p", PROMPT]);
+	});
+
+	it("仅配 LLM_MODEL(无 LLM_PROVIDER)→ argv 附加 --model <id>(降级路径)", () => {
+		process.env.LLM_MODEL = "gpt-5.5";
+		const argv = buildPiCliArgs({ prompt: PROMPT });
+		expect(argv).toEqual(["-p", PROMPT, "--model", "gpt-5.5"]);
+	});
+
+	it("LLM_PROVIDER + LLM_MODEL 都配 → argv 用 --provider <name> --model <id>(避免与 pi 内置同名冲突)", () => {
+		process.env.LLM_PROVIDER = "havefun-openai-responses";
+		process.env.LLM_MODEL = "gpt-5.5";
+		const argv = buildPiCliArgs({ prompt: PROMPT });
+		expect(argv).toEqual(["-p", PROMPT, "--provider", "havefun-openai-responses", "--model", "gpt-5.5"]);
+	});
+
+	it("仅配 LLM_REASONING_EFFORT → argv 附加 --thinking", () => {
+		process.env.LLM_REASONING_EFFORT = "xhigh";
+		const argv = buildPiCliArgs({ prompt: PROMPT });
+		expect(argv).toEqual(["-p", PROMPT, "--thinking", "xhigh"]);
+	});
+
+	it("PROVIDER + MODEL + EFFORT 三全配(任务实际场景)", () => {
+		process.env.LLM_PROVIDER = "havefun-openai-responses";
+		process.env.LLM_MODEL = "gpt-5.5";
+		process.env.LLM_REASONING_EFFORT = "xhigh";
+		const argv = buildPiCliArgs({ prompt: PROMPT });
+		expect(argv).toEqual([
+			"-p",
+			PROMPT,
+			"--provider",
+			"havefun-openai-responses",
+			"--model",
+			"gpt-5.5",
+			"--thinking",
+			"xhigh",
+		]);
+	});
+
+	it("LLM_PROVIDER 非法值 + LLM_MODEL 合法 → 降级到只传 model id(不阻断)", () => {
+		process.env.LLM_PROVIDER = "not-a-provider";
+		process.env.LLM_MODEL = "gpt-5.5";
+		const argv = buildPiCliArgs({ prompt: PROMPT });
+		expect(argv).toEqual(["-p", PROMPT, "--model", "gpt-5.5"]);
+	});
+
+	it("LLM_MODEL 空字符串 → argv 不附加 --model(等同未配置)", () => {
+		process.env.LLM_MODEL = "   "; // 全空白
+		const argv = buildPiCliArgs({ prompt: PROMPT });
+		expect(argv).toEqual(["-p", PROMPT]);
+	});
+
+	it("LLM_REASONING_EFFORT 非法值 → 立即抛错(沿用 getLLMReasoningEffort 校验)", () => {
+		process.env.LLM_REASONING_EFFORT = "super-high";
+		expect(() => buildPiCliArgs({ prompt: PROMPT })).toThrow(/LLM_REASONING_EFFORT 非法值/);
+	});
+
+	it("LLM_REASONING_EFFORT = 'off' → argv 含 --thinking off(透传给 pi CLI)", () => {
+		process.env.LLM_REASONING_EFFORT = "off";
+		const argv = buildPiCliArgs({ prompt: PROMPT });
+		expect(argv).toEqual(["-p", PROMPT, "--thinking", "off"]);
 	});
 });
