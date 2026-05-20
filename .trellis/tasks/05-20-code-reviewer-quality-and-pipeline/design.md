@@ -130,18 +130,24 @@ function supportsAlertBlock(v: { major: number; minor: number } | null): boolean
 
 **REST API**:`GET /api/v4/projects/{id}/repository/files/{path}/raw?ref={ref}`
 
-**TS 签名**:
+**TS 签名**(2026-05-20 实施后修订):
 ```ts
 /**
  * 拉取 GitLab 仓库内任意 ref 的文件原始内容。
- * @param project_id 数字 ID(不接受 namespace/path 形式)
+ *
+ * 工具暴露给 LLM 的 schema 仅 { path, ref }(projectId 从 env CI_PROJECT_ID
+ * 隐式读取,避免 LLM 跨项目越权 + 减少 prompt 噪声)。
+ *
+ * 工具 execute 层会通过 `safeReadFile` wrapper 兜底:
+ *   - 文件 size > FLOWER_MAX_FILE_SIZE(默认 50KB)→ 截断 + 标注
+ *   - 二进制后缀(.png / .lock / .pdf 等 18 类)→ 直接返回 HTML 注释 placeholder
+ *
  * @param path 仓库内相对路径(URL encoding 由本函数处理)
- * @param ref 任意 ref(branch / tag / commit sha;默认 source HEAD 由调用方传)
- * @returns 文件文本内容(UTF-8;二进制由调用方判断后跳过)
- * @throws GitlabApiError {404: not_found, 5xx: retryable}
+ * @param ref  任意 ref(branch / tag / commit sha;默认 source HEAD 由调用方传)
+ * @returns 文件文本内容(UTF-8;经 safeReadFile 截断/跳过后)
+ * @throws AuthError(401/403)/ FileNotFoundError(404)/ RetryableError(5xx 重试后)
  */
 async function gitlab_get_file_content(args: {
-  project_id: number;
   path: string;
   ref: string;
 }): Promise<string>;

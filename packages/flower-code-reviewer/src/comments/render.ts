@@ -7,10 +7,11 @@
  * - render 函数是**纯函数**,无 IO、无副作用,可在任意位置调用
  *
  * 设计要点:
- * - severity 词表为 `blocker | major | minor`,沿用 research/comment-style.md §6 模板的中文 PR bot 习惯
- *   (与 flower-tools-gitlab 工具 wrapper 的 `info | warning | blocker` 参数解耦,Phase 1 不动 wrapper)
+ * - severity 词表统一为 `blocker | major | minor`,**与 flower-tools-gitlab 工具 wrapper 的
+ *   `severitySchema` 完全对齐**(2026-05-20 词表统一,原 `info | warning | blocker` 已弃用)
  * - 行内评论体首行**必须**包含字面量 `[severity:<level>]`,`run.ts:scanForBlockers` 凭此正则识别 blocker
- * - emoji 用 unicode 字符(🟥 / 🟠 / 💡),不用 GLFM shortcode(`:red_square:`) — GitLab 渲染兼容性最高
+ * - emoji 用 unicode 字符(🔴 / 🟠 / 🔵),与 research/comment-style.md §5/§6 模板严格一致;
+ *   不用 GLFM shortcode(`:red_circle:`) — GitLab 渲染兼容性最高
  * - 整体评论 walkthrough **整 body 包在 `<details>` 里默认折叠**,避免刷屏
  * - 「无问题」轻量模板只发 2 行,避免无意义噪声
  */
