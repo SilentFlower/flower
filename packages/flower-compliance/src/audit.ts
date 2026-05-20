@@ -45,6 +45,10 @@ export async function sendAudit(record: AuditRecord): Promise<void> {
 			signal: AbortSignal.timeout(2000),
 		});
 	} catch (err) {
-		console.warn("[audit] 上报失败:", err);
+		// 单行 warn,避免 fetch failed 多层 cause + stack 刷屏 GitLab CI 日志
+		let msg = err instanceof Error ? err.message : String(err);
+		const code = (err as { cause?: { code?: string } })?.cause?.code;
+		if (code) msg += ` (${code})`;
+		console.warn(`[audit] 上报失败: ${msg}`);
 	}
 }
