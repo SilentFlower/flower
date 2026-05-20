@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/flower-tools-gitlab/backend/quality-guidelines.md", "reason": "check 阶段验证 client.ts 实装是否符合本包质量约束(轻量 fetch / 无 @gitbeaker / 接口契约不破)"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/error-handling.md", "reason": "check 阶段验证错误处理矩阵实现完整(401/403/404/429/5xx 分别有可读错误信息)"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/logging-guidelines.md", "reason": "check 阶段扫描 console.log / console.warn / new Error 调用,确认无 token / diff / 评论 body 泄漏"}
+{"file": ".trellis/spec/flower-providers/backend/quality-guidelines.md", "reason": "check 阶段验证 buildPiCliArgs 是否符合本包「env 解析集中 + 纯函数 + 与 getDefaultReasoningEffort 解耦」原则"}
+{"file": ".trellis/spec/flower-providers/backend/error-handling.md", "reason": "check 阶段验证 buildPiCliArgs 对 LLM_REASONING_EFFORT 非法值的 fail-fast 行为符合本包矩阵"}
+{"file": ".trellis/spec/flower-compliance/backend/quality-guidelines.md", "reason": "check 阶段验证新增单测的覆盖范围与 mock 策略符合本包约束"}
+{"file": ".trellis/spec/flower-compliance/backend/error-handling.md", "reason": "check 阶段验证拦截 reason 文案 + audit.ts fail-safe 行为与本规范一致"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "check 阶段验证 run.ts 改造与 code-reviewer 入口层质量约束一致(无过度抽象 / 注释精炼)"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "check 阶段反思:run.ts 的 blocker 扫描 + getBotComments snapshot 模式是否在仓库其他地方已有可复用 helper"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "check 阶段验证跨层数据流:env → flower-providers → pi argv → pi CLI → flower-tools-gitlab REST → GitLab UI 评论,任一层换契约都要联动"}

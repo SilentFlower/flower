@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/flower-tools-gitlab/backend/index.md", "reason": "R1 REST 客户端核心约定:5 endpoint + position 必填字段 + PRIVATE-TOKEN 鉴权 + fail-loud 策略"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/error-handling.md", "reason": "R1 API 错误处理矩阵:401/403/404/429/5xx 各自的语义与重试策略"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/logging-guidelines.md", "reason": "R1 实装时严禁打 token / diff 内容 / 评论 body 全文(防泄漏)"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/directory-structure.md", "reason": "R1 当前布局 + 新增 __tests__/ 应落到何处"}
+{"file": ".trellis/spec/flower-providers/backend/index.md", "reason": "R4 buildPiCliArgs 接口对称性约束:与 buildHavefunModel + getDefaultReasoningEffort 在同一文件,re-export 至 index.ts"}
+{"file": ".trellis/spec/flower-providers/backend/error-handling.md", "reason": "R4 fail-fast 启动期检查矩阵 + LLM_BASE_URL 经 resolveProviderBaseUrl 拼后缀的约束(避免误用)"}
+{"file": ".trellis/spec/flower-compliance/backend/index.md", "reason": "R5 拦截规则边界 + 审计事件 hook 顺序 + ci-readonly vs production-readonly 模式差异"}
+{"file": ".trellis/spec/flower-compliance/backend/error-handling.md", "reason": "R5 单测 mock 时必须覆盖的错误路径(audit 失败 fail-safe / 拦截 block 语义)"}
+{"file": ".trellis/spec/flower-compliance/backend/logging-guidelines.md", "reason": "R5 audit.ts 单测断言 console.warn / console.log 行为时遵循的约束"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "R2/R3 code-reviewer 作为对外入口的整体约定,run.ts 改造需符合"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "R2/R3 run.ts 实装时遵循的质量约束(KISS / YAGNI / 注释风格)"}
+{"file": ".trellis/spec/guides/index.md", "reason": "shared thinking guides 总入口,实装前 skim 一遍"}
+{"file": ".trellis/spec/guides/debugging-llm-integration.md", "reason": "Step 7-9 e2e 跑通时若 LLM 网关报 Incomplete JSON / 空 done event,按本指南决策树排错(先 curl 网关再怀疑 SDK)"}
