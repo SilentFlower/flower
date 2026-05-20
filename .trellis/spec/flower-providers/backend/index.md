@@ -36,5 +36,13 @@
 4. **`appSource` 仅是 header 标签**:不参与模型选择 / 路由,模型选择由部署单元的 env 决定
 5. **`LLM_BASE_URL` 是网关根 URL**:用户 env 只配根 URL(如 `https://jp-ai.havefun.eu.cc`),本包 `catalog.ts:PROVIDER_PATH_SUFFIX` + `env.ts:resolveProviderBaseUrl(provider)` 自动按 provider 拼正确后缀(openai-* → `/v1`,gemini → `/v1beta`,anthropic 无后缀)。**不要在 `register.ts` / `runtime.ts` 内直接用 `getLLMBaseUrl()` 给 model 赋值** — 必须经 `resolveProviderBaseUrl(provider)`。详见 [error-handling Common Mistakes](./error-handling.md#-把-llm_base_url-当-4-个-provider-共用的完整-baseurl-直接透传)
 6. **reasoning effort 由 env + per-model 默认决定**:`runtime.ts:getDefaultReasoningEffort(modelId?)` 是公开 API,优先级 env (`LLM_REASONING_EFFORT`) > per-model 默认 > 全局 fallback `"high"`。仅 ops-bot 形态的 streamFn 调用;code-reviewer 由 pi CLI 自己管 thinking level(`/thinking` 命令)。pi 的 `ThinkingLevel` 只有 5 级无 `max`,对 Anthropic Opus 4.7 这种实际最高是 `"max"` 的 model,在 `catalog.ts:BUILTIN_MODELS` 中显式声明 `thinkingLevelMap: { xhigh: "max", ... }` 把 pi 最高映射到 anthropic 实际最高。
+7. **两个消费者的对称接口**:flower-providers 同时服务 ops-bot 与 code-reviewer,二者形态不同,接口分两条:
+
+   | 消费者 | 入口形态 | flower-providers 提供 | 输出 |
+   |--|--|--|--|
+   | ops-bot | `new Agent({ streamFn })` SDK | `buildHavefunModel` + `getDefaultReasoningEffort` | `Model<Api>` + `ModelThinkingLevel` |
+   | code-reviewer | `piMain(argv, ...)` CLI print 模式 | `buildPiCliArgs({ prompt })` | `string[]` argv |
+
+   `buildPiCliArgs` 把同样的 env(`LLM_PROVIDER` / `LLM_MODEL` / `LLM_REASONING_EFFORT`)翻译成 pi-coding-agent CLI 的 `--provider <name> --model <id> --thinking <effort>` 形式。**关键**:必须用 `--provider X --model Y` 分开传,不能只传 `--model X/Y` 或 `--model Y`——pi 内置 modelRegistry 可能有同名 model id(如 `gpt-5.5`),且 `~/.pi/agent/settings.json` 的 `defaultProvider` 也会影响 model 解析,只传 `--model` 时会被 pi 内置 provider(如 `azure-openai-responses`)抢占 → "No API key found"。
 
 > **Warning**:网关 `/v1/models` 返回的 `supported_endpoint_types` 字段**可能漏报**(实测 `gpt-5.5` 漏报对 `openai-response` 协议的支持)。`BUILTIN_MODELS.nativeApi` **以人工知识为准**,不机械跟随网关返回值。如果新增模型把握不准协议支持,先 `curl` 网关对应 endpoint(`POST /v1/responses` / `POST /v1beta/models/{model}:generateContent` 等)实测,再写入 `nativeApi`。

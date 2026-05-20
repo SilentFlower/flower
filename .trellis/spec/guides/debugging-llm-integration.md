@@ -140,7 +140,27 @@ curl -sS -X POST https://your-gateway.example.com/v1/messages \
 2. **"中间层告诉我不支持" 不是结论**:验证流程必须包含官方文档对照;如果有 API 访问权,curl 实测一次成本更低
 3. **绕开中间层的方式是声明式映射,不是特判分支**:用 `ThinkingLevelMap`(配置)而非 `if (modelId === ...)`(代码),后者会在每接入新 model 时膨胀
 
+## 真实案例(pi-coding-agent print 模式被默认 provider 抢占)
+
+**症状**:flower-code-reviewer e2e 真跑时报 `No API key found for azure-openai-responses`,即使 env 已配 `LLM_PROVIDER=havefun-openai-responses` + `LLM_MODEL=gpt-5.5`,且 extension 已 `pi.registerProvider("havefun-openai-responses", ...)`。
+
+**误判轨迹**:
+1. 第一反应:LLM 网关问题 → curl `https://jp-ai.havefun.eu.cc/v1/responses` 验证,200 正常
+2. 第二反应:flower-providers 注册失败 → 看 register.ts 代码,逻辑没问题
+3. 第三反应:argv 没传 `--model` → 加 `--model gpt-5.5`,**仍报同样错**
+4. 第四反应:argv 形式应为 `--model provider/model` → 改成 `--model havefun-openai-responses/gpt-5.5`,**还是报错**
+
+**根因**:`~/.pi/agent/settings.json` 有 `defaultProvider: "openai"` + `defaultModel: "gpt-5.5"`,pi 内置 `openai` provider 又把 `gpt-5.5` 路由到 `azure-openai-responses` 协议;**没有显式 `--provider` 时,pi 用 settings 默认 + 内置 modelRegistry 解析**,我们注册的 `havefun-openai-responses` 同名 model 被"挤掉"。
+
+**修复**:`buildPiCliArgs` 同时输出 `--provider <name>` 和 `--model <id>` 两个独立 flag,显式覆盖 settings.json 的 default。修后链路立即跑通。
+
+**教训**:
+1. **pi CLI 的 model 解析受 `~/.pi/agent/settings.json` 影响**:同名 model id + 默认 provider 会"抢"我们的 extension 注册结果;CLI 形态务必同时显式传 `--provider` + `--model`
+2. **错误信息中的 provider 名(如 `azure-openai-responses`)是 pi 解析到的最终 model.provider,不是我们 env 配的 provider**:看到陌生 provider 名时,**第一步是 dump 实际传给 pi 的 argv**,验证是否真的传了 `--provider`,不要假设
+3. **加 debug 日志的成本极低**:在 `await piMain(piArgv, ...)` 前 `console.error("piArgv:", JSON.stringify(piArgv))`,5 分钟解决 30 分钟的猜测
+4. **buildPiCliArgs 单测覆盖应该有"PROVIDER + MODEL 都配 → argv 含 --provider 和 --model"的 case**:本任务最初遗漏 `--provider` 是因为单测当时只覆盖了 `--model` 路径
+
 ## Related Specs
 
 - [flower-providers/backend/error-handling.md](../flower-providers/backend/error-handling.md) — Common Mistakes 章节有具体修复模板
-- [flower-providers/backend/index.md](../flower-providers/backend/index.md) — 关键设计点 #5
+- [flower-providers/backend/index.md](../flower-providers/backend/index.md) — 关键设计点 #5 / #7(buildPiCliArgs 对称接口)
