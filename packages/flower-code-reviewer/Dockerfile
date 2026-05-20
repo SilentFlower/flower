@@ -50,6 +50,12 @@ COPY --from=builder /build/node_modules            ./node_modules
 COPY --from=builder /build/packages                ./packages
 COPY --from=builder /build/package.json            ./
 
+# PATH 上挂 flower-review wrapper:GitLab CI script 模式不走 ENTRYPOINT,
+# 业务方接入模板用 `flower-review --mr-iid $CI_MERGE_REQUEST_IID` 必须能直接调用
+RUN printf '#!/bin/sh\nexec node /app/packages/flower-code-reviewer/dist/cli.js "$@"\n' \
+      > /usr/local/bin/flower-review && \
+    chmod +x /usr/local/bin/flower-review
+
 WORKDIR /workspace
 
 ENTRYPOINT ["node", "/app/packages/flower-code-reviewer/dist/cli.js"]
