@@ -31,6 +31,10 @@ COPY tsconfig.json                   ./
 RUN npx tsc --build packages/flower-code-reviewer/tsconfig.json && \
     chmod +x packages/flower-code-reviewer/dist/cli.js
 
+# 砍 devDeps(biome / typescript / vitest / tsx 等只在 build 阶段需要),
+# 让 runtime 镜像 node_modules 只剩 prod deps,显著减重(预期 ~150MB 节省)
+RUN npm prune --omit=dev --no-audit --no-fund
+
 # ---------- 运行时镜像 ----------
 FROM node:22-alpine
 
