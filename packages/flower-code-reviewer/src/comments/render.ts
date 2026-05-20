@@ -100,10 +100,10 @@ export interface CleanReviewInput {
  * emoji 选用与 research/comment-style.md §6 模板、§7 对照表一致的 unicode 字符
  * (🔴/🟠/🔵),GitHub / GitLab 直接渲染无需 emoji shortcode。
  */
-const SEVERITY_META: Record<Severity, { emoji: string; englishLabel: string }> = {
-	blocker: { emoji: "🔴", englishLabel: "Blocker" },
-	major: { emoji: "🟠", englishLabel: "Major" },
-	minor: { emoji: "🔵", englishLabel: "Minor" },
+const SEVERITY_META: Record<Severity, { emoji: string; label: string }> = {
+	blocker: { emoji: "🔴", label: "阻塞" },
+	major: { emoji: "🟠", label: "重要" },
+	minor: { emoji: "🔵", label: "建议" },
 };
 
 /**
@@ -224,15 +224,13 @@ export function renderInlineComment(input: InlineCommentInput): string {
 	const meta = SEVERITY_META[input.severity];
 	const parts: string[] = [];
 
-	// 段 1:斜体 severity 标签行(`_<emoji> <english>_`)
-	parts.push(`_${meta.emoji} ${meta.englishLabel}_ [severity:${input.severity}]`);
+	// 段 1:emoji + 中文等级 + 标题 一行(紧凑,等级与标题用 · 分隔)
+	// 不在 body 写 [severity:*] 字面 marker;blocker 的机器可读 marker 由 wrapper 工具
+	// 以 HTML 注释形式注入,不污染用户视图
+	parts.push(`${meta.emoji} **${meta.label}** · ${input.title}`);
 	parts.push("");
 
-	// 段 2:加粗中文标题(末尾不加句号,LLM 自己控制语气)
-	parts.push(`**${input.title}**`);
-	parts.push("");
-
-	// 段 3:解释段
+	// 段 2:解释段
 	parts.push(input.explanation);
 
 	// 段 4a:修复建议折叠

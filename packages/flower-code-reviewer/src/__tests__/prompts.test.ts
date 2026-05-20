@@ -48,7 +48,7 @@ describe("buildPrompt · 7 条硬约束", () => {
 		expect(prompt).toContain("「无问题」轻量评论");
 		expect(prompt).toContain("quick action 禁令");
 		expect(prompt).toContain("GLFM 兼容");
-		expect(prompt).toContain("[severity:<level>]");
+		expect(prompt).toContain("🔴 **阻塞**");
 		// 第 7 项
 		expect(prompt).toContain("真实代码上下文约束");
 	});

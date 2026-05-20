@@ -102,12 +102,26 @@ describe("GitlabClient · happy path", () => {
 		expect(String(calledUrl)).toContain("/projects/group%2Fsub%2Frepo/merge_requests/7/changes");
 	});
 
-	it("postMrComment 写入 `[severity:major] ` body 前缀", async () => {
+	it("postMrComment 仅 blocker 注入 HTML 注释 marker;major/minor body 原样不污染视图", async () => {
+		// major:body 原样,无任何 severity marker
 		fetchMock.mockResolvedValueOnce(jsonResponse({}, 201));
 		await gitlabClient().postMrComment("g/r", 1, "评审建议: x", "major");
-		const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
-		expect(init?.method).toBe("POST");
-		expect(JSON.parse(String(init?.body))).toEqual({ body: "[severity:major] 评审建议: x" });
+		const initMajor = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+		expect(JSON.parse(String(initMajor?.body))).toEqual({ body: "评审建议: x" });
+
+		// minor:同 major
+		fetchMock.mockResolvedValueOnce(jsonResponse({}, 201));
+		await gitlabClient().postMrComment("g/r", 1, "可选建议", "minor");
+		const initMinor = fetchMock.mock.calls[1]?.[1] as RequestInit | undefined;
+		expect(JSON.parse(String(initMinor?.body))).toEqual({ body: "可选建议" });
+
+		// blocker:HTML 注释 marker 注入(`scanForBlockers` 凭此字面识别;GitLab 渲染不显示)
+		fetchMock.mockResolvedValueOnce(jsonResponse({}, 201));
+		await gitlabClient().postMrComment("g/r", 1, "硬编码 secret 风险", "blocker");
+		const initBlocker = fetchMock.mock.calls[2]?.[1] as RequestInit | undefined;
+		expect(JSON.parse(String(initBlocker?.body))).toEqual({
+			body: "<!-- severity: blocker -->\n硬编码 secret 风险",
+		});
 	});
 
 	it("postMrLineComment 自动拉 diff_refs 并构造 position 5 字段", async () => {
@@ -126,7 +140,7 @@ describe("GitlabClient · happy path", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		const postInit = fetchMock.mock.calls[1]?.[1] as RequestInit | undefined;
 		const postBody = JSON.parse(String(postInit?.body)) as Record<string, unknown>;
-		expect(postBody.body).toBe("[severity:blocker] 硬编码 secret");
+		expect(postBody.body).toBe("<!-- severity: blocker -->\n硬编码 secret");
 		expect(postBody.position).toEqual({
 			position_type: "text",
 			base_sha: "BASE_SHA_AAA",

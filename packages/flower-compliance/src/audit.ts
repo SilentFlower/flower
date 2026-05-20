@@ -45,10 +45,13 @@ export async function sendAudit(record: AuditRecord): Promise<void> {
 			signal: AbortSignal.timeout(2000),
 		});
 	} catch (err) {
-		// 单行 warn,避免 fetch failed 多层 cause + stack 刷屏 GitLab CI 日志
-		let msg = err instanceof Error ? err.message : String(err);
-		const code = (err as { cause?: { code?: string } })?.cause?.code;
-		if (code) msg += ` (${code})`;
-		console.warn(`[audit] 上报失败: ${msg}`);
+		// 默认静默:audit 是 fail-open 设计,失败不影响主流程,SIEM 不可达时不刷屏 GitLab CI 日志。
+		// 调试场景设 DEBUG_AUDIT=1 才打单行 warn。
+		if (process.env.DEBUG_AUDIT === "1") {
+			let msg = err instanceof Error ? err.message : String(err);
+			const code = (err as { cause?: { code?: string } })?.cause?.code;
+			if (code) msg += ` (${code})`;
+			console.warn(`[audit] 上报失败: ${msg}`);
+		}
 	}
 }

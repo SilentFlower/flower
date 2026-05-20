@@ -119,7 +119,8 @@ describe("gitlabPostCommentTool · sanitize 集成", () => {
 		const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
 		const body = JSON.parse(String(init?.body)) as { body: string };
 
-		expect(body.body).toBe("[severity:minor] ## 评审报告\n\n看起来不错。");
+		// minor severity → body 原样不加 marker(避免污染用户视图);仅 blocker 才加 HTML 注释 marker
+		expect(body.body).toBe("## 评审报告\n\n看起来不错。");
 	});
 });
 
@@ -178,7 +179,7 @@ describe("gitlabPostLineCommentTool · sanitize 集成", () => {
 
 		expect(postBody.body).toContain("&#47;approve");
 		expect(postBody.body).toContain("硬编码 secret");
-		// 行内评论的 severity 前缀也保留
-		expect(postBody.body).toMatch(/^\[severity:blocker\]/);
+		// blocker 由 wrapper 以 HTML 注释 marker 注入 body 首行(GitLab 渲染不显示,scanForBlockers 可识别)
+		expect(postBody.body).toMatch(/^<!-- severity: blocker -->/);
 	});
 });

@@ -374,19 +374,25 @@ function createRealClient(host: string, token: string): GitlabClient {
 
 		async postMrComment(projectId, mrIid, body, severity) {
 			const path = `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests/${mrIid}/notes`;
+			// 仅 blocker 写 HTML 注释 marker,供 run.ts:scanForBlockers regex 识别;
+			// 用 <!-- severity: blocker --> 而非 [severity:blocker] 字面前缀,GitLab markdown 渲染时
+			// HTML 注释不显示,用户视图完全干净;severity 等级由模板内 emoji + 加粗标签表达
+			const wrapped = severity === "blocker" ? `<!-- severity: blocker -->\n${body}` : body;
 			await gitlabFetch(host, token, path, {
 				method: "POST",
-				body: JSON.stringify({ body: `[severity:${severity}] ${body}` }),
+				body: JSON.stringify({ body: wrapped }),
 			});
 		},
 
 		async postMrLineComment(projectId, mrIid, input) {
 			const refs = await getDiffRefs(projectId, mrIid);
 			const path = `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests/${mrIid}/discussions`;
+			const wrapped =
+				input.severity === "blocker" ? `<!-- severity: blocker -->\n${input.body}` : input.body;
 			await gitlabFetch(host, token, path, {
 				method: "POST",
 				body: JSON.stringify({
-					body: `[severity:${input.severity}] ${input.body}`,
+					body: wrapped,
 					position: {
 						position_type: "text",
 						base_sha: refs.base_sha,

@@ -181,10 +181,13 @@ export function scanForBlockers(
 	const input: ScanForBlockersInput =
 		inputOrBeforeIds instanceof Set ? { beforeIds: inputOrBeforeIds, after: maybeAfter ?? [] } : inputOrBeforeIds;
 
-	// 1. 真实 blocker:本次新增评论里至少有一条 [severity:blocker] 前缀
+	// 1. 真实 blocker:本次新增评论含 blocker marker
+	//    - 新格式:HTML 注释 <!-- severity: blocker -->(藏起来不影响 GitLab 渲染观感)
+	//    - 旧格式:[severity:blocker] 字面前缀(向后兼容旧评论)
+	const blockerMarker = /<!--\s*severity:\s*blocker\s*-->|^\[severity:blocker\]/;
 	const hasNewBlocker = input.after
 		.filter((c) => !input.beforeIds.has(c.id))
-		.some((c) => /^\[severity:blocker\]/.test(c.body));
+		.some((c) => blockerMarker.test(c.body));
 	if (hasNewBlocker) return true;
 
 	// 2. 无依据评论:LLM 对某些文件发了评论但没读过这些文件

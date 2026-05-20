@@ -97,9 +97,9 @@ ${skillContent}
 ## 评论 markdown 样式(强制)
 
 1. **行内评论(gitlab_post_line_comment)**必须按 4 段式:
-   - 第 1 行:\`[severity:<level>] <emoji> <一句话问题标题>\`
-     - level ∈ {blocker, major, minor},分别对应 emoji 🔴 / 🟠 / 🔵
-     - 例:\`[severity:blocker] 🔴 硬编码 secret 泄漏风险\`
+   - 第 1 行:\`<emoji> **<等级 中文>** <一句话问题标题>\`(纯 emoji + 加粗等级即可,**不要**写 \`[severity:*]\` 字面 marker)
+     - level ∈ {blocker, major, minor},分别对应 emoji + 中文等级:🔴 **阻塞** / 🟠 **重要** / 🔵 **建议**
+     - 例:\`🔴 **阻塞** 硬编码 secret 泄漏风险\`
    - 第 2-4 行:解释段落,1-3 句,讲 why(diff 已经在 GitLab UI 显示了 what)
    - 折叠区 1(可选):\`<details><summary>修复建议</summary>\` 包 \` \`\`\`suggestion \` 块
    - 折叠区 2(可选):\`<details><summary>推理过程</summary>\` 包 reasoning,默认折叠避免刷屏
@@ -122,7 +122,9 @@ ${skillContent}
 5. **emoji 用 GLFM 兼容的 shortcode**(\`:warning:\` 而不是原生 ⚠️),便于 GitLab 自定义 emoji 渲染。
    例外:severity 行的 🔴/🟠/🔵 用 unicode 直接写(GitLab/GitHub 都直接渲染)。
 
-6. **\`[severity:<level>] \` 前缀必须严格保留**,run.ts 的 \`scanForBlockers\` 函数依赖这个前缀做 blocker 扫描。
+6. **severity 等级表达**:行内评论第 1 行用 emoji + 加粗中文等级(🔴 **阻塞** / 🟠 **重要** / 🔵 **建议**)表达,
+   **不要**写 \`[severity:*]\` 字面 marker。blocker 评论的机器可读 marker 由 \`gitlab_post_line_comment\` /
+   \`gitlab_post_comment\` 工具自动以 HTML 注释形式注入(用户看不到),不需要你在 body 里手写。
    只对真问题打 blocker(参考现有规则)。
 
 7. **真实代码上下文约束**(Phase 2 N1):对 MR 改动的**每个变更文件**,必须先调用
@@ -174,7 +176,7 @@ ${truncationHint}
 ### 示例 2 · 行内评论(severity:blocker · 带 suggestion 块)
 
 \`\`\`markdown
-[severity:blocker] 🔴 **硬编码 secret 存在凭据泄漏风险**
+🔴 **阻塞** · 硬编码 secret 存在凭据泄漏风险
 
 \`hmacSecret\` 变量直接以字符串字面量出现在源码中。一旦本仓库被 fork 或者代码被 leak,凭据将立刻失效需要轮转,且 git 历史也会永久包含该值。
 
@@ -205,7 +207,7 @@ if hmacSecret == "" {
 ### 示例 3 · 行内评论(severity:major · 无修复 suggestion)
 
 \`\`\`markdown
-[severity:major] 🟠 **签名校验失败时未记录审计日志**
+🟠 **重要** · 签名校验失败时未记录审计日志
 
 当 \`hmac.Equal\` 返回 false 时,函数直接返回 \`false, nil\`,没有任何日志输出。安全事件追溯将无法定位攻击源。
 
@@ -215,7 +217,7 @@ if hmacSecret == "" {
 ### 示例 4 · 行内评论(severity:minor · 带 reasoning 折叠)
 
 \`\`\`markdown
-[severity:minor] 🔵 **常量 \`MaxSignatureAge\` 建议提到包级**
+🔵 **建议** · 常量 \`MaxSignatureAge\` 建议提到包级
 
 当前 \`MaxSignatureAge = 5 * time.Minute\` 内联在函数体里,如果未来需要按环境调优(测试 vs 生产),改起来需要改函数签名。
 

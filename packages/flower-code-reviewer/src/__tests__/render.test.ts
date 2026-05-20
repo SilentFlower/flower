@@ -23,10 +23,9 @@ describe("renderInlineComment · 4 段式行内评论", () => {
 			},
 		});
 		// 段 1:斜体 severity 标签 + 字面量 [severity:blocker] 前缀(scanForBlockers 凭此识别)
-		expect(md).toMatch(/_🔴 Blocker_/);
-		expect(md).toContain("[severity:blocker]");
-		// 段 2:加粗中文标题
-		expect(md).toContain("**硬编码 secret 存在凭据泄漏风险**");
+		expect(md).toMatch(/🔴 \*\*阻塞\*\*/);
+		// 段 1:emoji + 加粗中文等级 + 标题 合并一行(紧凑),title 出现在该行末尾不再单独加粗
+		expect(md).toContain("🔴 **阻塞** · 硬编码 secret 存在凭据泄漏风险");
 		// 段 3:解释段
 		expect(md).toContain("`hmacSecret` 直接作为字符串字面量");
 		// 段 4a:suggestion 折叠区 + ```suggestion 块
@@ -42,9 +41,8 @@ describe("renderInlineComment · 4 段式行内评论", () => {
 			explanation: "未来按环境调优时需要改函数签名,提到包级更易维护。",
 			reasoning: "参考 `internal/config/` 下其他时间常量都是包级公开。",
 		});
-		expect(md).toMatch(/_🔵 Minor_/);
-		expect(md).toContain("[severity:minor]");
-		expect(md).toContain("**常量 `MaxSignatureAge` 建议提到包级**");
+		expect(md).toMatch(/🔵 \*\*建议\*\*/);
+		expect(md).toContain("🔵 **建议** · 常量 `MaxSignatureAge` 建议提到包级");
 		expect(md).toContain("<summary>💡 推理过程</summary>");
 		expect(md).toContain("参考 `internal/config/`");
 		// 没有传 suggestion → 不应有 suggestion 折叠区
@@ -57,8 +55,7 @@ describe("renderInlineComment · 4 段式行内评论", () => {
 			title: "签名校验失败时未记录审计日志",
 			explanation: "返回 false 时无日志输出,安全事件追溯将无法定位攻击源。",
 		});
-		expect(md).toMatch(/_🟠 Major_/);
-		expect(md).toContain("[severity:major]");
+		expect(md).toMatch(/🟠 \*\*重要\*\*/);
 		expect(md).not.toContain("<details>");
 	});
 
@@ -212,20 +209,23 @@ describe("supportsAlertBlock + walkthrough caution 块降级", () => {
 	});
 });
 
-describe("[severity:<level>] 前缀字面量保留(scanForBlockers 依赖)", () => {
-	it("renderInlineComment(blocker) 输出含 [severity:blocker] 字面量,可被 scanForBlockers 命中", () => {
+describe("中文等级标签 + 不在 render 写 [severity:*] 字面 marker", () => {
+	it("renderInlineComment(blocker) 输出 🔴 **阻塞** 中文等级 + body 不含 [severity:* 字面(由 wrapper 工具以 HTML 注释形式注入)", () => {
 		const md = renderInlineComment({
 			severity: "blocker",
-			title: "测试前缀保留",
+			title: "测试等级标签",
 			explanation: "x",
 		});
-		// scanForBlockers 用 /^\[severity:blocker\]/ 但 render 输出中 severity 标签在第一行末尾;
-		// 这里只验"字面量出现",真实匹配交给 scanForBlockers 单测
-		expect(md).toMatch(/\[severity:blocker\]/);
+		expect(md).toMatch(/🔴 \*\*阻塞\*\*/);
+		expect(md).not.toContain("[severity:");
 	});
 
-	it("major / minor 同样保留字面量(虽然不触发 blocker)", () => {
-		expect(renderInlineComment({ severity: "major", title: "x", explanation: "x" })).toMatch(/\[severity:major\]/);
-		expect(renderInlineComment({ severity: "minor", title: "x", explanation: "x" })).toMatch(/\[severity:minor\]/);
+	it("major / minor 等级标签 + body 无任何 [severity:*] 字面 marker", () => {
+		const major = renderInlineComment({ severity: "major", title: "x", explanation: "x" });
+		const minor = renderInlineComment({ severity: "minor", title: "x", explanation: "x" });
+		expect(major).toMatch(/🟠 \*\*重要\*\*/);
+		expect(minor).toMatch(/🔵 \*\*建议\*\*/);
+		expect(major).not.toContain("[severity:");
+		expect(minor).not.toContain("[severity:");
 	});
 });
