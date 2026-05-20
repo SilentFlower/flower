@@ -13,6 +13,7 @@ import { registerCompliance } from "@flower-ai/flower-compliance";
 import { registerHavefunProviders } from "@flower-ai/flower-providers";
 import { registerCommonTools } from "@flower-ai/flower-tools-common";
 import { registerGitlabTools } from "@flower-ai/flower-tools-gitlab";
+import { registerObservability } from "./observability.js";
 import { recordFileRead, recordLineComment } from "./review-trace.js";
 
 /**
@@ -24,6 +25,7 @@ export default function (pi: ExtensionAPI): void {
 	registerCommonTools(pi);
 	registerGitlabTools(pi);
 	registerReviewTrace(pi);
+	registerObservability(pi);
 }
 
 /**
