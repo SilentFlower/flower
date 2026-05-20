@@ -33,7 +33,9 @@ RUN npx tsc --build packages/flower-code-reviewer/tsconfig.json && \
 
 # 砍 devDeps(biome / typescript / vitest / tsx 等只在 build 阶段需要),
 # 让 runtime 镜像 node_modules 只剩 prod deps,显著减重(预期 ~150MB 节省)
-RUN npm prune --omit=dev --no-audit --no-fund
+RUN npm prune --omit=dev --no-audit --no-fund && \
+    # koffi 默认打包 18 个架构 binary,Alpine 容器只需 musl_x64;砍其他 17 个省 ~25MB
+    find node_modules/koffi/build/koffi -mindepth 1 -maxdepth 1 ! -name 'musl_x64' -exec rm -rf {} + 2>/dev/null || true
 
 # ---------- 运行时镜像 ----------
 FROM node:22-alpine
