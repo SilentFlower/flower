@@ -26,7 +26,10 @@ COPY packages/flower-compliance      packages/flower-compliance
 COPY packages/flower-code-reviewer   packages/flower-code-reviewer
 COPY tsconfig.json                   ./
 
-RUN npm run build
+# 仅 build flower-code-reviewer + 其 transitive deps,
+# 避免顶层 tsconfig.json references 其他未 COPY 的 package(flower-tools-arms / flower-ops-bot) 时报 TS5083
+RUN npx tsc --build packages/flower-code-reviewer/tsconfig.json && \
+    chmod +x packages/flower-code-reviewer/dist/cli.js
 
 # ---------- 运行时镜像 ----------
 FROM node:22-alpine
