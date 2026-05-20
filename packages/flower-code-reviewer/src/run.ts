@@ -19,11 +19,114 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { main as piMain } from "@earendil-works/pi-coding-agent";
 import { buildPiCliArgs } from "@flower-ai/flower-providers";
-import { type BotComment, gitlabClient } from "@flower-ai/flower-tools-gitlab";
+import {
+	AuthError,
+	type BotComment,
+	FileNotFoundError,
+	gitlabClient,
+	type MrFileChange,
+} from "@flower-ai/flower-tools-gitlab";
 import type { CliArgs } from "./args.js";
+import { detectGitlabVersion, type GitlabVersion } from "./comments/index.js";
 import extensionFactory from "./extension.js";
 import { buildPrompt } from "./prompts.js";
+import { findUnsupportedComments, getTrace, resetTrace } from "./review-trace.js";
 import { pickSkill } from "./skill-selector.js";
+
+/**
+ * E2 · MR diff 文件数上限(env `FLOWER_MAX_FILES` override,默认 50)
+ *
+ * 取值规则:
+ * - env 缺失 → 默认 50
+ * - 非数字 / 负数 / 0 → 退回默认 50(保守,避免 env 配错炸 LLM)
+ *
+ * @internal 暴露给单测验证 env override 行为
+ */
+export function resolveMaxFiles(): number {
+	const raw = process.env.FLOWER_MAX_FILES;
+	if (raw === undefined) return 50;
+	const parsed = Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) return 50;
+	return parsed;
+}
+
+/**
+ * E2 · 按 churn(additions + deletions)降序对文件排序后取 top N
+ *
+ * 抽成纯函数便于单测:不依赖 GitLab client,直接对 `MrFileChange[]` 操作。
+ *
+ * @param all 全部 MR 变更文件
+ * @param maxFiles 上限(通常 `resolveMaxFiles()` 返回值)
+ * @returns 截断元数据:
+ *  - `shown`:本次保留的文件数(min(all.length, maxFiles))
+ *  - `total`:MR 真实文件总数
+ *  - `files`:保留后的文件路径列表(按 churn 降序)
+ *  - `truncated`:是否触发截断(`all.length > maxFiles`)
+ *
+ * @internal 暴露给单测
+ */
+export function applyDiffCap(
+	all: MrFileChange[],
+	maxFiles: number,
+): { shown: number; total: number; files: string[]; truncated: boolean } {
+	// 按 churn 降序;churn 相同保持原顺序(稳定排序)
+	const sorted = [...all].sort((a, b) => b.additions + b.deletions - (a.additions + a.deletions));
+	const kept = sorted.slice(0, maxFiles);
+	return {
+		shown: kept.length,
+		total: all.length,
+		files: kept.map((c) => c.path),
+		truncated: all.length > maxFiles,
+	};
+}
+
+/**
+ * E1 · 判定 error 是否为「LLM 网关失败」(可 fail open 的范畴)
+ *
+ * 与 GitLab API 错误(`AuthError` / `FileNotFoundError` / 业务 schema 错)区分:
+ * - LLM 网关失败 → fail open(post warning + exit 0,pipeline 不阻塞)
+ * - GitLab API 错 / 配置错 → fail close(正常抛错,exit ≠ 0)
+ *
+ * 判定规则(按优先级):
+ * 1. GitLab 已知错误类(AuthError / FileNotFoundError)→ 非 LLM 失败
+ * 2. error.message 含 "LLM" / "model" / "anthropic" / "openai" / "gemini" / "provider" 等关键字 → LLM 失败
+ * 3. message 含 "ECONNREFUSED" / "ETIMEDOUT" / "AbortError" / "timeout" 等网络关键字 → LLM 失败(保守,假设是 LLM 调用阶段)
+ * 4. message 含 HTTP 5xx / 429 关键字 → LLM 失败(限流 / 服务端故障)
+ * 5. 其他 → 非 LLM 失败(默认 fail close,避免吞掉真实 bug)
+ *
+ * 注:本判定是**保守 + 经验式**的;`piMain` 抛错的形态不固定(可能是 SDK Error / 自定义类),
+ * 用 message 关键字 + 黑名单 GitLab 错误类来兜底。后续踩到边界 case 再细化。
+ *
+ * @internal 暴露给单测
+ */
+export function isLlmFailure(err: unknown): boolean {
+	// 1. GitLab 错误类:明确非 LLM 失败
+	if (err instanceof AuthError) return false;
+	if (err instanceof FileNotFoundError) return false;
+
+	if (!(err instanceof Error)) return false;
+	const message = err.message.toLowerCase();
+	const errorName = err.name.toLowerCase();
+
+	// 2. 关键字命中 LLM / provider 相关 → LLM 失败
+	const llmKeywords = ["llm", "provider", "anthropic", "openai", "gemini", "model", "stream", "completion", "havefun"];
+	if (llmKeywords.some((k) => message.includes(k) || errorName.includes(k))) {
+		return true;
+	}
+
+	// 3. 网络 / 超时关键字
+	const networkKeywords = ["econnrefused", "etimedout", "aborterror", "timeout", "fetch failed", "network"];
+	if (networkKeywords.some((k) => message.includes(k) || errorName.includes(k))) {
+		return true;
+	}
+
+	// 4. HTTP 5xx / 429
+	if (/\b5\d\d\b/.test(message)) return true;
+	if (/\b429\b/.test(message)) return true;
+
+	// 5. 默认非 LLM 失败(fail close)
+	return false;
+}
 
 /**
  * 评审结果
@@ -34,16 +137,62 @@ export interface ReviewResult {
 }
 
 /**
- * 扫描评论 list,判断是否含本次新增的 blocker
+ * `scanForBlockers` 入参(对象形式,便于增量加字段)
+ *
+ * Phase 2 起统一改用对象签名;旧的位置参数形式 `scanForBlockers(beforeIds, after)`
+ * 由重载兼容(见下方 overload 声明)。
+ */
+export interface ScanForBlockersInput {
+	/** 跑前 snapshot 的评论 id 集合(用于过滤本次新增) */
+	beforeIds: Set<number>;
+	/** 跑后拉到的全部 bot 评论 */
+	after: BotComment[];
+	/**
+	 * 「无依据评论」涉及的文件路径(LLM 评论了但没读过的文件)
+	 *
+	 * 留空表示本次评审不做无依据检查(向后兼容、纯函数单测)。
+	 */
+	unsupportedCommentFiles?: string[];
+}
+
+/**
+ * 扫描评论 list,判断是否含本次新增的 blocker(或「无依据评论」blocker)
  *
  * 抽成纯函数便于单测覆盖,不依赖 GitLab / pi-coding-agent。
  *
- * @param beforeIds - 跑前 snapshot 的评论 id 集合
- * @param after - 跑后拉到的全部评论
- * @returns 本次新增评论里**是否**至少有一条以 `[severity:blocker]` 起头
+ * 两种 blocker 触发条件:
+ * 1. **真实 blocker**:本次新增评论中至少有一条以 `[severity:blocker]` 起头
+ * 2. **无依据评论**:LLM 评论了某文件但没读过该文件(`unsupportedCommentFiles` 非空)
+ *
+ * @returns 是否应当 fail pipeline(本次新增 blocker / 无依据评论 任一命中)
  */
-export function scanForBlockers(beforeIds: Set<number>, after: BotComment[]): boolean {
-	return after.filter((c) => !beforeIds.has(c.id)).some((c) => /^\[severity:blocker\]/.test(c.body));
+export function scanForBlockers(input: ScanForBlockersInput): boolean;
+/**
+ * 旧的位置参数签名(向后兼容)
+ *
+ * @deprecated 新代码请用对象签名 `scanForBlockers({ beforeIds, after, ... })`
+ */
+export function scanForBlockers(beforeIds: Set<number>, after: BotComment[]): boolean;
+export function scanForBlockers(
+	inputOrBeforeIds: ScanForBlockersInput | Set<number>,
+	maybeAfter?: BotComment[],
+): boolean {
+	// 重载分发:Set<number> + array 形式 → 旧位置参数;否则按 input 对象
+	const input: ScanForBlockersInput =
+		inputOrBeforeIds instanceof Set ? { beforeIds: inputOrBeforeIds, after: maybeAfter ?? [] } : inputOrBeforeIds;
+
+	// 1. 真实 blocker:本次新增评论里至少有一条 [severity:blocker] 前缀
+	const hasNewBlocker = input.after
+		.filter((c) => !input.beforeIds.has(c.id))
+		.some((c) => /^\[severity:blocker\]/.test(c.body));
+	if (hasNewBlocker) return true;
+
+	// 2. 无依据评论:LLM 对某些文件发了评论但没读过这些文件
+	if (input.unsupportedCommentFiles && input.unsupportedCommentFiles.length > 0) {
+		return true;
+	}
+
+	return false;
 }
 
 /**
@@ -60,17 +209,49 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 	}
 	const projectId = process.env.CI_PROJECT_ID;
 
+	// 0. 重置 review-trace(同一进程内若再次运行,清掉上一次的 readFiles / lineComments)
+	resetTrace();
+
 	// 1. 选 skill
 	const skill = args.skill ?? (await pickSkill());
 	console.log(`[code-reviewer] 使用 skill: ${skill}`);
 
-	// 2. 构造 prompt
-	const skillFilePath = join(getSkillsDir(), `${skill}.md`);
-	const prompt = buildPrompt({ skillFilePath, dryRun: args.dryRun });
+	// 2. 探测 GitLab 版本(决定 prompt 中 §6.6 alert 块降级路径)
+	//    探测失败 → null,prompt 自动走 ⚠️ blockquote 兜底,LLM 学到的就是降级模板
+	let gitlabVersion: GitlabVersion | null = null;
+	if (process.env.GITLAB_TOKEN) {
+		gitlabVersion = await detectGitlabVersion();
+	}
 
-	// 3. 跑前 snapshot bot 评论 id 集合(用于跑后 diff)
-	//    缺 CI_PROJECT_ID(本地调试场景)或 dryRun 时跳过 — 此时 blocker 扫描也降级到不跑
+	// 3. E2 · 拉 MR 文件 churn,触发 cap → 截断元数据进 prompt(让 LLM 知道"只看 top N")
+	//    dryRun / 无 projectId → 跳过(本地测试无 GitLab 上下文)
 	const enableBlockerScan = !args.dryRun && projectId !== undefined;
+	let truncation: { shown: number; total: number; files: string[] } | undefined;
+	if (enableBlockerScan && projectId !== undefined) {
+		try {
+			const all = await gitlabClient().getMrFileChanges(projectId, mrIid);
+			const cap = applyDiffCap(all, resolveMaxFiles());
+			if (cap.truncated) {
+				truncation = { shown: cap.shown, total: cap.total, files: cap.files };
+				console.warn(`[code-reviewer] MR 文件数 ${cap.total} 超 cap,本次只评 top ${cap.shown}`);
+			}
+		} catch (err) {
+			// 失败不阻断评审:LLM 仍能跑,只是 prompt 没有截断提示
+			console.warn("[code-reviewer] 拉取 MR 文件 churn 失败,跳过 diff cap 检查:", err);
+		}
+	}
+
+	// 4. 构造 prompt(把 gitlabVersion + 截断元数据传入)
+	const skillFilePath = join(getSkillsDir(), `${skill}.md`);
+	const prompt = buildPrompt({
+		skillFilePath,
+		dryRun: args.dryRun,
+		gitlabVersion,
+		...(truncation !== undefined ? { truncation } : {}),
+	});
+
+	// 5. 跑前 snapshot bot 评论 id 集合(用于跑后 diff)
+	//    缺 CI_PROJECT_ID(本地调试场景)或 dryRun 时跳过 — 此时 blocker 扫描也降级到不跑
 	let beforeIds: Set<number> = new Set();
 	if (enableBlockerScan && projectId !== undefined) {
 		try {
@@ -81,26 +262,89 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 		}
 	}
 
-	// 4. env → pi CLI argv(R4),5. 跑 pi-coding-agent print 模式
-	//    extensionFactories 注入 provider / compliance / tools(具体注册顺序见 extension.ts)
+	// 6. env → pi CLI argv,7. 跑 pi-coding-agent print 模式 + E1 LLM fail open
+	//    extensionFactories 注入 provider / compliance / tools / review-trace 监听器
 	const piArgv = buildPiCliArgs({ prompt });
-	await piMain(piArgv, {
-		extensionFactories: [extensionFactory],
-	});
+	try {
+		await piMain(piArgv, {
+			extensionFactories: [extensionFactory],
+		});
+	} catch (err) {
+		// E1:LLM 网关失败 → fail open(post warning 评论 + exit 0,pipeline 不阻塞)
+		// 非 LLM 失败(GitLab API 错 / 配置错) → 正常抛错,由 cli.ts 顶层 catch 转 exit 2
+		if (isLlmFailure(err)) {
+			console.warn("[code-reviewer] LLM 网关失败,fail open + 发 warning 评论:", err);
+			if (enableBlockerScan && projectId !== undefined) {
+				try {
+					await gitlabClient().postMrComment(projectId, mrIid, buildLlmFailureNotice(), "minor");
+				} catch (postErr) {
+					console.warn("[code-reviewer] 发表 LLM 失败 warning 评论失败:", postErr);
+				}
+			}
+			// **不**调 scanForBlockers(没有 LLM 评论可扫,blocker 不应虚报)
+			return { exitCode: 0, skillUsed: skill };
+		}
+		throw err;
+	}
 
-	// 6. 跑后扫 blocker
+	// 8. 跑后扫 blocker(包含「无依据评论」检查)
 	if (!enableBlockerScan || projectId === undefined) {
 		return { exitCode: 0, skillUsed: skill };
 	}
 	try {
 		const after = await gitlabClient().getBotComments(projectId, mrIid);
-		const hasBlocker = scanForBlockers(beforeIds, after);
+
+		// 「无依据评论」:LLM 对哪些文件发了 line_comment 但没读过这些文件
+		const trace = getTrace();
+		const unsupportedFiles = findUnsupportedComments(trace.readFiles, trace.lineComments);
+
+		// 若有无依据评论,先发一条整体 blocker 评论让评审作者看见(并被纳入 scan)
+		if (unsupportedFiles.length > 0) {
+			const body = buildUnsupportedCommentNotice(unsupportedFiles);
+			try {
+				await gitlabClient().postMrComment(projectId, mrIid, body, "blocker");
+			} catch (err) {
+				console.warn("[code-reviewer] 发表「无依据评论」blocker 通知失败:", err);
+			}
+		}
+
+		const hasBlocker = scanForBlockers({
+			beforeIds,
+			after,
+			unsupportedCommentFiles: unsupportedFiles,
+		});
 		return { exitCode: hasBlocker ? 1 : 0, skillUsed: skill };
 	} catch (err) {
 		// 评论已发,扫描失败不应反向定罪整个评审
 		console.warn("[code-reviewer] 跑后评论拉取失败,blocker 扫描跳过:", err);
 		return { exitCode: 0, skillUsed: skill };
 	}
+}
+
+/**
+ * 拼装「无依据评论」blocker 通知正文(整体评论 body)
+ *
+ * 抽成函数便于单测覆盖 + 模板调整集中。
+ *
+ * @param files 无依据评论涉及的文件路径(已去重 + 排序)
+ * @returns markdown body(注:不带 `[severity:blocker]` 前缀,前缀由 `postMrComment` 自动添加)
+ */
+export function buildUnsupportedCommentNotice(files: string[]): string {
+	const list = files.map((f) => `- \`${f}\``).join("\n");
+	return `无依据评论:对以下文件发出评论但未调用 \`gitlab_get_file_content\` 拉过完整内容\n\n${list}\n\n请在拉取文件后再评审。`;
+}
+
+/**
+ * E1 · 拼装 LLM 网关失败 warning 评论正文
+ *
+ * 文案严格按 design.md §5.1:让评审人手工 review,告知错误已上报 SIEM。
+ *
+ * 抽成函数便于单测断言文本(且未来调整文案集中改一处)。
+ *
+ * @returns markdown body(注:不带 severity 前缀,前缀由 `postMrComment` 自动添加)
+ */
+export function buildLlmFailureNotice(): string {
+	return "⚠️ flower-code-reviewer 因 LLM 网关异常未能完成自动评审,请手工 review 本 MR。\n\n错误详情已上报 SIEM。";
 }
 
 /**

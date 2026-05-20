@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "N2/E1/E2/E3 改 prompts.ts + 渲染逻辑 + sanitize 都在 flower-code-reviewer 内,实现需遵循该 package 的目录结构 / 质量约定 / 类型安全约束"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/directory-structure.md", "reason": "新加 src/comments/ + src/sanitize.ts 子模块需对齐既有目录结构"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "新增渲染/sanitize 模块必须符合该 package 质量门"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/index.md", "reason": "N1 加第 6 个 endpoint gitlab_get_file_content,需对齐上任务沉淀的 9 条 GitLab REST 约定"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/error-handling.md", "reason": "gitlab_get_file_content 错误分类(404/401/5xx)需对齐既有 error-handling 模式"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/quality-guidelines.md", "reason": "新增 endpoint + 单测需对齐 client.test.ts 14 case 既有模式与质量门"}
+{"file": ".trellis/spec/flower-providers/backend/index.md", "reason": "上任务沉淀 #7 buildPiCliArgs 公开 API 仍是 LLM 调用入口,N1 强约束 prompt 改动需保持调用契约不破"}
+{"file": ".trellis/spec/guides/debugging-llm-integration.md", "reason": "上任务沉淀的 LLM 集成决策树案例;Phase 2 N1 调试与 Phase 6 e2e visual check 时直接复用决策路径"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨仓库 (flower + harness + 业务方 .gitlab-ci) 改动边界,cross-layer 思考避免接口断裂"}
+{"file": ".trellis/tasks/05-20-code-reviewer-quality-and-pipeline/research/comment-style.md", "reason": "N2 实现直接复制 §5 6 条 prompt 硬约束 + §6.1-§6.6 5 个完整中文模板样例"}
+{"file": ".trellis/tasks/05-20-code-reviewer-quality-and-pipeline/research/cli-image-cross-registry.md", "reason": "N3 Phase 0 spike 5 个 question + 方案 A/B.a 落地路径 + harness/runner tag/Harbor namespace 等基础设施事实"}

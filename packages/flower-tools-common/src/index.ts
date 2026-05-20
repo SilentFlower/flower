@@ -9,6 +9,7 @@
  */
 
 export { dingtalkDocSearchTool } from "./dingtalk-doc.js";
+export { sanitizeQuickActions } from "./sanitize.js";
 export { zentaoSearchTool } from "./zentao.js";
 
 import { dingtalkDocSearchTool } from "./dingtalk-doc.js";

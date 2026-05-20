@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "check 阶段对照 package 规范扫:目录结构 / 质量门 / 类型安全是否被 N2/E1/E2/E3 改动满足"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "check 验证质量门(lint / typecheck / 单测覆盖率)是否满足"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/index.md", "reason": "check 验证新加 gitlab_get_file_content 是否遵循 9 条 REST 约定(命名 / 错误分类 / token 注入 / 重试策略 / log)"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/error-handling.md", "reason": "check 验证错误分类(FileNotFoundError / AuthError / RetryableError)与既有 error-handling 模式一致"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/quality-guidelines.md", "reason": "check 单测数量与覆盖度对齐 14 case 模式(本任务 ≥ 3 新 case)"}
+{"file": ".trellis/spec/guides/debugging-llm-integration.md", "reason": "check e2e 时若 LLM 调用未达预期,按决策树定位是 prompt / token / tool 注册 / 强约束 中的哪一环"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "check 跨仓库(flower + harness + 业务方 .gitlab-ci)边界一致性:image tag / variable 名 / include path 不漂移"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "check 是否过度新增,重用现有 client.ts encoding helper / 既有 GitLab REST 客户端 / 渲染辅助函数"}
+{"file": ".trellis/tasks/05-20-code-reviewer-quality-and-pipeline/research/comment-style.md", "reason": "check N2 visual 对照模板样例 §6.1-§6.6,prompt 6 条硬约束 §5 是否字面落到 prompts.ts"}
+{"file": ".trellis/tasks/05-20-code-reviewer-quality-and-pipeline/research/cli-image-cross-registry.md", "reason": "check N3/N4 落地是否符合方案 A 步骤 + 5 个 question 答案是否回填 spike-result.md"}
