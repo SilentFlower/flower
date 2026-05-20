@@ -55,14 +55,20 @@
 
 ## 关键设计点(2026-05-20 N2/N1/E1/E2/E3 沉淀)
 
-### 1. 评论模板规范(Preset A · CodeRabbit-like)
+### 1. 评论模板规范(Preset A · CodeRabbit-like,2026-05-20 中文化 + HTML 注释 marker 二次迭代)
 
-- **行内评论 4 段式**:`_<emoji> <english severity>_ [severity:<level>]` 斜体首行(`🔴`/`🟠`/`🔵` 三档 emoji)+ 加粗中文标题 + 解释段(讲 why)+ `<details>` 包 reasoning(可选)+ `suggestion` 块(可选,失败则 fallback 普通 ```code``` 块)
-- **整体评论 walkthrough**:整 body 包 `<details>` 默认折叠,内含「概要 / 文件变更表(file × churn × 总结)/ 行动建议」
-- **`> [!caution]` alert 块版本降级**:启动期 `detectGitlabVersion` 探测一次;GitLab ≥ 17.10 用 `> [!caution]`,< 17.10 或探测失败(null)降级 `> ⚠️ **Caution**` blockquote
-- **「无问题」轻量模板**:MR 干净时只发 2 行,避免刷屏
-- **`[severity:<level>]` 前缀贴在 severity 标签行末尾**(`_🔴 Blocker_ [severity:blocker]`)— `scanForBlockers` 字面量匹配
-- **模板样例**:5 个完整中文样例存于 `.trellis/tasks/05-20-code-reviewer-quality-and-pipeline/research/comment-style.md` §6.1-§6.6,prompt.ts 抄进 few-shot
+- **行内评论 4 段式**:emoji + 加粗中文等级 + 标题 一行(紧凑形式)+ 解释段(讲 why)+ `<details>` 包 reasoning(可选)+ `suggestion` 块(可选)
+  - 中文等级:🔴 **阻塞** / 🟠 **重要** / 🔵 **建议**(SEVERITY_META 在 `comments/render.ts`,2026-05-20 从英文 Blocker/Major/Minor 升级中文化)
+  - 例:`🔴 **阻塞** · 硬编码 secret 存在凭据泄漏风险`
+- **整体评论 walkthrough**:整 body 包 `<details>` 默认折叠,内含「概要 / 文件变更表 / 行动建议」
+- **`> [!caution]` alert 块版本降级**:启动期 `detectGitlabVersion` 探测一次;GitLab ≥ 17.10 用 `> [!caution]`,< 17.10 / 探测失败 降级 `> ⚠️ **Caution**` blockquote
+- **「无问题」轻量模板**:MR 干净时只发 2 行(`:white_check_mark:` 前缀)
+- **severity marker 语义**(2026-05-20 二次迭代):
+  - **不在 body 写** `[severity:<level>]` 字面文本(原 v1 设计已废)
+  - 仅 blocker 评论由 `flower-tools-gitlab/postMrComment` / `postMrLineComment` wrapper **自动以 HTML 注释 marker 注入**:`<!-- severity: blocker -->` 作为 body 首行;GitLab markdown 渲染时 HTML 注释不显示,用户视图完全干净
+  - `run.ts:scanForBlockers` regex 同时匹配新 HTML 注释 marker + 旧 `^\[severity:blocker\]` 字面前缀(向后兼容历史评论)
+  - major/minor 评论 body 完全无任何 severity marker
+- **模板样例**:5 个完整中文样例存于 `.trellis/tasks/archive/2026-05/05-20-code-reviewer-quality-and-pipeline/research/comment-style.md` §6.1-§6.6;`prompts.ts` few-shot 同步中文化(标题 = `🔴 **阻塞** · ...`,严禁 LLM 在 body 写 `[severity:*]`)
 
 ### 2. GitLab 版本探测(`comments/gitlab-version.ts`)
 
@@ -90,7 +96,40 @@
 
 ### 5. 注册顺序(extension.ts)
 
-`provider → compliance → tools(含 gitlab) → review-trace 监听`;review-trace 的 `pi.on(tool_call)` 必须挂在 gitlab tools `pi.registerTool` 之后才能拿到 tool_call event。
+`provider → compliance → tools(含 gitlab) → review-trace 监听 → observability 监听`;review-trace 与 observability 的 `pi.on(tool_call)` 必须挂在 gitlab tools `pi.registerTool` 之后才能拿到 tool_call event。
+
+### 6. observability extension(`observability.ts`,2026-05-20 加)
+
+- 监听 pi-coding-agent 生命周期事件,把 LLM 的「思考 / 文本输出 / 工具调用 / 工具结果」流式打印到 stdout(GitLab CI job log),让业务方在 pipeline trace 里直接看到完整评审轨迹
+- **默认开**(business 零配置即可看);`FLOWER_VERBOSE=0` / `false` / `off` / `no` 显式关
+- 输出格式:`>>> 🤖 [turn N] start/end` / `💭 thinking: ...` / `💬 assistant: ...` / `🔧 [tool →] <name> args=...` / `🔧 [tool ←] <name> result=...` / `🔧 [tool ✗ error]`(compliance 拦截等)/ `>>> 🤖 [agent] session end`
+- tool input / result 截断 400 / 300 字符,防 GitLab CI 日志爆 + 敏感内容泄漏(image 内 safeReadFile 已在工具层 size cap,observability 再加一层 echo 截断)
+- 监听事件:`turn_start` / `turn_end` / `message_update`(assistantMessageEvent.type ∈ {`thinking_*` / `text_*` / `toolcall_end`})/ `tool_execution_end` / `after_provider_response`(仅 HTTP ≥ 400 提示)/ `agent_end`
+
+### 7. audit 默认静默(`flower-compliance/audit.ts`,2026-05-20 加)
+
+- audit 失败(SIEM 不可达等)默认**完全不打 warn**(audit 是 fail-open 设计,失败不影响主流程,不该刷屏 GitLab CI 日志)
+- 调试场景:`DEBUG_AUDIT=1` 打单行 `[audit] 上报失败: <msg> (<error.cause.code>)`;不再打多层 stack(原 11 行 ECONNREFUSED stack → 0 行)
+
+### 8. 镜像版本管理 + Dockerfile 优化(2026-05-20 演进链)
+
+flower 仓 Dockerfile 优化(`packages/flower-code-reviewer/Dockerfile`)产出 image 路径 `192.168.27.236/base/flower-code-reviewer:<tag>`:
+
+| commit | 优化点 | image 大小变化 |
+|---|---|---|
+| `ba58509` | tsc --build 指定 reviewer + transitive deps,避免顶层 tsconfig refs 未 COPY package 触发 TS5083 | — |
+| `e089aed` | `npm prune --omit=dev` 砍 devDeps(biome / typescript / vitest 等)| 727 → 466 MB(本地)/ 149.3 → 90.1 MiB(Harbor)|
+| `d12b7b5` | koffi multi-arch 18 个砍到 musl_x64 1 个 | 466 → 434 MB / 90.1 → 82.8 MiB |
+| `5252e2e` | 加 `/usr/local/bin/flower-review` PATH wrapper(GitLab CI script 模式可调,不依赖 ENTRYPOINT) | — |
+| `839236d` | observability extension 集成 | — |
+| `54641cb` | audit 失败改单行 warn | — |
+| `7e847ea` | audit 默认静默 + 中文等级 + HTML 注释 marker | — |
+
+累计减重:Harbor compressed 149.3 → 82.8 MiB(**−45%**);本地 727 → 434 MB(**−40%**)。
+
+业务方接入侧 image tag 管理:
+- 默认 `latest`(浮动跟 flower 仓 main HEAD)
+- 锁版本场景:Runner `pull_policy=IfNotPresent` 限制下,**必须用 sha tag 才能强制拉新**(latest cache 命中不会自动更新)— 推荐业务方 `code-review: variables: { FLOWER_IMAGE_TAG: '<sha>' }`
 
 ---
 

@@ -39,11 +39,13 @@
 3. **token 鉴权**:`PRIVATE-TOKEN` header(GitLab 推荐,client.ts 用此)
 4. **`projectId` 必须 `encodeURIComponent`**:GitLab project path 含 `/`(如 `digital-independent-projects/srm-esign`),URL 拼接时必须 encode 成 `digital-independent-projects%2Fsrm-esign`,否则 404
 5. **行内评论 position**:必须传 `position_type: "text"` + `base_sha` / `start_sha` / `head_sha` / `new_path` / `new_line`。三个 sha 从同一个 `/changes` 接口的 `diff_refs` 拿,**client 内部缓存 per-MR**(`Map<"<projectId>:<mrIid>", DiffRefs>`)避免每次发评论都重拉 changes
-6. **severity 词表 + 前缀写进 body**(2026-05-20 更新):
+6. **severity 词表 + 评论 body marker 注入策略**(2026-05-20 二次迭代):
    - **词表统一**:`severitySchema = z.enum(["blocker", "major", "minor"])`(原 `info | warning | blocker` 已弃用);对齐 `flower-code-reviewer/src/comments/render.ts` 与 `prompts.ts` few-shot 模板
-   - `postMrComment` / `postMrLineComment` 把 `[severity:<level>] ` 前缀写进真实评论 body —— GitLab API 本身没有 severity 字段
-   - `run.ts:scanForBlockers` 凭 `/^\[severity:blocker\]/` regex 识别(只关心 blocker 等级)
-   - 改前缀格式只需要改一处,但**必须**与 `flower-code-reviewer/src/run.ts:scanForBlockers` 同步
+   - **仅 blocker 注入 HTML 注释 marker**(2026-05-20 升级,替代旧字面 `[severity:blocker]` 前缀):
+     - blocker:`postMrComment` / `postMrLineComment` execute 在 body 首行 prepend `<!-- severity: blocker -->\n`(GitLab markdown 渲染时 HTML 注释不显示,用户视图完全干净)
+     - major / minor:**body 原样**,无任何 marker(由模板内 emoji + 加粗中文等级 表达严重程度,例如 `🟠 **重要** · ...`)
+   - `run.ts:scanForBlockers` 双 marker 兼容:正则同时匹配 `<!--\s*severity:\s*blocker\s*-->`(新)和 `^\[severity:blocker\]`(旧,向后兼容历史评论)
+   - 改 marker 格式必须同步改 `flower-code-reviewer/src/run.ts:scanForBlockers` 正则
 7. **行内评论 quick-action 防御**:`postMrComment` / `postMrLineComment` execute 内对 `body` 参数做 `sanitizeQuickActions`(import 自 `@flower-ai/flower-tools-common`)→ 首字符 `/` 改成 `&#47;`,防止 LLM 输出 `/approve` `/close` 等被 GitLab 当作 quick action 误执行 MR 状态;**与 prompt 第 4 条硬约束形成双层防御**
 8. **错误处理**:
    - HTTP 200/201 OK
