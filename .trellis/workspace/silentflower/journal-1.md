@@ -108,3 +108,40 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: 完成 flower-code-reviewer 端到端跑通真实 MR 评审链路
+
+**Date**: 2026-05-20
+**Task**: 完成 flower-code-reviewer 端到端跑通真实 MR 评审链路
+**Package**: flower-code-reviewer
+**Branch**: `main`
+
+### Summary
+
+把 code-reviewer 链路从 stub 推到真实 MR e2e 跑通:flower-tools-gitlab 实装 5 个 GitLab REST endpoint(R1,client.test.ts 14 case)+ flower-providers 新增 buildPiCliArgs 公开 API(R4,与 ops-bot 形态 buildHavefunModel 对称,翻译 LLM_PROVIDER/MODEL/REASONING_EFFORT env 到 pi CLI argv,runtime.test.ts 扩展 9 case)+ flower-code-reviewer/run.ts 接入 blocker 扫描(R2,scanForBlockers 纯函数 7 case)+ flower-compliance 零→19 单测基线(R5,ci-readonly 拦截规则 + audit fail-safe)。共 149 单测全过 + biome 0 error + typecheck 干净。e2e 真跑两个 fork sandbox MR(MR-general 1 条 info / MR-security 4 条 blocker)用 havefun-openai-responses/gpt-5.5 + xhigh effort,LLM 识别埋好的硬编码 secret + SQL 拼接 + 1 个时序攻击 bonus,二次跑通过 gitlab_get_previous_review 不重复评 + exitCode 1。核心发现:pi CLI print 模式必须显式传 --provider X --model Y 分开,否则被 ~/.pi/agent/settings.json defaultProvider 与 pi 内置 modelRegistry 双重抢占 azure-openai-responses → No API key found。已沉淀进 flower-providers/backend/index.md 关键设计点 #7(对称接口表)+ flower-tools-gitlab/backend/index.md 9 条客户端约定 + guides/debugging-llm-integration.md 新案例决策树。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9e7276a` | (see git log) |
+| `e9945ff` | (see git log) |
+| `5a32ee5` | (see git log) |
+| `e572aad` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

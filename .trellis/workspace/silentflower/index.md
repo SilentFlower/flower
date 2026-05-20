@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
-- **Last Active**: 2026-05-19
+- **Total Sessions**: 4
+- **Last Active**: 2026-05-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~110 | Active |
+| `journal-1.md` | ~147 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-05-20 | 完成 flower-code-reviewer 端到端跑通真实 MR 评审链路 | `9e7276a`, `e9945ff`, `5a32ee5`, `e572aad` | `main` |
 | 3 | 2026-05-19 | flower-providers: 修真实模型参数 + 接入 reasoning effort 抽象 | `19cb96b`, `86ef1ca` | `main` |
 | 2 | 2026-05-19 | 完成 flower-providers 接通真实 LLM 网关 + 统一两个产品入口 | `63e1ba7` | `main` |
 | 1 | 2026-05-19 | 完成 bootstrap:中文填充 7 包 spec | `37bc5d7` | `main` |
