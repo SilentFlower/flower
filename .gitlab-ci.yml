@@ -15,7 +15,12 @@
 include:
   - project: 'digital-rd-infra/devops-infra'
     ref: main
-    file: '/templates/node-cli-image.yml'
+    file:
+      # .gitlab-ci-base.yml 提供全局变量 HARBOR_HOST / KANIKO_IMAGE / SKOPEO_IMAGE 等;
+      # 不 include 这个 → node-cli-image.yml 拿不到 ${KANIKO_IMAGE} / ${HARBOR_HOST}(实测空)
+      - '/templates/.gitlab-ci-base.yml'
+      # node-cli-image.yml 提供 .node-cli-image hidden job(Kaniko build & push 镜像)
+      - '/templates/node-cli-image.yml'
 
 # Workflow rules:只在 company 分支 push / 打 tag 时触发,避免无意 fork 触发
 workflow:
@@ -24,8 +29,8 @@ workflow:
     - if: '$CI_COMMIT_BRANCH == "company"'
     - when: never
 
-stages:
-  - build
+# stages 由 .gitlab-ci-base.yml 提供(build / package / deploy);本仓只用 build。
+# 不重复声明,避免与 base.yml 冲突
 
 # build flower-code-reviewer 镜像 push 到 Harbor base/flower-code-reviewer:<sha> + :latest
 # iqs-boot 已在消费 base/flower-code-reviewer:<tag>(harness application.yml `.flower-code-review`
