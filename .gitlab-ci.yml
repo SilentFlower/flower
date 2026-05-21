@@ -43,11 +43,13 @@ build-flower-code-reviewer:
   # Override harness 默认的 tags: [infra-build-proxy](该 tag 的 runner 在本实例不存在)。
   # 改用 default instance runner(tags=[]),与 iqs-boot 的 package-java 同路径
   tags: []
-  # pull_policy: always 启用浮动 latest(runner admin 2026-05-21 已加白名单)
+  # pull_policy: if-not-present(2026-05-22 从 always 改默认):
+  # Runner admin 白名单不稳(实测过 hostAliases / allowed_pull_policies 被改坏)。
+  # 改 if-not-present 让 build 不依赖 admin 配置,Kaniko base image 稳定缓存安全。
   image:
     name: ${KANIKO_IMAGE}
     entrypoint: [""]
-    pull_policy: always
+    pull_policy: if-not-present
   variables:
     IMAGE_NAME: 'flower-code-reviewer'
     SUB_DIR: 'packages/flower-code-reviewer'
