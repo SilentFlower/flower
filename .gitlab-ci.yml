@@ -43,6 +43,13 @@ build-flower-code-reviewer:
   # 风险:default runner 没有公网代理,npm install 可能需要内网 mirror —— 若 fail,
   # 在 Dockerfile 里显式配 .npmrc registry 指向内网 nexus 即可。
   tags: []
+  # 验证 runner 是否允许 image.pull_policy: always(给 .flower-code-review 用 latest+always 铺路)
+  # build job 用 Kaniko image,pull_policy: always 不影响 build 结果,纯做能力 probe。
+  # 若 runner 不允许 always,本 job 会立即 fail 报 "image pull policy ... is not allowed"
+  image:
+    name: ${KANIKO_IMAGE}
+    entrypoint: [""]
+    pull_policy: always
   variables:
     IMAGE_NAME: 'flower-code-reviewer'
     SUB_DIR: 'packages/flower-code-reviewer'
