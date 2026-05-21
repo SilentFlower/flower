@@ -43,6 +43,12 @@ build-flower-code-reviewer:
   # 风险:default runner 没有公网代理,npm install 可能需要内网 mirror —— 若 fail,
   # 在 Dockerfile 里显式配 .npmrc registry 指向内网 nexus 即可。
   tags: []
+  # 复测 runner 是否允许 image.pull_policy: always(用户已让 admin 加白名单)。
+  # 通过即可启用 .flower-code-review 的 latest + always 自动滚动方案(MR 157)。
+  image:
+    name: ${KANIKO_IMAGE}
+    entrypoint: [""]
+    pull_policy: always
   variables:
     IMAGE_NAME: 'flower-code-reviewer'
     SUB_DIR: 'packages/flower-code-reviewer'
