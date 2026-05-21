@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
-- **Last Active**: 2026-05-20
+- **Total Sessions**: 6
+- **Last Active**: 2026-05-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~182 | Active |
+| `journal-1.md` | ~222 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-05-21 | flower-providers env 缺省 fallback + 内网 GitLab CI 全链路打通 | `db4668c` | `main` |
 | 5 | 2026-05-20 | code-reviewer 评审质量优化 + 边界防御 + 三件套收口 | `22016b8`, `329ff53` | `main` |
 | 4 | 2026-05-20 | 完成 flower-code-reviewer 端到端跑通真实 MR 评审链路 | `9e7276a`, `e9945ff`, `5a32ee5`, `e572aad` | `main` |
 | 3 | 2026-05-19 | flower-providers: 修真实模型参数 + 接入 reasoning effort 抽象 | `19cb96b`, `86ef1ca` | `main` |
