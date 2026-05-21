@@ -3,7 +3,7 @@
   "name": "walkthrough-blocker-consistency",
   "title": "flower-code-reviewer · walkthrough blocker 列表与 line_comment 不一致",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "flower-code-reviewer",

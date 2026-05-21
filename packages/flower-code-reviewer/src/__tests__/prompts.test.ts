@@ -116,6 +116,47 @@ describe("buildPrompt · §6.6 alert 块动态切换", () => {
 	});
 });
 
+describe("buildPrompt · walkthrough 一致化(reviewer_list_my_blockers)", () => {
+	it("AC4.1 · prompt 含 reviewer_list_my_blockers 字串(对 LLM 提及工具名)", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("reviewer_list_my_blockers");
+	});
+
+	it("AC4.2 · prompt 含强约束『必须』+『逐条照抄』+『严禁』", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("必须");
+		expect(prompt).toContain("逐条照抄");
+		expect(prompt).toContain("严禁");
+	});
+
+	it("AC4.3 · prompt 含反例 + stress test 真实案例(N=3 vs 实际 4)", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("反例");
+		expect(prompt).toContain("stress test");
+		expect(prompt).toContain("漏列");
+		// 反例的关键证据:N=3 不一致 + 真实漏掉的文件路径
+		expect(prompt).toContain("3 个 blocker");
+		expect(prompt).toContain("exportHelper.ts");
+	});
+
+	it("步骤 7(校对 blocker 真值)+ 步骤 8(发整体评论)编号正确", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		// 步骤 7 是 reviewer_list_my_blockers 校对(在原步骤 7 之前插入,推后原 step 至 8)
+		expect(prompt).toMatch(/7\.\s+\*\*校对本轮 blocker 真值/);
+		expect(prompt).toMatch(/8\.\s+全部评审完后/);
+	});
+
+	it("示例 7 · 正例 walkthrough alert 块(4 blocker 4 列表逐条照抄)", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("示例 7");
+		// 正例 4 条具体 path:line 内容
+		expect(prompt).toContain("src/api/auth.ts:12");
+		expect(prompt).toContain("src/utils/exportHelper.ts:18");
+		expect(prompt).toContain("src/db/seed.ts:45");
+		expect(prompt).toContain("src/api/auth.ts:67");
+	});
+});
+
 describe("buildPrompt · dryRun hint", () => {
 	it("dryRun=true 时含 dry-run 提示", () => {
 		const prompt = buildPrompt({ skillFilePath, dryRun: true });
