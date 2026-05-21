@@ -131,6 +131,82 @@ flower 仓 Dockerfile 优化(`packages/flower-code-reviewer/Dockerfile`)产出 i
 - 默认 `latest`(浮动跟 flower 仓 main HEAD)
 - 锁版本场景:Runner `pull_policy=IfNotPresent` 限制下,**必须用 sha tag 才能强制拉新**(latest cache 命中不会自动更新)— 推荐业务方 `code-review: variables: { FLOWER_IMAGE_TAG: '<sha>' }`
 
+### 9. agent 自审工具范式 + `reviewer_*` 命名空间(2026-05-21 walkthrough 一致化任务沉淀)
+
+#### 9.1 Convention · `reviewer_*` 命名空间
+
+新命名空间 `reviewer_*` 用于**评审专用元工具**,与 `gitlab_*` 工具区分:
+
+| 命名空间 | 语义 | 是否发外部 API |
+|---|---|---|
+| `gitlab_*` | GitLab REST API 包装 | ✅ 发 GitLab API |
+| `reviewer_*` | 评审专用元工具,只读评审本地 trace / 状态 | ❌ 不发任何外部 API |
+
+**当前 `reviewer_*` 工具**:
+- `reviewer_list_my_blockers`:返回本轮 LLM 已发的 blocker 级 line_comment 列表(`{count, blockers:[{path,line,title}]}`)— 数据源 `review-trace.ts` 单例
+
+**何时加 `reviewer_*` 工具**:LLM 需要查询"评审过程本地状态"(本轮已读哪些文件 / 已发什么评论 / trace 元数据)时,优先 `reviewer_*` 而非新 `gitlab_*` API 调用 — 因为本地 trace **快、严格"本轮"语义、无 API 配额消耗**。
+
+**注册位置**:`packages/flower-code-reviewer/src/reviewer-self-tools.ts`(与 `extension.ts` 同级);在 `extension.ts` 注册序列中位于 `registerGitlabTools` 之后、`registerReviewTrace` 之前。
+
+#### 9.2 Design Decision · agent 自审 vs 代码 post-process(v1 弃用记录)
+
+**Context**:LLM 在长上下文里"自我概括类任务"(数量统计 / 列表照抄 / 多步骤同步)易出错。2026-05-21 stress test 实测:LLM 发了 4 条 blocker line_comment,但 walkthrough 顶部 alert 块写「3 个 blocker」并漏列 1 条。
+
+**Options Considered**:
+1. **v1 · 代码 post-process 强改 walkthrough body**:`run.ts` 在 `scanForBlockers` 之后用 line_comment 真值重写 walkthrough 顶部 alert 块,通过 `editMrNote` PUT 改 GitLab note
+2. **v2 · agent 自审工具 + prompt 强约束**:新增 `reviewer_list_my_blockers` 工具给 LLM,prompt 工作流强制 LLM 在写 walkthrough 前调工具拿真值并照抄
+
+**Decision**:**v2(已采用)**
+
+**Why**:
+- v1 把 LLM 当不可靠零件然后用代码兜底,违反 agent 独立完成的产品方向
+- v1 后续会形成路径依赖:每次发现 LLM 概括出错的新维度都加一层 post-process,拼出越来越大的"代码强改 LLM 输出"层
+- v2 给 LLM **确定性工具拿真值**,LLM 学会"先调工具再写"的模式可迁移到其他自审场景
+
+**Trigger 回归 v1 的硬条件**(明确写下,避免误判):
+- e2e 实测加强 prompt 后 LLM **仍然 ≥30% 概率不调工具或不照抄**,且**已经穷尽** prompt 工程方案(包括 hard-inject system message)。
+- 当前**不**采取 v1,即使未来真触发回归,也应该是有充分实测数据后的明确决策。
+
+#### 9.3 Convention · 自审工具实现要点
+
+```typescript
+// reviewer-self-tools.ts
+export const reviewerListMyBlockersTool = defineTool({
+  name: "reviewer_list_my_blockers",         // snake_case + reviewer_ 前缀
+  label: "列出本轮已发的 blocker",            // 中文 label
+  description: [                              // 多行 description 必须含:
+    "返回...",                                // - "做什么"
+    "数据从评审本地 trace 内存中读,**不发 GitLab API 请求**。",  // - "数据源约束"
+    "用法:在写 walkthrough 整体评论之前调用,...",              // - "何时用 + 怎么用"
+    "返回结构:`{ count: number, blockers: [...] }`(JSON 文本)",  // - "返回结构"
+  ].join("\n"),
+  parameters: Type.Object({}),                // 无参 → 空对象
+  async execute(_id) {
+    const trace = getTrace();
+    const blockers = trace.lineComments.filter(...).map(...);
+    const payload = { count: blockers.length, blockers };
+    return {
+      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+      details: { count: blockers.length },
+    };
+  },
+});
+```
+
+**关键点**:
+- `description` 必须告诉 LLM **不发 API**(避免 LLM 误以为可能延迟或失败)
+- 返回 JSON 文本到 `content[0].text`(LLM 直接读到结构化字符串),`details` 仅供 trace 显示
+- `execute` 内**不抛错**(LLM 自审工具不应阻断主流程;空数据返回 `count:0` 即可)
+
+#### 9.4 prompt 强约束写法
+
+`prompts.ts` 工作流加 step 时,**必须**用以下措辞强度:
+- `**必须**调` / `**严禁**靠对话历史记忆` / `**逐条照抄**` / `**不允许**摘要 / 漏列 / 增列 / 改字面值`
+- 加 **正例 few-shot**(展示"工具返回 → walkthrough 照抄"对照)
+- 加 **反例 few-shot**(展示"靠记忆 → 漏列"的真实失败用例,**用真实 stress test 数据**最有教育价值)
+- 不加"如果不方便"" 可选"等软化词(违反 quality-guidelines.md 的"prompt 不软化硬约束")
+
 ---
 
 **语言**:本目录文档用中文,代码示例 / 文件路径 / 工具名保持英文。

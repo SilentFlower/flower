@@ -117,15 +117,15 @@ describe("scanForBlockers · 对象签名 + 无依据评论检查", () => {
 describe("findUnsupportedComments · 无依据评论检测纯函数", () => {
 	it("评论文件没在 readFiles 中 → 返回该文件", () => {
 		const readFiles = new Set<string>([]); // 没读任何文件
-		const lineComments: PostedLineComment[] = [{ file: "src/a.go", line: 10 }];
+		const lineComments: PostedLineComment[] = [{ file: "src/a.go", line: 10, severity: "blocker", title: "" }];
 		expect(findUnsupportedComments(readFiles, lineComments)).toEqual(["src/a.go"]);
 	});
 
 	it("所有评论文件都已读 → 返回空数组", () => {
 		const readFiles = new Set<string>(["src/a.go", "src/b.go"]);
 		const lineComments: PostedLineComment[] = [
-			{ file: "src/a.go", line: 1 },
-			{ file: "src/b.go", line: 5 },
+			{ file: "src/a.go", line: 1, severity: "blocker", title: "" },
+			{ file: "src/b.go", line: 5, severity: "minor", title: "" },
 		];
 		expect(findUnsupportedComments(readFiles, lineComments)).toEqual([]);
 	});
@@ -133,10 +133,10 @@ describe("findUnsupportedComments · 无依据评论检测纯函数", () => {
 	it("部分评论文件未读 → 仅返回未读的(去重 + 排序)", () => {
 		const readFiles = new Set<string>(["src/a.go"]);
 		const lineComments: PostedLineComment[] = [
-			{ file: "src/a.go", line: 1 },
-			{ file: "src/c.go", line: 2 },
-			{ file: "src/b.go", line: 3 },
-			{ file: "src/c.go", line: 4 }, // 重复
+			{ file: "src/a.go", line: 1, severity: "blocker", title: "" },
+			{ file: "src/c.go", line: 2, severity: "blocker", title: "" },
+			{ file: "src/b.go", line: 3, severity: "major", title: "" },
+			{ file: "src/c.go", line: 4, severity: "minor", title: "" },
 		];
 		expect(findUnsupportedComments(readFiles, lineComments)).toEqual(["src/b.go", "src/c.go"]);
 	});

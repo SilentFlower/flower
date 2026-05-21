@@ -81,7 +81,16 @@ ${skillContent}
    想看 target 版本或历史 commit 可传对应 ref)。
 5. 必要时再调用 \`gitlab_get_file_content\` 拉**相关上下文**(被改函数实现 / 被改类定义 / 调用方)。
 6. 对每个有问题的地方,调用 \`gitlab_post_line_comment\` 发行内评论。
-7. 全部评审完后,如有总结性意见,调用 \`gitlab_post_comment\` 发整体评论。
+7. **校对本轮 blocker 真值(强制)**:发完所有 line_comment 后,**必须**调用一次
+   \`reviewer_list_my_blockers\`(无参),拿到本轮你刚发的 blocker 列表 \`{count, blockers:[{path,line,title}]}\`。
+   这是写下一步 walkthrough alert 块的**唯一真值**,**严禁**靠对话历史记忆数。
+8. 全部评审完后,如有总结性意见,调用 \`gitlab_post_comment\` 发整体评论。
+   - 若步骤 7 拿到 \`count >= 1\`:walkthrough 顶部**必须**插入 \`> [!caution]\` alert 块(GitLab 17.10+)
+     或降级 \`> ⚠️ **Caution**\` blockquote(< 17.10),其中:
+     - **N 数字** = 步骤 7 的 \`count\`(不允许靠记忆数)
+     - **Blocker 列表** = 步骤 7 的 \`blockers\` 数组,**逐条照抄**为 \`- \\\`<path>:<line>\\\` — <title>\`,
+       **不允许**摘要 / 漏列 / 增列 / 改字面值 / 调整顺序
+   - 若步骤 7 \`count === 0\`:**不要**插入 alert 块(沿用"无 blocker 不插 caution"约定)
 
 ## 严格要求
 
@@ -246,6 +255,62 @@ if hmacSecret == "" {
 ### 示例 6 · 全 blocker 拦截整体评论顶部 alert 块(可选,仅在有 ≥1 个 blocker 时插入)
 
 ${renderAlertBlockExample(useAlertBlock)}
+
+### 示例 7 · 调 reviewer_list_my_blockers 后写 walkthrough 顶部 alert 块
+
+(假设你刚通过 gitlab_post_line_comment 发了 4 条 severity=blocker 的行内评论)
+
+**步骤 7**:调用 \`reviewer_list_my_blockers\`(无参),拿到工具返回:
+
+\`\`\`json
+{
+  "count": 4,
+  "blockers": [
+    {"path": "src/api/auth.ts", "line": 12, "title": "硬编码生产 API Key 会泄漏凭据"},
+    {"path": "src/utils/exportHelper.ts", "line": 18, "title": "token 通过 URL query 暴露给第三方"},
+    {"path": "src/db/seed.ts", "line": 45, "title": "明文密码 seed 导致历史数据可解"},
+    {"path": "src/api/auth.ts", "line": 67, "title": "JWT 永不过期"}
+  ]
+}
+\`\`\`
+
+**步骤 8**:walkthrough 顶部 alert 块**逐条照抄**为:
+
+\`\`\`markdown
+${useAlertBlock ? "> [!caution]\n> " : "> ⚠️ **Caution**\n> "}本次评审发现 **4 个 blocker 级问题**,CI 将以非零退出码 fail。修复后请重新 push 触发自动重审。
+>
+> Blocker 列表:
+> - \`src/api/auth.ts:12\` — 硬编码生产 API Key 会泄漏凭据
+> - \`src/utils/exportHelper.ts:18\` — token 通过 URL query 暴露给第三方
+> - \`src/db/seed.ts:45\` — 明文密码 seed 导致历史数据可解
+> - \`src/api/auth.ts:67\` — JWT 永不过期
+\`\`\`
+
+N(4)和 4 条列表 path:line — title 全部来自工具返回,**不是**你自己数 / 自己概括的。
+
+### 反例 · 不调工具靠记忆概括 → 漏列
+
+❌ **错误做法**(2026-05-21 stress test 实测发生过的真实案例):
+
+LLM 实际通过 \`gitlab_post_line_comment\` 发了 **4 条 blocker**,但写 walkthrough 时跳过步骤 7,
+靠对话历史记忆概括,生成的 alert 块:
+
+\`\`\`markdown
+${useAlertBlock ? "> [!caution]\n> " : "> ⚠️ **Caution**\n> "}本次评审发现 **3 个 blocker 级问题**,CI 将以非零退出码 fail。
+>
+> Blocker 列表:
+> - \`src/api/auth.ts:12\` — 硬编码 API Key
+> - \`src/db/seed.ts:45\` — 明文密码
+> - \`src/api/auth.ts:67\` — JWT 永不过期
+\`\`\`
+
+**漏列**了 \`src/utils/exportHelper.ts:18\`(token 进 URL query 那条 blocker)。MR 作者打开 MR
+第一眼看到 N=3,以为修 3 条就行;实际 push 后 CI 仍 fail,信任崩塌。
+
+**根因**:LLM 在长对话上下文里靠记忆数,**会丢条**。
+
+**正确做法**:严格执行步骤 7 + 步骤 8,工具返回什么就照抄什么,不要"优化文案"、不要摘要、
+不要漏增。
 
 现在开始评审。`;
 }

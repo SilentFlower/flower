@@ -1,94 +1,99 @@
-# Implementation Plan · walkthrough blocker 一致化
+# Implementation Plan · walkthrough blocker 一致化(agent 自审方案)
 
-> 三件套之 implement.md。基于 `prd.md` R1-R8 + `design.md` §1-§4,展开 ordered checklist + 验证命令 + review gate。
+> 三件套之 implement.md。基于 `prd.md` R1-R7 + `design.md` §1-§6,展开 ordered checklist + 验证命令 + review gate。
 
 ## 总体顺序
 
 ```
-Phase 1 · flower-tools-gitlab 加 editMrNote          (~30 min)
-Phase 2 · flower-code-reviewer 加 walkthrough-rewrite 纯函数  (~60 min)
-Phase 3 · run.ts 接入 post-process                    (~15 min)
-Phase 4 · 整套质量门(typecheck + lint + 全单测)     (~10 min)
-Phase 5 · e2e 真跑 MR-2 验收                          (~10 min)
+Phase 1 · review-trace.ts 扩展(数据底座)            (~30 min)
+Phase 2 · extension.ts tool_call 补提取 + 新工具注册   (~45 min)
+Phase 3 · prompts.ts 工作流改造 + 正反例 few-shot      (~30 min)
+Phase 4 · 整套质量门(typecheck + lint + 全 vitest)   (~10 min)
+Phase 5 · e2e 真跑 MR-2 验收 + LLM 行为观察            (~15 min)
 Phase 6 · spec 沉淀 + commit                          (~15 min)
 ```
 
-工作量预估:**≈ 2.5 小时**(纯代码,无外部依赖)。
+工作量预估:**≈ 2-2.5 小时**(纯代码,无外部依赖,改动量比 v1 方案略小)。
 
 ---
 
-## Phase 1 · flower-tools-gitlab 加 editMrNote
+## Phase 1 · `review-trace.ts` 扩展
 
-**目的**:为 walkthrough post-process 提供改 note body 的能力。
+**目的**:落地 design.md §1。先把数据底座扩展好,后续 Phase 2/3 才能正确使用。
 
 **Checklist**:
-- [ ] 1.1 `packages/flower-tools-gitlab/src/client.ts` 的 `GitlabClient` 接口加方法签名 `editMrNote(projectId, mrIid, noteId, body): Promise<void>`(design.md §1.1)
-- [ ] 1.2 在 `createGitlabClient` 内实装 `editMrNote`:`PUT /api/v4/projects/${encode(projectId)}/merge_requests/${mrIid}/notes/${noteId}`,JSON body `{ body }`,沿用 `gitlabFetch` 默认错误分类
-- [ ] 1.3 `packages/flower-tools-gitlab/src/__tests__/client.test.ts` 加 4 个新 case:
-  - happy path:method=PUT,URL 正确含 noteId,body JSON 含 body 字段
-  - 401 → AuthError
-  - 5xx(第二次仍失败)→ RetryableError
-  - 普通 404 → 抛 Error 含 "404"
+- [ ] 1.1 `packages/flower-code-reviewer/src/review-trace.ts` 扩展 `PostedLineComment` 接口加 `severity` + `title` 字段(design.md §1.1)
+- [ ] 1.2 同文件加纯函数 `extractBlockerTitle(body: string): string`(design.md §1.2),含 marker 剥离 + 第一行抽取 + 等级前缀正则
+- [ ] 1.3 `recordLineComment` 改为对象签名 `({file, line, severity, body})`:
+  - 内部调 `extractBlockerTitle(body)` 抽 title
+  - push 到 `trace.lineComments` 时存 4 个字段(file/line/severity/title)
+- [ ] 1.4 `packages/flower-code-reviewer/src/__tests__/review-trace.test.ts` 加 case:
+  - **AC2.1**:`recordLineComment({file:"a.ts", line:1, severity:"blocker", body:"🔴 **阻塞** · X\n..."})` → `lineComments[0]` 含全字段且 `title === "X"`
+  - **AC2.2**:`severity:"major"` 也正确记录
+  - **AC2.3**(向后兼容):跑现有 `findUnsupportedComments` case 全过
+  - 新增 `extractBlockerTitle` 4 case(`·` / 空格分隔 / marker / 空 body)
 
 **验证**:
 ```bash
-cd packages/flower-tools-gitlab && pnpm vitest run client.test
+cd packages/flower-code-reviewer && pnpm vitest run review-trace
 ```
 
-**Review gate**:editMrNote 签名 + 实装与 postMrComment 镜像对称,错误分类一致。
+**Review gate**:title 抽取在 4 种 body 格式下都正确;现有 `findUnsupportedComments` 单测零修改全过(只需更新调用处的 `recordLineComment` 参数为对象形式)。
 
 ---
 
-## Phase 2 · flower-code-reviewer 加 walkthrough-rewrite 纯函数
+## Phase 2 · `extension.ts` tool_call 补提取 + 新工具注册
 
-**目的**:落地 design.md §2.1 的 `rewriteWalkthroughBlockers` 纯函数,**单测先行**(TDD)。
+**目的**:落地 design.md §2。把 LLM 实际调用 `gitlab_post_line_comment` 的 severity / body 入参传到 trace;新增 `reviewer_list_my_blockers` 工具。
 
 **Checklist**:
-- [ ] 2.1 新建 `packages/flower-code-reviewer/src/comments/walkthrough-rewrite.ts`,先写 type 签名(`WalkthroughRewriteInput` / `BlockerEntry` / `WalkthroughRewriteOutput`)
-- [ ] 2.2 新建 `packages/flower-code-reviewer/src/__tests__/walkthrough-rewrite.test.ts`,按 design.md §2.3 表格写 6 个 case(AC1.1-1.6),全部 expect 红色(函数还没实现)
-- [ ] 2.3 在 `walkthrough-rewrite.ts` 实装:
-  - **2.3.a** filter 出本轮新增 + walkthrough 特征评论(`!beforeIds.has(id) && file===undefined && line===undefined && body.includes(":robot:") && body.includes("代码评审报告")`)。多个匹配取最后 1 条
-  - **2.3.b** filter 出本轮新增 + 带 blocker marker 的 line_comment(`!beforeIds.has(id) && file!==undefined && line!==undefined && /<!--\s*severity:\s*blocker\s*-->/.test(body)`)
-  - **2.3.c** title 抽取:正则去 marker + split 第一行 + 去 emoji+加粗等级前缀
-  - **2.3.d** alert 块定位:行扫描算法(design.md §2.1 伪码)
-  - **2.3.e** 改写逻辑:
-    - 有 blocker + 找到 alert 块 → 替换 alert 块
-    - 无 blocker + 找到 alert 块 → 删除 alert 块(连带前后空行 1 个)
-    - 有 blocker + 无 alert 块 → 跳过(OoS)
-    - 无 blocker + 无 alert 块 → 跳过
-  - **2.3.f** 用 `supportsAlertBlock(gitlabVersion)` 决定渲染语法
-  - **2.3.g** `newBody === oldBody` → 返回 `noteId: undefined`(避免无效 PUT)
-- [ ] 2.4 在 `packages/flower-code-reviewer/src/comments/index.ts` 加 `export { rewriteWalkthroughBlockers }` 等
+- [ ] 2.1 `packages/flower-code-reviewer/src/extension.ts` 的 `registerReviewTrace` 中 `gitlab_post_line_comment` 分支补提取 `severity` + `body`,加 4 字段类型守卫,调新版 `recordLineComment({...})`(design.md §2.1)
+- [ ] 2.2 同文件新增函数 `registerReviewerSelfTools(pi)`(design.md §2.2),用 `pi.registerTool` 注册 `reviewer_list_my_blockers`:
+  - name / label / description(完整文案见 design.md §2.2)
+  - parameters: `{type: "object", properties: {}, additionalProperties: false}`(无参)
+  - execute: 读 trace,过滤 blocker,map 出 `{path, line, title}` 数组,返回 `{count, blockers}`
+- [ ] 2.3 default export 注册序列加 `registerReviewerSelfTools(pi)`,位置:`registerReviewTrace` 之后、`registerObservability` 之前(design.md §2.3)
+- [ ] 2.4 新建 `packages/flower-code-reviewer/src/__tests__/extension.test.ts`:
+  - **AC3.1**:mock 一个简易 `ExtensionAPI`(只需 `on` / `registerTool` 两个方法),调 `extensionFactory(mockPi)`;然后触发一个 `gitlab_post_line_comment` event,断言 trace 记录完整
+  - **AC3.2**:event input 缺 severity → 不记录
+  - **AC1.1**:trace 有 2 blocker + 1 major → 直接调注册到 mock 的 execute → 返回 count=2 + 2 条
+  - **AC1.2**:trace 空 → count=0, blockers=[]
+  - **AC1.3**:1 blocker body 含 `🔴 **阻塞** · 硬编码 secret` → blockers[0].title === "硬编码 secret"
+  - **AC1.4**:body 用空格分隔 → title 抽取仍正确(通过 extractBlockerTitle 单测覆盖,这里集成 case 1 个即可)
+  - **AC1.5**:断言注册时传入的 schema `parameters.properties` 为空 object,`additionalProperties: false`
 
 **验证**:
 ```bash
-cd packages/flower-code-reviewer && pnpm vitest run walkthrough-rewrite.test
+cd packages/flower-code-reviewer && pnpm vitest run extension
 ```
 
-6 case 全绿。
-
-**Review gate**:确认每个 AC1.* 都有对应单测;6.b alert 块定位算法对 LLM 不严格抄 few-shot(空行 / blockquote 嵌套等)的鲁棒性。
+**Review gate**:工具 execute 在 mock 环境跑通;返回结构与 design.md §0.1 时序图一致(`{count, blockers:[{path,line,title}]}`)。
 
 ---
 
-## Phase 3 · run.ts 接入 post-process
+## Phase 3 · `prompts.ts` 工作流改造 + 正反例 few-shot
 
-**目的**:落地 design.md §2.2 的接入点,串到主链路。
+**目的**:落地 design.md §3。教 LLM 学会"先调 reviewer_list_my_blockers 再写 walkthrough alert 块"。
 
 **Checklist**:
-- [ ] 3.1 `packages/flower-code-reviewer/src/run.ts` 在 `scanForBlockers` 调用之后(L314-318 区段),包 try-catch 调 `rewriteWalkthroughBlockers` + `gitlabClient().editMrNote`
-- [ ] 3.2 失败时 `console.warn("[code-reviewer] walkthrough 一致化改写失败,跳过:", err)`
-- [ ] 3.3 成功时 `console.log("[code-reviewer] walkthrough 一致化:N 个 blocker")`(N = blockers.length)
-- [ ] 3.4 `run.ts` 单测确认主链路不受影响(若有相关 mock 需要补 editMrNote stub)
+- [ ] 3.1 找到 `prompts.ts` 现有工作流步骤序列(grep `步骤` / `工作流`),确定插入位置(发完 line_comment 后、发 walkthrough 前)
+- [ ] 3.2 插入新 step「校对本轮 blocker 真值」,文案见 design.md §3.1:
+  - 强约束:`**必须**调`、`不允许靠对话历史记忆数`、`**逐条照抄**`、`严禁修改 path / line / title 字面值`
+  - 0 blocker 情况:`不要插入 alert 块`
+- [ ] 3.3 在「示例」段加正例 few-shot(design.md §3.2),展示工具返回 → walkthrough alert 块的对应关系(4 blocker 4 列表)
+- [ ] 3.4 在「示例」段加反例 few-shot(design.md §3.3),引用本次 stress test 4 vs 3 案例 + 说明"靠记忆会丢"
+- [ ] 3.5 同步更新 `__tests__/prompts.test.ts`:
+  - **AC4.1**:`expect(prompt).toContain("reviewer_list_my_blockers")`
+  - **AC4.2**:`expect(prompt).toContain("必须调")` + `toContain("逐条照抄")`
+  - **AC4.3**:`expect(prompt).toContain("反例")`(或反例中的特征字串)
+  - 同时确保现有 AC(`> [!caution]` 降级测试 / 严格要求段 / few-shot 等)全过
 
 **验证**:
 ```bash
-cd packages/flower-code-reviewer && pnpm vitest run run.test
+cd packages/flower-code-reviewer && pnpm vitest run prompts
 ```
 
-149 → 149+ 全绿(不破坏现有 case;若需要新增 mock 则数字上涨)。
-
-**Review gate**:try-catch 包裹严密,**失败不抛**到 cli.ts(否则 exitCode 会被改成 2)。
+**Review gate**:工作流新 step 在 LLM 视角逻辑通顺(发完 line_comment → 校对 → 发 walkthrough);反例 few-shot 直接复用本次 stress test 案例,有教育价值。
 
 ---
 
@@ -98,35 +103,61 @@ cd packages/flower-code-reviewer && pnpm vitest run run.test
 
 **Checklist**:
 - [ ] 4.1 `pnpm -r typecheck`(或 `npx tsc --build`)全过
-- [ ] 4.2 `pnpm -r lint`(biome check)全过
-- [ ] 4.3 `pnpm -r test`(vitest)全过
-- [ ] 4.4 `git diff --stat` 确认改动范围与 design.md §0.1 一致(只动 4 文件 + 2 新增)
+- [ ] 4.2 `pnpm -r lint`(biome check)全过 — 重点关注 `recordLineComment` 旧位置参数已全部更新(extension.ts 是唯一 caller)
+- [ ] 4.3 `pnpm -r test`(vitest)全过(149 → 149+N,N = 本任务新增 case 数)
+- [ ] 4.4 `git diff --stat` 确认改动只在 design.md §0.1 列出的文件范围:
+  - `packages/flower-code-reviewer/src/{review-trace.ts, extension.ts, prompts.ts}`
+  - `packages/flower-code-reviewer/src/__tests__/{review-trace.test.ts, extension.test.ts(new), prompts.test.ts}`
+  - 任务三件套(自动跟踪)
 
 ---
 
-## Phase 5 · e2e 真跑 MR-2 验收
+## Phase 5 · e2e 真跑 MR-2 验收 + LLM 行为观察
 
-**目的**:落地 AC2,在 `xhgj003027/xhgj-iqs-ui` MR-2 验证 walkthrough 真改对了。
+**目的**:落地 AC5。本任务的核心 risk(LLM 是否真的调工具 + 照抄)只能 e2e 验证。
 
 **Checklist**:
-- [ ] 5.1 在 flower 仓 commit + push 上述改动到 main(触发镜像 build pipeline)
-- [ ] 5.2 等 Harbor 上新 image tag 出来,记录 sha
-- [ ] 5.3 在 pineapple MR-2 `.gitlab-ci.yml` 加 `FLOWER_IMAGE_TAG: <new-sha>` 锁定到新镜像(或等 latest 滚动)
-- [ ] 5.4 push 一个空 commit / retry pipeline 触发新一轮评审
-- [ ] 5.5 人工核对 walkthrough 顶部 alert 块的 N 和列表 = 实际 blocker line_comment 数 + 位置
+- [ ] 5.1 flower 仓 commit + push 本任务改动到 main(或新建分支 push)→ 触发镜像 build pipeline
+- [ ] 5.2 等 Harbor 上新 image tag 出来(查 `192.168.27.236/base/flower-code-reviewer:<sha>`),记录 sha
+- [ ] 5.3 在 pineapple `xhgj003027/xhgj-iqs-ui` MR-2 `.gitlab-ci.yml` 加 `FLOWER_IMAGE_TAG: <new-sha>`(或回滚 latest)
+- [ ] 5.4 push 一个空 commit 或 retry pipeline,触发新一轮评审
+- [ ] 5.5 抓 job trace,**重点核对**:
+  - observability 输出中是否出现 `🔧 [tool →] reviewer_list_my_blockers` + `🔧 [tool ←] reviewer_list_my_blockers result={...}` 一对(LLM 真的调了)
+  - 工具返回的 blockers 数组 vs 后续 walkthrough body 顶部 alert 块的 N + 列表 → 是否一致
+- [ ] 5.6 walkthrough 内容 vs line_comment 实际情况比对(MR UI 上看):
+  - 数量一致(N === 真实 blocker line_comment 数)
+  - path:line 一一对应(无漏 / 无增 / 无错)
+  - title 与 line_comment 第一行去前缀后一致
 
-**Review gate**:walkthrough 与 line_comment 数量一致,blocker 列表 path:line 对得上。
+**Review gate**:LLM 确实调了 `reviewer_list_my_blockers` 工具,且 walkthrough 顶部内容与工具返回逐条一致。
+
+**如果 e2e 失败**:
+- LLM 没调工具 → 加强 prompt 强约束措辞 + 重跑;若仍不调,考虑在 prompt 中加 "thinking" hint 段
+- LLM 调了不抄 → 反例 few-shot 加更显眼的 "错误" 标记 + 重跑
+- 极端情况:LLM 调用方式持续不对(≥ 2 次迭代仍不行)→ 退到 design.md §0.3 描述的"回归 v1 的触发条件"评估,但**当前任务不切回 v1**
 
 ---
 
 ## Phase 6 · spec 沉淀 + commit
 
-**目的**:把 post-process 这个模式沉淀到 spec,后续类似 LLM 自由概括 vs ground truth 不一致的 case 可以复用。
+**目的**:把本任务引入的两个模式(`reviewer_*` 命名空间 + agent 自审工具范式)沉淀到 spec。
 
 **Checklist**:
-- [ ] 6.1 在 `.trellis/spec/flower-code-reviewer/backend/index.md` 加一节「Post-process LLM 输出:walkthrough 一致化」:解释什么时候用 post-process(LLM 概括会丢的事实)、什么时候用 prompt 工程(LLM 能精确表达的语义)
-- [ ] 6.2 `git add -A && git commit` 一个干净 commit(commit message: `feat(flower-code-reviewer): walkthrough alert 块 blocker 列表与 line_comment 一致化`)
-- [ ] 6.3 `task.py archive` 把任务归档
+- [ ] 6.1 在 `.trellis/spec/flower-code-reviewer/frontend/index.md` 「关键设计点」段加一节:
+  - **`reviewer_*` 命名空间**:语义 = 评审专用元工具(只读评审 trace,不发外部 API);现有工具 `reviewer_list_my_blockers`;后续若加 `reviewer_get_trace` 等,沿用前缀
+  - **agent 自审工具范式**:对"LLM 易出错的自我概括类任务"(数量统计 / 列表照抄等),优先**给确定性工具 + prompt 强约束**,而非代码 post-process;明确写出 walkthrough 一致化任务的 v1 post-process 弃用记录,避免后续误回潮
+- [ ] 6.2 同 spec 文件「评论模板规范」段如有 walkthrough 顶部 alert 块描述,补一行:"alert 块的 N + 列表通过 `reviewer_list_my_blockers` 工具传递真值,LLM 照抄"
+- [ ] 6.3 `git add -A && git commit`,commit message:
+  ```
+  feat(flower-code-reviewer): walkthrough alert 块一致化(agent 自审工具方案)
+
+  - review-trace 扩展记录 severity + title
+  - 新增 reviewer_list_my_blockers 工具(本地 trace 读,不发 API)
+  - prompts.ts 工作流强制 LLM 写 walkthrough 前调工具拿真值并照抄
+  - 不引入代码 post-process(v1 弃用方案,见 design.md §0.3)
+  ```
+- [ ] 6.4 `python3 ./.trellis/scripts/task.py archive`
+- [ ] 6.5 在 journal `.trellis/workspace/silentflower/journal-1.md` 加 1 行小结(任务完成 + 关键决策点:agent 自审 vs 代码强改)
 
 ---
 
@@ -134,8 +165,9 @@ cd packages/flower-code-reviewer && pnpm vitest run run.test
 
 | 阶段 | 失败如何回滚 |
 |---|---|
-| Phase 1 单测红 | 改 client.ts 实装直到红→绿,**不**回滚单测 |
-| Phase 2 单测红 | 改 walkthrough-rewrite.ts 直到红→绿 |
-| Phase 3 run.ts 改动破坏现有 case | revert Phase 3 commit,只保留 Phase 1+2 工具能力(尚未接入主链路,无副作用) |
-| Phase 5 e2e 验收发现 walkthrough 没改对 | 检查 alert 块定位算法是否漏了 LLM 实际输出的 edge case;补 unit test 复现 → 修代码 → 重 push |
-| 上线后线上某 MR 触发 walkthrough body 异常 | 因 `run.ts` 包了 try-catch,**最坏情况就是 walkthrough 顶部数字仍旧由 LLM 自由概括**(回到本任务之前的状态),不会有新故障 |
+| Phase 1 单测红 | 改 `recordLineComment` / `extractBlockerTitle` 直到绿;`findUnsupportedComments` 不应被影响 |
+| Phase 2 单测红 | 工具 execute 返回结构错 → 对齐 design.md §0.1 时序图 `{count, blockers:[{path,line,title}]}`;mock pi event 抽不到字段 → 检查类型守卫 |
+| Phase 3 prompts.test 现有 case 破坏 | 新加内容可能与现有 caution / few-shot 数顺序冲突 → 检查测试是否硬编码 step 编号(若是则同步更新) |
+| Phase 4 typecheck 报 `recordLineComment` 旧调用 | extension.ts 是唯一 caller;若有其他地方调,补全(本任务前已 grep 确认,理论上没有) |
+| Phase 5 LLM 不调工具 / 调了不抄 | 加强 prompt 强约束 + 反例显眼程度 + 重跑;**不**回退到 v1 post-process,除非满足 design.md §0.3 的回归条件 |
+| 上线后线上 review 对该工具调用方式有问题 | revert 一个 commit 即可;reviewer image 滚回上一版;无 DB / migration / 业务方配置变更 |

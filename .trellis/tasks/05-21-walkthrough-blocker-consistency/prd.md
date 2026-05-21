@@ -1,4 +1,4 @@
-# flower-code-reviewer · walkthrough blocker 列表与 line_comment 一致化
+# flower-code-reviewer · walkthrough blocker 一致化(agent 自审方案)
 
 ## 0. 触发场景
 
@@ -12,93 +12,154 @@ CI exitCode 由 `run.ts:scanForBlockers` 基于 line_comment 的 `<!-- severity:
 
 ## 1. Goal
 
-walkthrough 整体评论顶部 alert 块里的 **blocker 数量 + 列表** 由 flower-code-reviewer 代码 **post-process 改写**(不再让 LLM 自由概括),保证与本轮实际 post 的 blocker line_comment **完全一致**(数量、文件:行号、问题标题)。
+让 walkthrough 顶部 alert 块的 blocker 数量 + 列表与本轮实际发出的 blocker line_comment 完全一致。
+
+**核心哲学**:agent 自己应该能数清自己刚做的事 — **通过给 LLM 一个确定性「自审工具」**`reviewer_list_my_blockers`,让它在写 walkthrough 前先调工具拿到本轮 blocker 真值,然后照抄到 alert 块。
+
+**反方向**(本任务**明确弃用**):由代码 post-process 强改 walkthrough body — 这是把 agent 当成不可靠零件然后绕过去,违反产品方向(agent 独立完成);弃用记录见 `design.md` §0.3。
 
 ## 2. Requirements
 
-### R1 · 计数与列表绑定 line_comment 真值
+### R1 · 新增 `reviewer_list_my_blockers` 工具(LLM 可见)
 
-walkthrough 顶部 alert 块的 N(blocker 数)与 blocker 列表,**必须**等于本轮 `getBotComments` 新增 + 携带 blocker marker 的 line_comment 集合,**不依赖 LLM 自由概括**。
+- 工具名:`reviewer_list_my_blockers`
+  - `reviewer_` 前缀:表明是评审专用元工具,**不是** GitLab API 包装(不进 `gitlab_*` namespace,避免误以为会发 API 请求)
+  - `_my_`:强调"我本轮自己发的",避免 LLM 误以为是查询历史评论
+- 入参:无
+- 出参:
+  ```typescript
+  {
+    count: number;
+    blockers: Array<{ path: string; line: number; title: string }>;
+  }
+  ```
+- 数据源:`review-trace.ts` 本地单例(不发 GitLab API roundtrip,**只看本轮 LLM 已通过 `gitlab_post_line_comment` 发出的 blocker**)
+- 描述向 LLM 表达清楚:
+  > 返回本轮你已通过 `gitlab_post_line_comment` 发出的 blocker 级行内评论列表(从评审 trace 内存中读,不发 API 请求)。在写 walkthrough 整体评论前调用,拿到本轮 blocker 真值,避免靠记忆概括出错。
 
-### R2 · 兼容 alert 块降级
+### R2 · `review-trace.ts` 扩展记录 severity + title
 
-当前 `prompts.ts` 已经按 GitLab 版本输出两种 alert 块语法:
-- GitLab ≥ 17.10:`> [!caution]`
-- GitLab < 17.10:`> ⚠️ **Caution**` blockquote 降级
+- `PostedLineComment` 接口扩展:
+  ```typescript
+  export interface PostedLineComment {
+    file: string;
+    line: number;
+    severity: "blocker" | "major" | "minor";  // ← 新增
+    title: string;                              // ← 新增(从 body 第一行抽,去 emoji + 加粗等级前缀)
+  }
+  ```
+- `recordLineComment` 签名扩展为对象形式:
+  ```typescript
+  recordLineComment({ file, line, severity, body }: { file, line, severity, body }): void
+  ```
+- title 抽取规则:
+  - 取 body 第 1 行(`body.split("\n", 1)[0]`)
+  - 去前缀 `^[🔴🟠🔵]\s*\*\*\S+\*\*\s*[·•]?\s*`(对齐 spec `flower-code-reviewer/frontend/index.md` §1 中文等级格式 `🔴 **阻塞** · ...`)
+  - 若空 fallback 为 `"(无标题)"`
+- 现有 `findUnsupportedComments(readFiles, lineComments)` 行为不变(只看 file)
 
-post-process **两种语法都要识别 + 重写**。
+### R3 · `extension.ts` 的 tool_call 监听补提取 severity + body
 
-### R3 · 仅在本轮真的发了 walkthrough 时改
+- 在 `pi.on("tool_call", ...)` 中处理 `gitlab_post_line_comment` 时,**额外提取** `event.input.severity` 和 `event.input.body`,传给新版 `recordLineComment`
+- 类型守卫:`severity` 必须 ∈ `{"blocker","major","minor"}`,`body` 必须为 string,否则跳过本次记录(`return undefined`)
+- 与现有 compliance / observability hook 顺序不冲突(只是丰富 input 提取)
 
-如果 LLM 本轮没发整体评论(只发了 line_comment 就结束 / 完全没问题走 `:white_check_mark:` 模板),**不**触发改写,避免空操作发请求。
+### R4 · 新工具的注册
 
-### R4 · 0 blocker 情况
+- 在 `extension.ts` 的 `registerReviewTrace`(或新增一个 `registerReviewerTools`)中通过 `pi.registerTool` 注册 `reviewer_list_my_blockers`
+- 工具 execute 内部:`getTrace().lineComments.filter(c => c.severity === "blocker").map(...)`
+- 注册顺序:在 `registerGitlabTools(pi)` 之后(顺序与 review-trace 监听并列即可),确保 compliance / observability 都能正确观察到该工具调用
 
-如果本轮 line_comment 中 blocker = 0:
-- 若 walkthrough 含 alert 块 → **删除整个 alert 块**(无 blocker 不应再吓人)
-- 若 walkthrough 无 alert 块 → 不动
+### R5 · `prompts.ts` 工作流新增校对步骤 + 强约束 + 反例 few-shot
 
-### R5 · 改写失败不影响主链路
-
-post-process 调 GitLab API `PUT note` 失败时:
-- 仅 `console.warn`,**不抛错**
-- 不影响 `scanForBlockers` 的 exitCode 决策(那部分已经独立)
-- 不重试(单次 best-effort,避免 GitLab API 偶发故障把整个评审流程拖垮)
-
-### R6 · 不破坏现有 walkthrough body 其他段落
-
-post-process 只改 alert 块那一段,**不**碰下方的 `## 概要` / `## 文件变更` / `## 行动建议` 等正文部分。
-
-### R7 · blocker 列表条目格式与 prompt few-shot 一致
+工作流加 step(在「发 walkthrough」之前):
 
 ```
-- `<path>:<line>` — <一句话标题>
+步骤 X · 校对 blocker 真值(强制)
+- 发完所有 line_comment 后,**必须调** `reviewer_list_my_blockers` 一次
+- 工具会返回 `{ count, blockers: [{path, line, title}] }`,代表本轮你刚通过 `gitlab_post_line_comment` 发出的 blocker 级行内评论
+- 写 walkthrough 顶部 alert 块时:
+  - alert 块中的 **N 数字** = `count`,不允许靠记忆数
+  - **Blocker 列表** = `blockers` 中每一条,**逐条照抄** `<path>:<line> — <title>`,不允许摘要、不允许漏、不允许增
+- 严禁不调工具直接靠对话历史概括;严禁修改工具返回的 path / line / title 字面值
 ```
 
-标题取自对应 line_comment body 的 **第 1 行去掉前面的 severity emoji + 加粗等级 marker**(如 `🔴 **阻塞** ` 前缀)后剩余文本。规则在 prompts.ts §「评论 markdown 样式」中已固化:行内评论第 1 行是 `<emoji> **<等级中文>** <一句话问题标题>`,直接抽取尾段即可。
+加 1 个正例 few-shot(展示先调工具再写 walkthrough)+ 1 个反例 few-shot(展示「靠记忆漏列」的错误,用本次 stress test 的 4 vs 3 案例)。
 
-### R8 · 不引入新的 LLM tool
+### R6 · 不引入代码 post-process(决定性 anti-requirement)
 
-post-process 是 `run.ts` 完成阶段的代码逻辑,**不**给 LLM 新增工具,**不**修改 prompts.ts 的工作流。LLM 仍然按现有约定写 walkthrough,但顶部 alert 块在落地前会被静默改写。
+- ❌ **不**改 walkthrough body(LLM 写啥落地就是啥)
+- ❌ **不**新增 `editMrNote` 类工具
+- ❌ **不**在 `run.ts` 加任何 walkthrough 后处理逻辑
+- ✅ `scanForBlockers` 的 exitCode 决策不变(基于 line_comment marker,与 walkthrough 顶部数字无关)— 即使 LLM 在 walkthrough 数字写错,CI 仍然正确 fail close
+
+这条是本任务的**核心约束**:agent 自己做对才算解决问题,代码兜底是绕过去,**v1 post-process 方案在 brainstorm 阶段已被明确弃用**(见 `design.md` §0.3)。
+
+### R7 · 不破坏现有契约
+
+- `recordLineComment` 旧签名(`(file, line)` 位置参数)直接替换为新签名;extension.ts 是唯一 caller,同步改完即可,**不**保留旧重载
+- `PostedLineComment` 扩展字段是**新增**,`findUnsupportedComments` 不读这些字段所以零影响
+- 现有 149 单测(只调用 `findUnsupportedComments` 等)继续过
 
 ## 3. Out of Scope
 
-- ❌ 重设计 walkthrough 整体结构(本任务只动 alert 块那一段)
-- ❌ 让 LLM 在生成 walkthrough 之前看到自己的 line_comment 列表(prompt 工程方案 B,被本 PRD 弃用)
-- ❌ 整体评论改为程序化生成 / 不让 LLM 写(方案 C,信息密度太低被弃用)
-- ❌ 修复 reviewer 其他 known gap(漏识别 blocker / 漏识别 minor 等)— 本任务只解 walkthrough 不一致
+- ❌ **代码 post-process 改写 walkthrough body**(v1 弃用方案,违反 agent 独立完成的产品方向)
+- ❌ 把 walkthrough 改成结构化字段工具(方案 B,损失 LLM 自由表达)
+- ❌ LLM 发完 walkthrough 后自校验闭环(方案 C,复杂度高且 LLM 易死循环)
+- ❌ 重设计 walkthrough 整体结构(本任务只新增「自审工具 + 工作流校对步」)
+- ❌ 修改 `scanForBlockers` 行为(它已经正确,与本任务正交)
+- ❌ 修 reviewer 其他 known gap(漏识别 blocker / 漏识别 minor 等)
 
 ## 4. Acceptance Criteria
 
-### AC1 · 单元测试
+### AC1 · `reviewer_list_my_blockers` 工具单测
 
-- [ ] `run.ts` 新增 post-process 函数纯函数单测覆盖:
-  - **AC1.1** 输入 4 blocker line_comments + walkthrough 顶部 alert 块写 3 个 → 输出 walkthrough alert 块改写为 4 个,列表 4 条,**其余正文不变**
-  - **AC1.2** GitLab ≥ 17.10 alert 语法(`> [!caution]`)正确识别 + 重写
-  - **AC1.3** GitLab < 17.10 alert 语法(`> ⚠️ **Caution**`)正确识别 + 重写
-  - **AC1.4** 0 blocker line_comment + walkthrough 含 alert 块 → 删除 alert 块,正文保留
-  - **AC1.5** 没有 walkthrough(只有 line_comments)→ 返回 `undefined` / 不调编辑 API
-  - **AC1.6** walkthrough body 标题抽取:`🔴 **阻塞** 硬编码生产 API Key 会泄漏凭据\n\n...` → 抽出标题字符串 `硬编码生产 API Key 会泄漏凭据`
+- [ ] **AC1.1** trace 含 2 blocker + 1 major line_comment → 工具返回 `count=2`,blockers 数组长度 2,**不**含 major
+- [ ] **AC1.2** trace 空 → `count=0`,`blockers=[]`
+- [ ] **AC1.3** trace 含 1 blocker(body 含 `🔴 **阻塞** · 硬编码 secret\n详情...`)→ `blockers[0].title === "硬编码 secret"`
+- [ ] **AC1.4** trace 含 1 blocker(body 含 `🔴 **阻塞**  硬编码 secret`,等级与标题之间无 `·` 分隔)→ title 抽取仍然正确(regex 兼容空格分隔)
+- [ ] **AC1.5** 工具 schema 合法(name / description / 入参 empty object)
 
-### AC2 · 集成测试 / e2e
+### AC2 · `review-trace.ts` 扩展单测
 
-- [ ] 复跑 `xhgj003027/xhgj-iqs-ui` MR-2 现有 commit(`7ac36c00`,本次 stress test 的 5 文件 6 issue 版本)或新构造一个 commit,触发 reviewer,**人工验收**:
-  - walkthrough 顶部 alert 块 N 与新增 blocker line_comment 数一致
-  - blocker 列表 path:line 与实际 line_comment 一一对应
+- [ ] **AC2.1** `recordLineComment({file, line, severity: "blocker", body})` → trace.lineComments 末尾追加完整对象,severity / title 正确
+- [ ] **AC2.2** `recordLineComment({severity: "major"})` 也能正确记录(不只 blocker)
+- [ ] **AC2.3** 现有 `findUnsupportedComments` case 全过(扩展字段不影响 file 集合判定)
 
-### AC3 · 旧行为兼容
+### AC3 · `extension.ts` 集成测试
 
-- [ ] 现有 149 单元测试(`vitest`)全过
-- [ ] `biome check`、`tsc --build` 干净
-- [ ] 现有 `scanForBlockers` 行为不变(blocker exitCode 仍走 line_comment marker)
-- [ ] LLM 发评论的工作流不变(prompts.ts 不动 / 不删 few-shot)
+- [ ] **AC3.1** mock 一次 `pi.on("tool_call")` event(`toolName="gitlab_post_line_comment"`,input 含 file/line/severity/body)→ trace.lineComments 含完整对象
+- [ ] **AC3.2** mock event input 缺 severity → 不记录该 line_comment(类型守卫拦截),trace 保持空
 
-### AC4 · 错误处理
+### AC4 · `prompts.ts` 测试
 
-- [ ] 改写阶段调 GitLab PUT 失败 → 进程不 crash,job exit code 仍由 blocker 扫描决定;日志含 `[code-reviewer] walkthrough 一致化改写失败,跳过` 的 warn
+- [ ] **AC4.1** prompt 含 `reviewer_list_my_blockers` 字串(对 LLM 提及工具名)
+- [ ] **AC4.2** prompt 含 `必须调` + `逐条照抄` 字串(强约束)
+- [ ] **AC4.3** prompt 含反例 few-shot(本次 stress test 4 vs 3 案例)
 
-## 5. Risks / Open Questions
+### AC5 · e2e 真跑 MR-2 验收
 
-- ⚠️ **walkthrough 识别 false positive**:LLM 也可能用 `gitlab_post_comment` 发非 walkthrough 整体评论(如「无问题」轻量评论模板)。识别条件必须**收紧**:同时满足 (a) position 为空(整体评论)、(b) id 不在跑前 `beforeIds` 中(本轮新增)、(c) body 含 `:robot:` + `<b>代码评审报告</b>` 关键字(walkthrough 模板特征)。
-- ⚠️ **多个 walkthrough 兼容**:理论上 LLM 不应发两条 walkthrough(prompts.ts 工作流第 7 步),但实测出现过乱发的边界。若识别到多条匹配 walkthrough → 取最后 1 条(最新)改写,**前面的不动**(prompt 失控行为本身已经是另一个 bug,本任务不解)。
-- ⚠️ **GitLab note PUT 权限**:`REVIEWER_BOT_TOKEN` 需要有改自己 note 的权限(GitLab 默认允许 note 作者改自己的 note,scope = `api`)。文档里加一句"token scope = api"。
+- [ ] 在 `xhgj003027/xhgj-iqs-ui` MR-2 push 一个新 commit(可基于 stress test 同样的多 issue 文件),跑 reviewer:
+  - **observability trace 中可见** LLM 调了 `reviewer_list_my_blockers` 工具,返回了 N 条 blockers
+  - walkthrough 顶部 alert 块的 N 与 line_comment 实际 blocker 数一致
+  - alert 块 Blocker 列表的 path:line 与 line_comment 一一对应,title 与对应 line_comment 第一行去前缀后一致
+
+### AC6 · 旧行为兼容
+
+- [ ] 现有 149 单测全过(`pnpm -r test`)
+- [ ] `biome check` + `tsc --build` 干净
+- [ ] `scanForBlockers` 行为完全不变(与本任务正交)
+- [ ] 现有 `gitlab_post_line_comment` LLM 调用契约不变(input schema 不动)
+
+## 5. Risks
+
+- ⚠️ **LLM 不调工具**:依赖 prompt 强约束 + few-shot 教育。**回退路径**:若 e2e 实测仍不调,二次迭代加 hard inject(在 piMain 调用前用 trace 真值拼一段 system message 末尾强插)— 但仍**不**走代码 post-process。
+- ⚠️ **LLM 调了不抄 / 摘要式改写**:few-shot 反例直接展示「漏列」的错误用例;e2e 验证。同上回退路径。
+- ⚠️ **不再有代码兜底**:若 LLM 完全不调或完全不抄,walkthrough 数字仍会错;但 **CI exitCode 仍然正确 fail close**(`scanForBlockers` 不变),用户从 CI 状态仍能感知有 blocker — 只是 MR 第一眼数字不漂亮。本任务接受这个 risk,因为 agent 独立完成的产品方向比"100% 不出错的 alert 块"重要。
+- ⚠️ **`reviewer_*` 命名空间是本仓首次引入**:未来可能再加 `reviewer_*` 工具(如 `reviewer_list_my_reads` / `reviewer_get_trace`),命名空间需要在 spec 中沉淀约定(本任务作为首例)。
+
+## 6. 关联任务
+
+- 姊妹任务:
+  - `05-21-reviewer-trace-noise-cleanup`(reviewer trace 5 类错误信号清理,与本任务正交)
+- 同源诱因:同一次 stress test(MR-2 pipeline 2127 / job 7552)暴露的 reviewer 缺陷,本任务专攻 walkthrough 一致性,采用 **agent 自审** 路线。
