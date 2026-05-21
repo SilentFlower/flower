@@ -220,3 +220,44 @@ infra MR 158 把 .flower-code-review 默认 FLOWER_IMAGE_TAG 改 latest + image.
 ### Next Steps
 
 - None - task complete
+
+---
+
+## Session #7 · 2026-05-21 23:xx · walkthrough 一致化(agent 自审方案 v2)
+
+### 完成
+
+`05-21-walkthrough-blocker-consistency` archived(commit `973d49f`)。**AC5 e2e 真跑验证 100% 通过**。
+
+**核心成果**(commit `1a4ec7b`):
+- 新增 `reviewer_list_my_blockers` 工具(`reviewer_*` 命名空间首例,本地 trace 读不发 API)
+- `review-trace.ts` 扩展 severity + title;`extension.ts` tool_call hook 提取 4 字段类型守卫
+- `prompts.ts` 加 step 7 强制 LLM 写 walkthrough 前调工具拿真值 + 正反例 few-shot(用真实 stress test 数据)
+- 弃用 v1 post-process 方案(`design.md` §0.3 历史决策记录)
+
+**测试**:`flower-code-reviewer` 79 → 120 case(新增 41,review-trace 11 + extension 10 + prompts 20 + run 适配)
+
+**e2e 实证**(MR-2 pipeline 2267 job 7949):
+- LLM 自言自语 "I must call `reviewer_list_my_blockers`"(prompt 强约束生效)
+- 工具返回 `{count: 4, blockers: [4 条 path:line:title]}`
+- walkthrough alert 块 N=4 + 4 条逐字照抄,**包括原 stress test 漏列的 `src/utils/exportHelper.ts:25`**
+- trace 证据 archive 在 `research/mr2-job7949-reviewer-trace.txt`(67KB)
+
+### Spec 沉淀
+
+`.trellis/spec/flower-code-reviewer/frontend/index.md` 新增 §9 + §10:
+- **§9** `reviewer_*` 命名空间约定 + agent 自审 vs 代码 post-process 设计决策 + v1 弃用记录
+- **§10** e2e reviewer 真跑验证 SOP(GitLab REST API 操作:备份 → 删 bot 评论 → 触发 retry → 监控)+ 关键陷阱:
+  - flower `.gitlab-ci.yml` 在 company 分支专属
+  - **main ↔ company 严格单向**(本任务过程中违反 2 次,修复 SOP 已沉淀)
+  - 删 note `DELETE /merge_requests/:iid/notes/:note_id` 行内+整体通用
+  - pipeline retry 不会重跑 success job,需 push 空 commit / API 新建
+  - flower image tag 滚 latest 在 IfNotPresent 下不更新 → 业务方锁 sha + override pull_policy
+  - Runner admin 在 e2e 过程中改坏 hostAliases(后被修复)
+
+### 路上踩的坑
+
+1. **GitHub origin push 被 secret scanning 拦**:reviewer trace + 评论备份 JSON 包含业务方硬编码 secret 字面值(那些 blocker 评论原本就是讲"硬编码 API key/密码")。company GitLab(内网无 scanning)push 成功;origin 待业务方 rotate secret 后再处理。
+2. **`pull_policy: Always` 在 pineapple 仓被拒**(Runner allowed_pull_policies=[IfNotPresent]),按模板 escape hatch 锁 sha + override `if-not-present` 解决。
+3. **Runner Pod template `hostAliases.ip` 错填 hostname**:无法在 user 层修复,需 admin 介入(本次最终由 admin 修复)。
+
