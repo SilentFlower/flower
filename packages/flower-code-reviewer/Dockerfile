@@ -4,7 +4,7 @@
 # 由 GitLab CI 拉起,跑完即退。
 # 仓库代码通过 volume mount 或 git clone 进容器,工作目录为 /workspace。
 
-FROM node:22-alpine AS builder
+FROM 192.168.27.236/base/node:22-alpine AS builder
 
 WORKDIR /build
 
@@ -38,7 +38,7 @@ RUN npm prune --omit=dev --no-audit --no-fund && \
     find node_modules/koffi/build/koffi -mindepth 1 -maxdepth 1 ! -name 'musl_x64' -exec rm -rf {} + 2>/dev/null || true
 
 # ---------- 运行时镜像 ----------
-FROM node:22-alpine
+FROM 192.168.27.236/base/node:22-alpine
 
 # git 是评审 agent 需要的(让 LLM 能跑 git log / git diff)
 RUN apk add --no-cache git
