@@ -1,22 +1,45 @@
-# 示例:在业务项目的 .gitlab-ci.yml 里加上这个 job,
-# 即可让 flower-code-reviewer 在每次 MR 自动评审。
+# 业务方接入 flower-code-reviewer 自动评审的示例 .gitlab-ci.yml。
+#
+# 推荐方式:include devops-infra-harness 的官方模板,3 行接入,
+# 后续 reviewer 镜像 / 配置升级走 harness 模板版本即可,业务方零改动。
+#
+# 备用方式:不走 harness 模板时,可直接 inline image 引用(见文件尾部注释段)。
+
+include:
+  - project: 'digital-rd-infra/devops-infra'        # 内网 GitLab 上 devops-infra-harness 仓 path
+    ref: main                                        # 推荐锁 ref 到 release tag,如 v1.0.0
+    file: '/templates/review-flower-code-reviewer.yml'
 
 code-review:
-  stage: review
-  image: yourcompany/flower-code-reviewer:latest
-  rules:
-    # 只在 MR pipeline 运行
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-  variables:
-    # GitLab token 通过 CI/CD masked variable 注入
-    GITLAB_TOKEN: $REVIEWER_BOT_TOKEN
-    # LLM 网关
-    LLM_BASE_URL: $LLM_BASE_URL
-    LLM_API_KEY: $LLM_API_KEY
-    # 审计
-    SIEM_INGEST_URL: $SIEM_INGEST_URL
-  script:
-    - flower-review --mr-iid $CI_MERGE_REQUEST_IID
-  # 失败也不阻塞 pipeline(由 agent 内部根据 blocker 决定 exit 1)
-  allow_failure: false
-  timeout: 10 minutes
+  extends: .review-flower-code-reviewer
+  # 默认行为:用 Harbor latest 镜像 + 50 文件 / 50KB 上限 + REVIEWER_BOT_TOKEN 等 secret 由 CI/CD Variables 注入
+  # 如需覆盖,在此处加 variables: 段:
+  # variables:
+  #   FLOWER_IMAGE_TAG: 'a1b2c3d4'        # 锁 commit sha 镜像,生产场景推荐
+  #   FLOWER_MAX_FILES: '30'              # 评审文件数上限
+  #   FLOWER_MAX_FILE_SIZE: '102400'      # 单文件评审上限(byte)
+  #   FLOWER_REGISTRY_NAMESPACE: 'devtools'  # 若 Harbor project 不是 flower
+
+# ====================================================================
+# 备用接入方式(harness 模板不可用 / 想脱离 harness 自管 image 时)
+# 取消下列注释即可,与 harness 模板互斥(同时启用会有同名 job 冲突)
+# ====================================================================
+#
+# code-review-standalone:
+#   stage: review
+#   image: 192.168.27.236/flower/flower-code-reviewer:latest
+#   rules:
+#     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+#   variables:
+#     # GitLab token 通过 CI/CD masked variable 注入
+#     GITLAB_TOKEN: $REVIEWER_BOT_TOKEN
+#     # LLM 网关
+#     LLM_BASE_URL: $LLM_BASE_URL
+#     LLM_API_KEY: $LLM_API_KEY
+#     # 审计
+#     SIEM_INGEST_URL: $SIEM_INGEST_URL
+#   script:
+#     - flower-review --mr-iid $CI_MERGE_REQUEST_IID
+#   # 失败也不阻塞 pipeline(由 agent 内部根据 blocker 决定 exit 1)
+#   allow_failure: false
+#   timeout: 10 minutes
