@@ -32,6 +32,12 @@ stages:
 # 默认 FLOWER_REGISTRY_NAMESPACE=base),首批保留同 namespace 兼容
 build-flower-code-reviewer:
   extends: .node-cli-image
+  # Override harness 默认的 tags: [infra-build-proxy](该 tag 的 runner 在本实例不存在/不可见,
+  # 个人项目跑会卡 pending)。改用 default instance runner(tags=[]),与 iqs-boot 的
+  # package-java(用 runner id=1, type=instance_type)路径一致。
+  # 风险:default runner 没有公网代理,npm install 可能需要内网 mirror —— 若 fail,
+  # 在 Dockerfile 里显式配 .npmrc registry 指向内网 nexus 即可。
+  tags: []
   variables:
     IMAGE_NAME: 'flower-code-reviewer'
     SUB_DIR: 'packages/flower-code-reviewer'
