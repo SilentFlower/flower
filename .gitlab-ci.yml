@@ -1,0 +1,40 @@
+# flower 仓内网 GitLab CI 入口(company 分支专属)
+#
+# 目的:
+#   build flower 各 CLI 镜像 push 到 Harbor,给业务方(如 xhgj-iqs-boot)
+#   通过 extends .flower-code-review 消费(评审 MR)。
+#
+# 分支隔离:
+#   - 本文件**仅在 company 分支存在**,github main 不污染
+#   - origin (github) 不参与 GitLab CI;只在 company remote (gitlab.xhgjdev.com) 跑
+#
+# 模板来源:digital-rd-infra/devops-infra(devops-infra-harness)
+#   - node-cli-image.yml(与 V3 主路径 application.yml 并行,不经 ci_planner.py)
+#   - 用法 + 字段含义见 harness templates/node-cli-image.yml 头注
+
+include:
+  - project: 'digital-rd-infra/devops-infra'
+    ref: main
+    file: '/templates/node-cli-image.yml'
+
+# Workflow rules:只在 company 分支 push / 打 tag 时触发,避免无意 fork 触发
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == "company"'
+    - when: never
+
+stages:
+  - build
+
+# build flower-code-reviewer 镜像 push 到 Harbor base/flower-code-reviewer:<sha> + :latest
+# iqs-boot 已在消费 base/flower-code-reviewer:<tag>(harness application.yml `.flower-code-review`
+# 默认 FLOWER_REGISTRY_NAMESPACE=base),首批保留同 namespace 兼容
+build-flower-code-reviewer:
+  extends: .node-cli-image
+  variables:
+    IMAGE_NAME: 'flower-code-reviewer'
+    SUB_DIR: 'packages/flower-code-reviewer'
+    REGISTRY_NAMESPACE: 'base'
+    # IMAGE_TAG 默认 = ${CI_COMMIT_SHORT_SHA}(模板兜底);PUSH_LATEST=true 自动也推 :latest
+    # 若需锁版本只推 sha 不推 latest:加 PUSH_LATEST: "false"
