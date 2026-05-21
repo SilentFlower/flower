@@ -207,6 +207,66 @@ export const reviewerListMyBlockersTool = defineTool({
 - 加 **反例 few-shot**(展示"靠记忆 → 漏列"的真实失败用例,**用真实 stress test 数据**最有教育价值)
 - 不加"如果不方便"" 可选"等软化词(违反 quality-guidelines.md 的"prompt 不软化硬约束")
 
+### 10. e2e reviewer 真跑验证 SOP(GitLab REST API 操作 · 2026-05-21 沉淀)
+
+业务方 MR 上跑完 reviewer 后,常见需求:**清空旧评论 + 触发 retry + 监控镜像 build**。本节固化通过 GitLab REST API 操作的步骤,**避免每次手工进 GitLab UI 反复点**。
+
+#### 10.1 必备:GitLab 个人 token
+
+token 来源(优先级):
+1. env `GLAB_NEW_TOKEN`(开发者本地 token,所有 `xhgj***` 命名空间项目通用)
+2. env `GITLAB_TOKEN`(reviewer 容器内 CI 注入,本地 e2e 操作不一定有)
+
+scope 要求:`api`(读写 notes / pipelines / branches);`PRIVATE-TOKEN` header 鉴权(非 `Authorization: Bearer`)。
+
+`GITLAB_HOST = http://gitlab.xhgjdev.com`(企业内网实例)。项目 path 含 `/` 必须 `encodeURIComponent`(`xhgj003027/xhgj-iqs-ui` → `xhgj003027%2Fxhgj-iqs-ui`)。
+
+#### 10.2 SOP 步骤(凭 GLAB_NEW_TOKEN curl 直接调,不进 GitLab UI)
+
+**Step 1 · 备份要删的 bot 评论**(删除不可逆,先 dump 到 task `research/`):
+
+```bash
+curl -s -H "PRIVATE-TOKEN: $GLAB_NEW_TOKEN" \
+  "$HOST/api/v4/projects/$PROJECT/merge_requests/$MR_IID/notes?per_page=100&sort=asc" \
+  | python3 -c "import sys,json; notes=[n for n in json.load(sys.stdin) if n['author']['username']=='$BOT_USER' and not n.get('system')]; print(json.dumps(notes,ensure_ascii=False,indent=2))" \
+  > .trellis/tasks/<task>/research/mr-notes-backup-$(date +%Y%m%d-%H%M%S).json
+```
+
+**Step 2 · 批量删除 bot 评论**(行内 + 整体走同一接口):
+
+```bash
+# 关键:DELETE /merge_requests/:iid/notes/:note_id 既能删行内也能删整体
+#       不需要先拿 discussion_id(GitLab note_id 全局唯一)
+for id in $NOTE_IDS; do
+  curl -s -o /dev/null -w "DELETE note $id → HTTP %{http_code}\n" \
+    -X DELETE -H "PRIVATE-TOKEN: $GLAB_NEW_TOKEN" \
+    "$HOST/api/v4/projects/$PROJECT/merge_requests/$MR_IID/notes/$id"
+done
+# 期望 HTTP 204(No Content);403 通常意味 token 不是 note 作者且无 Maintainer 权限
+```
+
+**Step 3 · 触发 reviewer 重跑**:不要 retry 旧 pipeline(失败 job 复用旧 image),用以下任一:
+
+- 推空 commit 到 source branch → 自动触发新 MR pipeline
+- POST `/projects/:id/merge_requests/:iid/pipelines` 直接创建 MR pipeline(需要 token 有 developer+ 权限)
+
+**Step 4 · 监控**:flower 仓 image build pipeline + pineapple MR pipeline 都走 `GET /projects/:id/pipelines`,filter `ref` 和 `status`。
+
+#### 10.3 关键陷阱 + 防御
+
+| 陷阱 | 实际现象 | 防御 |
+|---|---|---|
+| **flower 仓 `.gitlab-ci.yml` 在 `company` 分支专属** | push 到 main 不触发 image build,什么都没发生 | push 必须到 `company` 分支;main 改动需 `git merge main` 进 company 再 push |
+| **company 是公共分支,rebase 会改写历史** | 强 push 后他人 fetch 报 non-FF | 用 `git merge main --no-ff` 创建 merge commit,**不** rebase |
+| **GitLab 删评论 API 不分行内 / 整体** | 早期实现尝试 `DELETE /discussions/:disc_id/notes/:note_id` 多走一步拿 disc_id | 直接 `DELETE /merge_requests/:iid/notes/:note_id`,note_id 全局唯一 |
+| **token 是用户自己的 PAT,删 note 会留下"已编辑" footprint** | 评论的 system note "<user> deleted comment" 仍在 MR timeline | 接受为预期行为;若需完全无痕,只能用与 bot 同账号的 token 删 |
+| **pipeline retry vs 新建** | retry 只重跑 failed/canceled job,**reviewer success 后不会再跑** | 用 push 空 commit 或 API 新建 pipeline 而非 retry |
+| **flower image tag 滚 `latest` 在 `pull_policy=IfNotPresent` 下不更新** | reviewer 跑的还是老镜像 → 改动无效果 | 业务方 `.gitlab-ci.yml` 临时锁 `FLOWER_IMAGE_TAG: <sha>`(前 7 位)强制拉新 |
+
+#### 10.4 复用脚本(规划)
+
+后续可把 §10.2 抽成 `scripts/reviewer-e2e-reset.sh <project> <mr_iid>`,封装 backup + delete + retry,减少 e2e 复测的重复操作。**当前未实现,sopt only**。
+
 ---
 
 **语言**:本目录文档用中文,代码示例 / 文件路径 / 工具名保持英文。
