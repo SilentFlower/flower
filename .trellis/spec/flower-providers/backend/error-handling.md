@@ -65,6 +65,11 @@ pi 上游的 `registerProvider` 在重复注册同名 provider 时会**静默覆
 - ❌ 把 `LLM_API_KEY` 缺失当作"可选"(凭证必填,无默认)
 - ❌ 多次调用 `registerHavefunProviders(pi, ...)` 注册同一组 provider(会覆盖前一次注册,且 `appSource` header 串味;每个 caller 只调一次)
 - ❌ 在 `getDefaultModel` 内退化到"默认 anthropic + 默认 claude-opus"(策略函数应**总是** fail-fast,让运维知道配错了)
+  - **澄清(2026-05-21)**:`buildPiCliArgs` 用 `getLLMProviderOrDefault` / `getLLMModelOrDefault` / `getLLMReasoningEffortOrDefault` 兜底**不是**此反模式,因为:
+    - (a) 仅 CLI 路径(opt-in 给业务方接入的 CI 工具),不是 SDK 路径(服务常驻必须 fail-fast)
+    - (b) 默认值是 stress 实测稳定组合(`havefun-openai-responses + gpt-5.5 + high`)而非"任意 anthropic + opus"
+    - (c) 缺省 fallback 但**非法值**仍 fail-fast(`LLM_PROVIDER=invalid` throw),与 Common Mistakes 描述的"完全退化"语义不同
+  - SDK 路径(`getDefaultModel` / `getDefaultReasoningEffort`)行为完全不变,继续 fail-fast
 - ❌ 错误信息嵌入 `process.env.LLM_API_KEY` 片段(任何长度任何形式都禁止)
 
 ### ❌ 把 `LLM_BASE_URL` 当 4 个 provider 共用的完整 baseUrl 直接透传

@@ -35,7 +35,23 @@
 3. **`BUILTIN_MODELS` 是配置而非数据**:通过代码 PR 修改;运维侧通过 `LLM_EXTRA_MODELS_JSON` env 动态扩展
 4. **`appSource` 仅是 header 标签**:不参与模型选择 / 路由,模型选择由部署单元的 env 决定
 5. **`LLM_BASE_URL` 是网关根 URL**:用户 env 只配根 URL(如 `https://jp-ai.havefun.eu.cc`),本包 `catalog.ts:PROVIDER_PATH_SUFFIX` + `env.ts:resolveProviderBaseUrl(provider)` 自动按 provider 拼正确后缀(openai-* → `/v1`,gemini → `/v1beta`,anthropic 无后缀)。**不要在 `register.ts` / `runtime.ts` 内直接用 `getLLMBaseUrl()` 给 model 赋值** — 必须经 `resolveProviderBaseUrl(provider)`。详见 [error-handling Common Mistakes](./error-handling.md#-把-llm_base_url-当-4-个-provider-共用的完整-baseurl-直接透传)
-6. **reasoning effort 由 env + per-model 默认决定**:`runtime.ts:getDefaultReasoningEffort(modelId?)` 是公开 API,优先级 env (`LLM_REASONING_EFFORT`) > per-model 默认 > 全局 fallback `"high"`。仅 ops-bot 形态的 streamFn 调用;code-reviewer 由 pi CLI 自己管 thinking level(`/thinking` 命令)。pi 的 `ThinkingLevel` 只有 5 级无 `max`,对 Anthropic Opus 4.7 这种实际最高是 `"max"` 的 model,在 `catalog.ts:BUILTIN_MODELS` 中显式声明 `thinkingLevelMap: { xhigh: "max", ... }` 把 pi 最高映射到 anthropic 实际最高。
+6. **reasoning effort 决策分两条路径**(2026-05-21 起):
+   - **SDK 路径**(ops-bot,`runtime.ts:getDefaultReasoningEffort(modelId?)`):优先级 env (`LLM_REASONING_EFFORT`) > per-model 默认 > 全局 fallback `"high"`。在 streamFn 内调,传给 `streamSimple` 的 `reasoning` 字段
+   - **CLI 路径**(code-reviewer,`runtime.ts:buildPiCliArgs`):env 缺省时 fallback 到 `DEFAULT_LLM_REASONING_EFFORT = "high"`(stress test 实测稳定组合的 effort 端);显式传 `--thinking <effort>` 给 pi CLI,**不**让 pi 走自己的内置 `DEFAULT_THINKING_LEVEL=medium` 默认
+   - pi 的 `ThinkingLevel` 只有 5 级无 `max`,对 Anthropic Opus 4.7 这种实际最高是 `"max"` 的 model,在 `catalog.ts:BUILTIN_MODELS` 中显式声明 `thinkingLevelMap: { xhigh: "max", ... }` 把 pi 最高映射到 anthropic 实际最高。
+
+### CLI 路径 vs SDK 路径的缺省语义(2026-05-21 新增)
+
+flower-providers 同时服务 ops-bot(SDK 路径)与 code-reviewer(CLI 路径),两条路径对"env 缺省"的处理取向**有意不同**:
+
+| 路径 | 入口函数 | env 缺省时的行为 | 默认值 | 设计取向 |
+|---|---|---|---|---|
+| **CLI**(reviewer)| `buildPiCliArgs` / `getLLMProviderOrDefault` 等 | fallback 到默认 + `console.log` 提示 | `havefun-openai-responses + gpt-5.5 + high` | opt-in 给业务方 CI,**降低接入门槛** |
+| **SDK**(ops-bot)| `getDefaultModel` / `getLLMProvider` 等 | fail-fast throw | — | 服务常驻部署,**显式配置** |
+
+CLI 默认值选定理由:与 2026-05-21 `xhgj003027/xhgj-iqs-ui` MR-2 pipeline 2127 / job 7552 的 stress test 显式配置组合一致。业务方零配置即拿到与生产 stress 对齐的行为;若有"成本敏感型"接入方,显式配 `LLM_PROVIDER` / `LLM_MODEL` 覆盖即可。
+
+**关键**:CLI 路径**只对缺省兜底,不对非法值兜底**。`LLM_PROVIDER=invalid` 仍 throw,避免业务方因配错值而不知情。
 7. **两个消费者的对称接口**:flower-providers 同时服务 ops-bot 与 code-reviewer,二者形态不同,接口分两条:
 
    | 消费者 | 入口形态 | flower-providers 提供 | 输出 |

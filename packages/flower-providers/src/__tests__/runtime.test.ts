@@ -2,7 +2,8 @@
  * `runtime.ts` 单元测试:getDefaultModel + buildHavefunModel + buildPiCliArgs
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_LLM_MODEL, DEFAULT_LLM_PROVIDER, DEFAULT_LLM_REASONING_EFFORT } from "../env.js";
 import { buildHavefunModel, buildPiCliArgs, getDefaultModel, getDefaultReasoningEffort } from "../runtime.js";
 
 const ENV_KEYS = [
@@ -281,6 +282,9 @@ describe("getDefaultReasoningEffort", () => {
 });
 
 describe("buildPiCliArgs — env → pi-coding-agent CLI argv", () => {
+	// 2026-05-21 行为变更:env 缺省时 fallback 到 stress 实测组合
+	// (havefun-openai-responses + gpt-5.5 + high),三个 argv(--provider/--model/--thinking)
+	// 必然存在;LLM_PROVIDER 非法值从原"降级"改为显式 throw
 	let snap: Record<string, string | undefined>;
 	beforeEach(() => {
 		snap = snapshotEnv();
@@ -290,34 +294,38 @@ describe("buildPiCliArgs — env → pi-coding-agent CLI argv", () => {
 
 	const PROMPT = "评审这个 MR";
 
-	it("env 全空 → argv = ['-p', prompt],不附加 --model / --thinking", () => {
+	it("env 全空 → argv 含 3 个 default(provider/model/effort)", () => {
 		const argv = buildPiCliArgs({ prompt: PROMPT });
-		expect(argv).toEqual(["-p", PROMPT]);
+		expect(argv).toEqual([
+			"-p",
+			PROMPT,
+			"--provider",
+			DEFAULT_LLM_PROVIDER, // "havefun-openai-responses"
+			"--model",
+			DEFAULT_LLM_MODEL, // "gpt-5.5"
+			"--thinking",
+			DEFAULT_LLM_REASONING_EFFORT, // "high"
+		]);
 	});
 
-	it("仅配 LLM_MODEL(无 LLM_PROVIDER)→ argv 附加 --model <id>(降级路径)", () => {
-		process.env.LLM_MODEL = "gpt-5.5";
+	it("仅配 LLM_MODEL → argv 含 default provider + 用户 model + default effort", () => {
+		process.env.LLM_MODEL = "claude-opus-4-7";
 		const argv = buildPiCliArgs({ prompt: PROMPT });
-		expect(argv).toEqual(["-p", PROMPT, "--model", "gpt-5.5"]);
+		expect(argv).toEqual([
+			"-p",
+			PROMPT,
+			"--provider",
+			DEFAULT_LLM_PROVIDER,
+			"--model",
+			"claude-opus-4-7",
+			"--thinking",
+			DEFAULT_LLM_REASONING_EFFORT,
+		]);
 	});
 
-	it("LLM_PROVIDER + LLM_MODEL 都配 → argv 用 --provider <name> --model <id>(避免与 pi 内置同名冲突)", () => {
+	it("LLM_PROVIDER + LLM_MODEL 都配 → argv 用 --provider <name> --model <id> + default effort", () => {
 		process.env.LLM_PROVIDER = "havefun-openai-responses";
 		process.env.LLM_MODEL = "gpt-5.5";
-		const argv = buildPiCliArgs({ prompt: PROMPT });
-		expect(argv).toEqual(["-p", PROMPT, "--provider", "havefun-openai-responses", "--model", "gpt-5.5"]);
-	});
-
-	it("仅配 LLM_REASONING_EFFORT → argv 附加 --thinking", () => {
-		process.env.LLM_REASONING_EFFORT = "xhigh";
-		const argv = buildPiCliArgs({ prompt: PROMPT });
-		expect(argv).toEqual(["-p", PROMPT, "--thinking", "xhigh"]);
-	});
-
-	it("PROVIDER + MODEL + EFFORT 三全配(任务实际场景)", () => {
-		process.env.LLM_PROVIDER = "havefun-openai-responses";
-		process.env.LLM_MODEL = "gpt-5.5";
-		process.env.LLM_REASONING_EFFORT = "xhigh";
 		const argv = buildPiCliArgs({ prompt: PROMPT });
 		expect(argv).toEqual([
 			"-p",
@@ -327,21 +335,62 @@ describe("buildPiCliArgs — env → pi-coding-agent CLI argv", () => {
 			"--model",
 			"gpt-5.5",
 			"--thinking",
+			DEFAULT_LLM_REASONING_EFFORT,
+		]);
+	});
+
+	it("仅配 LLM_REASONING_EFFORT → argv 含 default provider + default model + 用户 effort", () => {
+		process.env.LLM_REASONING_EFFORT = "xhigh";
+		const argv = buildPiCliArgs({ prompt: PROMPT });
+		expect(argv).toEqual([
+			"-p",
+			PROMPT,
+			"--provider",
+			DEFAULT_LLM_PROVIDER,
+			"--model",
+			DEFAULT_LLM_MODEL,
+			"--thinking",
 			"xhigh",
 		]);
 	});
 
-	it("LLM_PROVIDER 非法值 + LLM_MODEL 合法 → 降级到只传 model id(不阻断)", () => {
-		process.env.LLM_PROVIDER = "not-a-provider";
-		process.env.LLM_MODEL = "gpt-5.5";
+	it("PROVIDER + MODEL + EFFORT 三全配 → argv 全部等于用户值(不被覆盖)", () => {
+		process.env.LLM_PROVIDER = "havefun-anthropic";
+		process.env.LLM_MODEL = "claude-opus-4-7";
+		process.env.LLM_REASONING_EFFORT = "xhigh";
 		const argv = buildPiCliArgs({ prompt: PROMPT });
-		expect(argv).toEqual(["-p", PROMPT, "--model", "gpt-5.5"]);
+		expect(argv).toEqual([
+			"-p",
+			PROMPT,
+			"--provider",
+			"havefun-anthropic",
+			"--model",
+			"claude-opus-4-7",
+			"--thinking",
+			"xhigh",
+		]);
 	});
 
-	it("LLM_MODEL 空字符串 → argv 不附加 --model(等同未配置)", () => {
+	it("LLM_PROVIDER 非法值 + LLM_MODEL 合法 → 显式 fail-fast(2026-05-21 行为变更)", () => {
+		// 原行为是"降级到只传 model";新行为是 throw,语义更明确(隐式错误 → 显式错误)
+		process.env.LLM_PROVIDER = "not-a-provider";
+		process.env.LLM_MODEL = "gpt-5.5";
+		expect(() => buildPiCliArgs({ prompt: PROMPT })).toThrow(/LLM_PROVIDER 非法值/);
+	});
+
+	it("LLM_MODEL 空字符串 → argv 含 default model(等同未配置,空白被 trim 检测)", () => {
 		process.env.LLM_MODEL = "   "; // 全空白
 		const argv = buildPiCliArgs({ prompt: PROMPT });
-		expect(argv).toEqual(["-p", PROMPT]);
+		expect(argv).toEqual([
+			"-p",
+			PROMPT,
+			"--provider",
+			DEFAULT_LLM_PROVIDER,
+			"--model",
+			DEFAULT_LLM_MODEL,
+			"--thinking",
+			DEFAULT_LLM_REASONING_EFFORT,
+		]);
 	});
 
 	it("LLM_REASONING_EFFORT 非法值 → 立即抛错(沿用 getLLMReasoningEffort 校验)", () => {
@@ -352,6 +401,43 @@ describe("buildPiCliArgs — env → pi-coding-agent CLI argv", () => {
 	it("LLM_REASONING_EFFORT = 'off' → argv 含 --thinking off(透传给 pi CLI)", () => {
 		process.env.LLM_REASONING_EFFORT = "off";
 		const argv = buildPiCliArgs({ prompt: PROMPT });
-		expect(argv).toEqual(["-p", PROMPT, "--thinking", "off"]);
+		expect(argv).toEqual([
+			"-p",
+			PROMPT,
+			"--provider",
+			DEFAULT_LLM_PROVIDER,
+			"--model",
+			DEFAULT_LLM_MODEL,
+			"--thinking",
+			"off",
+		]);
+	});
+
+	it("缺省 fallback 时 console.log 收到 3 行对应日志(provider / model / effort)", () => {
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		try {
+			buildPiCliArgs({ prompt: PROMPT });
+			expect(logSpy).toHaveBeenCalledTimes(3);
+			expect(logSpy).toHaveBeenCalledWith(`[flower-providers] LLM_PROVIDER 未配置,fallback 到 "${DEFAULT_LLM_PROVIDER}"`);
+			expect(logSpy).toHaveBeenCalledWith(`[flower-providers] LLM_MODEL 未配置,fallback 到 "${DEFAULT_LLM_MODEL}"`);
+			expect(logSpy).toHaveBeenCalledWith(
+				`[flower-providers] LLM_REASONING_EFFORT 未配置,fallback 到 "${DEFAULT_LLM_REASONING_EFFORT}"`,
+			);
+		} finally {
+			logSpy.mockRestore();
+		}
+	});
+
+	it("env 全配齐 → console.log 不被触发(无 fallback 提示噪音)", () => {
+		process.env.LLM_PROVIDER = "havefun-anthropic";
+		process.env.LLM_MODEL = "claude-opus-4-7";
+		process.env.LLM_REASONING_EFFORT = "xhigh";
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		try {
+			buildPiCliArgs({ prompt: PROMPT });
+			expect(logSpy).not.toHaveBeenCalled();
+		} finally {
+			logSpy.mockRestore();
+		}
 	});
 });

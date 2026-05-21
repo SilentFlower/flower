@@ -7,12 +7,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	ALLOWED_REASONING_EFFORTS,
+	DEFAULT_LLM_MODEL,
+	DEFAULT_LLM_PROVIDER,
+	DEFAULT_LLM_REASONING_EFFORT,
 	getExtraModels,
 	getLLMApiKeyEnvName,
 	getLLMBaseUrl,
 	getLLMModel,
+	getLLMModelOrDefault,
 	getLLMProvider,
+	getLLMProviderOrDefault,
 	getLLMReasoningEffort,
+	getLLMReasoningEffortOrDefault,
 	getMergedModels,
 } from "../env.js";
 
@@ -115,6 +121,36 @@ describe("getLLMProvider", () => {
 	});
 });
 
+describe("getLLMProviderOrDefault", () => {
+	// 仅 CLI 路径(buildPiCliArgs)使用;缺省 fallback,非法值仍 fail-fast
+	let snap: Record<string, string | undefined>;
+	beforeEach(() => {
+		snap = snapshotEnv();
+		clearEnv();
+	});
+	afterEach(() => restoreEnv(snap));
+
+	it("env 不配 → 返回 DEFAULT_LLM_PROVIDER('havefun-openai-responses')", () => {
+		expect(getLLMProviderOrDefault()).toBe(DEFAULT_LLM_PROVIDER);
+		expect(getLLMProviderOrDefault()).toBe("havefun-openai-responses");
+	});
+
+	it("env 空字符串 / 纯空白 → 返回 DEFAULT_LLM_PROVIDER", () => {
+		process.env.LLM_PROVIDER = "  ";
+		expect(getLLMProviderOrDefault()).toBe(DEFAULT_LLM_PROVIDER);
+	});
+
+	it("env 合法值 → 透传(不被覆盖)", () => {
+		process.env.LLM_PROVIDER = "havefun-anthropic";
+		expect(getLLMProviderOrDefault()).toBe("havefun-anthropic");
+	});
+
+	it("env 非法值 → 仍走 getLLMProvider 的 fail-fast(只对缺省兜底,不对非法值兜底)", () => {
+		process.env.LLM_PROVIDER = "openai"; // pi 内置 provider 名,本包不接受
+		expect(() => getLLMProviderOrDefault()).toThrow(/LLM_PROVIDER 非法值/);
+	});
+});
+
 describe("getLLMModel", () => {
 	let snap: Record<string, string | undefined>;
 	beforeEach(() => {
@@ -130,6 +166,31 @@ describe("getLLMModel", () => {
 	it("合法 → 返回字符串", () => {
 		process.env.LLM_MODEL = "claude-opus-4-7";
 		expect(getLLMModel()).toBe("claude-opus-4-7");
+	});
+});
+
+describe("getLLMModelOrDefault", () => {
+	// 仅 CLI 路径使用;缺省 fallback 到 stress 实测组合的 model 端
+	let snap: Record<string, string | undefined>;
+	beforeEach(() => {
+		snap = snapshotEnv();
+		clearEnv();
+	});
+	afterEach(() => restoreEnv(snap));
+
+	it("env 不配 → 返回 DEFAULT_LLM_MODEL('gpt-5.5')", () => {
+		expect(getLLMModelOrDefault()).toBe(DEFAULT_LLM_MODEL);
+		expect(getLLMModelOrDefault()).toBe("gpt-5.5");
+	});
+
+	it("env 空字符串 / 纯空白 → 返回 DEFAULT_LLM_MODEL", () => {
+		process.env.LLM_MODEL = "   ";
+		expect(getLLMModelOrDefault()).toBe(DEFAULT_LLM_MODEL);
+	});
+
+	it("env 任意非空字符串 → 透传(具体合法性由下游 getMergedModels 校验)", () => {
+		process.env.LLM_MODEL = "claude-opus-4-7";
+		expect(getLLMModelOrDefault()).toBe("claude-opus-4-7");
 	});
 });
 
@@ -168,6 +229,36 @@ describe("getLLMReasoningEffort", () => {
 		expect(ALLOWED_REASONING_EFFORTS.length).toBe(6);
 		expect(ALLOWED_REASONING_EFFORTS).toContain("off");
 		expect(ALLOWED_REASONING_EFFORTS).toContain("xhigh");
+	});
+});
+
+describe("getLLMReasoningEffortOrDefault", () => {
+	// 仅 CLI 路径使用;缺省 fallback 到 high(stress 实测组合的 effort 端)
+	let snap: Record<string, string | undefined>;
+	beforeEach(() => {
+		snap = snapshotEnv();
+		clearEnv();
+	});
+	afterEach(() => restoreEnv(snap));
+
+	it("env 不配 → 返回 DEFAULT_LLM_REASONING_EFFORT('high')", () => {
+		expect(getLLMReasoningEffortOrDefault()).toBe(DEFAULT_LLM_REASONING_EFFORT);
+		expect(getLLMReasoningEffortOrDefault()).toBe("high");
+	});
+
+	it("env 空字符串 / 纯空白 → 返回 DEFAULT_LLM_REASONING_EFFORT", () => {
+		process.env.LLM_REASONING_EFFORT = "  ";
+		expect(getLLMReasoningEffortOrDefault()).toBe(DEFAULT_LLM_REASONING_EFFORT);
+	});
+
+	it("env 合法值 → 透传(任意 6 级中的一个)", () => {
+		process.env.LLM_REASONING_EFFORT = "xhigh";
+		expect(getLLMReasoningEffortOrDefault()).toBe("xhigh");
+	});
+
+	it("env 非法值 → 仍走 getLLMReasoningEffort 的 fail-fast", () => {
+		process.env.LLM_REASONING_EFFORT = "max";
+		expect(() => getLLMReasoningEffortOrDefault()).toThrow(/LLM_REASONING_EFFORT 非法值/);
 	});
 });
 

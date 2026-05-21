@@ -7,7 +7,16 @@
 
 import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { PROVIDER_TO_API, type ProviderName } from "./catalog.js";
-import { getLLMModel, getLLMProvider, getLLMReasoningEffort, getMergedModels, resolveProviderBaseUrl } from "./env.js";
+import {
+	getLLMModel,
+	getLLMModelOrDefault,
+	getLLMProvider,
+	getLLMProviderOrDefault,
+	getLLMReasoningEffort,
+	getLLMReasoningEffortOrDefault,
+	getMergedModels,
+	resolveProviderBaseUrl,
+} from "./env.js";
 
 /**
  * `buildPiCliArgs` 入参
@@ -166,60 +175,62 @@ export function buildHavefunModel(provider: ProviderName, modelId: string): Mode
 }
 
 /**
- * 把 `LLM_MODEL` / `LLM_REASONING_EFFORT` env 翻译成 pi-coding-agent CLI argv
+ * 把 `LLM_PROVIDER` / `LLM_MODEL` / `LLM_REASONING_EFFORT` env 翻译成 pi-coding-agent CLI argv
  *
  * 与 ops-bot 形态的 `buildHavefunModel` + `getDefaultReasoningEffort` 对称:
  * 后者把 env 解析成 SDK 入参(`Model<Api>` + `ModelThinkingLevel`),本函数把同样的
  * env 解析成 print 模式 argv(`string[]`),供 `piMain(argv, ...)` 直接消费。
  *
  * @param input - 入参,见 {@link BuildPiCliArgsInput}
- * @returns pi-coding-agent CLI argv,起头固定 `["-p", prompt]`;附加 `--model <id>`(若 `LLM_MODEL` 已配置)
- *          与 `--thinking <effort>`(若 `LLM_REASONING_EFFORT` 已配置且合法)
- * @throws 当 `LLM_REASONING_EFFORT` 配置了非法值时,沿用 `getLLMReasoningEffort` 的 fail-fast 抛错
+ * @returns pi-coding-agent CLI argv,固定 `["-p", prompt, "--provider", X, "--model", Y, "--thinking", Z]`
+ *          (三个 argv 项必然存在;env 缺省时填本包默认,见 `env.ts:DEFAULT_LLM_*`)
+ * @throws 当 `LLM_PROVIDER` / `LLM_REASONING_EFFORT` 配置了**非法值**时,沿用各自 `OrDefault` 内部
+ *         转调的 fail-fast 抛错。**只对缺省兜底,不对非法值兜底**。
  *
  * @remarks 设计要点:
- *          - **env 缺省则不传对应 argv**,让 pi CLI 走它自己的默认(prompt-only)
- *          - **不**复用 `getDefaultReasoningEffort`:那是 ops-bot 形态在 env 缺省时填默认用的;
- *            CLI 路径若 env 不配,应**透传**给 pi CLI 决定默认(避免本层与 pi CLI 双默认冲突)
- *          - **`LLM_MODEL` 缺省允许**:try-catch `getLLMModel`,缺省走 pi CLI 默认 model
- *          - **`LLM_REASONING_EFFORT` 非法值仍 fail-fast**:沿用 `getLLMReasoningEffort` 校验,避免带病运行
+ *          - **env 缺省**:fallback 到 `havefun-openai-responses + gpt-5.5 + high`(stress test 实测稳定组合)
+ *          - **永远显式传 `--provider`**:pi 内置 modelRegistry 可能有同名 model id(如 `gpt-5.5`);
+ *            同时 `~/.pi/agent/settings.json` 的 `defaultProvider` 也会影响 model 解析,
+ *            必须用 `--provider <name> --model <id>` 显式覆盖,确保精确命中我们注册的 havefun-* provider
+ *          - **永远显式传 `--thinking`**:避免 pi 内置 `DEFAULT_THINKING_LEVEL=medium` 与 stress 实测不一致
+ *          - **CLI 路径 vs SDK 路径取向**:CLI 是 opt-in 给业务方的 CI 工具(降低接入门槛 = 缺省兜底);
+ *            SDK(`getDefaultModel`)是服务常驻部署(显式配置文化 = 缺省 fail-fast)
+ *          - **fallback 提示日志**:每次调用最多 3 行 `console.log`,info 级避免 SIEM 误报
  *
  * @example
  * ```typescript
- * // env: LLM_MODEL=gpt-5.5 / LLM_REASONING_EFFORT=xhigh
+ * // env: LLM_MODEL=gpt-5.5 / LLM_REASONING_EFFORT=xhigh / LLM_PROVIDER 缺省
  * const argv = buildPiCliArgs({ prompt: "评审这个 MR" });
- * // argv = ["-p", "评审这个 MR", "--model", "gpt-5.5", "--thinking", "xhigh"]
+ * // argv = ["-p", "评审这个 MR", "--provider", "havefun-openai-responses", "--model", "gpt-5.5", "--thinking", "xhigh"]
+ * // 同时 console.log("[flower-providers] LLM_PROVIDER 未配置,fallback 到 \"havefun-openai-responses\"")
  * await piMain(argv, { extensionFactories: [...] });
  * ```
  */
 export function buildPiCliArgs(input: BuildPiCliArgsInput): string[] {
 	const argv: string[] = ["-p", input.prompt];
 
-	// LLM_PROVIDER + LLM_MODEL 各自显式传给 pi CLI。
-	// **关键**:pi 内置 modelRegistry 可能有与我们 BUILTIN_MODELS 同名的 model id(如 `gpt-5.5`);
-	// 同时 ~/.pi/agent/settings.json 的 `defaultProvider` 也会影响 model 解析,
-	// 必须用 `--provider <name> --model <id>` 显式覆盖,确保精确命中我们注册的 havefun-* provider。
-	let provider: string | undefined;
-	try {
-		provider = getLLMProvider();
-	} catch {
-		provider = undefined; // LLM_PROVIDER 缺省 / 非法时降级到只传 model
+	// provider: env > DEFAULT_LLM_PROVIDER(永远显式传,杜绝 pi 内置 fallback)
+	// 非法值由 getLLMProviderOrDefault 内部转调 getLLMProvider throw,这里不需要 try-catch
+	const provider = getLLMProviderOrDefault();
+	if (!process.env.LLM_PROVIDER || process.env.LLM_PROVIDER.trim() === "") {
+		console.log(`[flower-providers] LLM_PROVIDER 未配置,fallback 到 "${provider}"`);
 	}
-	if (provider !== undefined) {
-		argv.push("--provider", provider);
-	}
-	try {
-		const modelId = getLLMModel();
-		argv.push("--model", modelId);
-	} catch {
-		// LLM_MODEL 未配置或为空字符串,argv 不附加 --model
-	}
+	argv.push("--provider", provider);
 
-	// LLM_REASONING_EFFORT 缺省允许(pi CLI 自己有默认);配置则透传,非法值 fail-fast 沿用 getLLMReasoningEffort 校验
-	const effort = getLLMReasoningEffort();
-	if (effort !== undefined) {
-		argv.push("--thinking", effort);
+	// model: env > DEFAULT_LLM_MODEL(任意非空字符串透传,合法性由下游校验)
+	const modelId = getLLMModelOrDefault();
+	if (!process.env.LLM_MODEL || process.env.LLM_MODEL.trim() === "") {
+		console.log(`[flower-providers] LLM_MODEL 未配置,fallback 到 "${modelId}"`);
 	}
+	argv.push("--model", modelId);
+
+	// reasoning effort: env > DEFAULT_LLM_REASONING_EFFORT(永远显式传 --thinking)
+	// 非法值由 getLLMReasoningEffortOrDefault 内部转调 getLLMReasoningEffort throw
+	const effort = getLLMReasoningEffortOrDefault();
+	if (!process.env.LLM_REASONING_EFFORT || process.env.LLM_REASONING_EFFORT.trim() === "") {
+		console.log(`[flower-providers] LLM_REASONING_EFFORT 未配置,fallback 到 "${effort}"`);
+	}
+	argv.push("--thinking", effort);
 
 	return argv;
 }

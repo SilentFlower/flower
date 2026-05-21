@@ -9,62 +9,70 @@
 
 ```
 packages/flower-providers/src/
-  env.ts        ← + getLLMProviderOrDefault / getLLMModelOrDefault
-  runtime.ts    ← + DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL 常量
-                  + buildPiCliArgs 改用 OrDefault helper + fallback 日志
-  index.ts      ← 视情况 re-export 默认常量(如需)
+  env.ts        ← + 3 常量(DEFAULT_LLM_PROVIDER / _MODEL / _REASONING_EFFORT)
+                  + 3 helper(getLLMProviderOrDefault / getLLMModelOrDefault / getLLMReasoningEffortOrDefault)
+  runtime.ts    ← buildPiCliArgs 改用 OrDefault helper + 3 行 fallback 日志
+  index.ts      ← 不动(默认常量是内部 fallback,不对外暴露,避免被外部覆盖)
   __tests__/
-    env.test.ts        ← + 5 case(AC1.1-1.5)
-    runtime.test.ts    ← + 4 case(AC1.6-1.9)
+    env.test.ts        ← + 8 case(AC1.1-1.8)
+    runtime.test.ts    ← 改写 4 个现有 buildPiCliArgs case + 新增 5 case(AC1.9-1.13)
 ```
 
-完全不动:`catalog.ts`、`register.ts`(SDK 路径不变)。
+完全不动:`catalog.ts`、`register.ts`(SDK 路径不变);runtime.ts 中 `getDefaultModel` / `buildHavefunModel` / `getDefaultReasoningEffort` 三个 SDK 路径函数不变。
 
 ### 0.2 关键设计选择
 
 | 选择 | 决定 | 理由 |
 |---|---|---|
-| 默认 provider | `havefun-anthropic` | 速度+准确性折中,已存在,protocol 自动匹配 |
-| 默认 model | `claude-sonnet-4-6` | 同上;reasoning=true,适合 reviewer |
+| 默认 provider | `havefun-openai-responses` | 与 stress test(pipeline 2127)实测组合对齐;BUILTIN_MODELS 已存在,protocol 自动匹配 |
+| 默认 model | `gpt-5.5` | 同上;reasoning=true,reasoning summary 模式适合 reviewer |
+| 默认 effort | `high` | 与 stress 显式配置对齐;not xhigh(留给"显式想要"的项目控成本) |
 | API 形态 | 新增 `OrDefault` 变体,不改原函数 throw | 不破坏 ops-bot 形态对 fail-fast 的依赖 |
 | 日志级别 | `console.log`(info) | 不被 SIEM 误报告警;但能在 GitLab CI 日志 grep 到 |
 | 日志位置 | `buildPiCliArgs` 内,fallback 时打 | 不在 helper 内打,避免 helper 在测试中被多次调用时刷屏 |
+| 默认常量是否 re-export | 否 | 内部 fallback,不对外暴露;若有人显式想用默认值,显式配 env 即可 |
 
 ## 1. 接口签名
 
-### 1.1 新增常量(`runtime.ts` 顶部 export)
+### 1.1 新增常量(`env.ts` 顶部 export,贴近 `ALLOWED_REASONING_EFFORTS`)
 
 ```typescript
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ProviderName } from "./catalog.js";
 
 /**
  * code-reviewer CLI 路径在 env 缺省时使用的默认 provider
  *
  * 选择理由(见 prd.md §3 R1):
- * - havefun-anthropic:速度+准确性折中,reviewer 主流使用面
- * - BUILTIN_MODELS 中已存在,baseUrl 自动拼对 havefun 网关
+ * - 与 stress test(2026-05-21 pipeline 2127 / job 7552)实测组合对齐
+ * - BUILTIN_MODELS 中 gpt-5.5 已存在,baseUrl 自动拼 `/v1`
  * - 不会走 pi 内置 openai/azure provider 的官方 URL
  */
-export const DEFAULT_LLM_PROVIDER: ProviderName = "havefun-anthropic";
+export const DEFAULT_LLM_PROVIDER: ProviderName = "havefun-openai-responses";
 
 /**
  * code-reviewer CLI 路径在 env 缺省时使用的默认 model id
  *
- * 与 DEFAULT_LLM_PROVIDER 协议匹配(claude-sonnet-4-6.nativeApi === "anthropic")。
- * 选择 sonnet 而非 opus 是为了平衡接入方默认成本。
+ * 与 DEFAULT_LLM_PROVIDER 协议匹配(gpt-5.5.nativeApi === "openai-responses")。
+ * stress test 实测稳定组合的 model 端。
  */
-export const DEFAULT_LLM_MODEL = "claude-sonnet-4-6";
+export const DEFAULT_LLM_MODEL = "gpt-5.5";
+
+/**
+ * code-reviewer CLI 路径在 env 缺省时使用的默认 reasoning effort
+ *
+ * - 与 stress test 显式配置对齐(LLM_REASONING_EFFORT=high)
+ * - 不选 xhigh:留给"显式想要"的项目,控成本与响应时间
+ * - 仅影响 CLI 路径;ops-bot 走 getDefaultReasoningEffort(env > per-model > "high")不变
+ */
+export const DEFAULT_LLM_REASONING_EFFORT: ModelThinkingLevel = "high";
 ```
 
 ### 1.2 新增 helper(`env.ts`)
 
-```typescript
-import { DEFAULT_LLM_PROVIDER, DEFAULT_LLM_MODEL } from "./runtime.js";
-// ⚠️ runtime.ts 和 env.ts 互相依赖:env.ts 已 import runtime 的常量,
-//    runtime.ts 也需要 import env.ts 的 helper。
-//    解决:把 DEFAULT_* 常量放在 env.ts 顶部(同 ALLOWED_REASONING_EFFORTS 的位置),
-//    避免循环依赖。runtime.ts 仅在 buildPiCliArgs 内 import 这两个常量即可。
+放在各自原函数下方(`getLLMProvider` / `getLLMModel` / `getLLMReasoningEffort` 之后)。
 
+```typescript
 /**
  * 读取 LLM_PROVIDER;缺省时返回 DEFAULT_LLM_PROVIDER。
  *
@@ -93,37 +101,44 @@ export function getLLMModelOrDefault(): string {
   }
   return raw;
 }
+
+/**
+ * 读取 LLM_REASONING_EFFORT;缺省时返回 DEFAULT_LLM_REASONING_EFFORT。
+ *
+ * 非法值仍走 getLLMReasoningEffort 的 fail-fast(列出 6 个合法值)。
+ * 仅 buildPiCliArgs 使用;ops-bot 走 getDefaultReasoningEffort 不变。
+ */
+export function getLLMReasoningEffortOrDefault(): ModelThinkingLevel {
+  const raw = process.env.LLM_REASONING_EFFORT;
+  if (!raw || raw.trim() === "") {
+    return DEFAULT_LLM_REASONING_EFFORT;
+  }
+  const validated = getLLMReasoningEffort();
+  // 非空但合法的情况下 getLLMReasoningEffort 不会返回 undefined,但 TS 类型推不出
+  return validated ?? DEFAULT_LLM_REASONING_EFFORT;
+}
 ```
 
-**调整**:为避免 env.ts ↔ runtime.ts 循环依赖,**把 `DEFAULT_LLM_PROVIDER` / `DEFAULT_LLM_MODEL` 定义在 `env.ts` 顶部**(贴近其他默认 / 合法值常量),runtime.ts 通过 `import { ... } from "./env.js"` 复用。
-
-最终 placement:
-```typescript
-// env.ts 顶部(在 ALLOWED_REASONING_EFFORTS 附近)
-export const DEFAULT_LLM_PROVIDER: ProviderName = "havefun-anthropic";
-export const DEFAULT_LLM_MODEL = "claude-sonnet-4-6";
-```
+> 设计决定:常量与 helper 都放在 env.ts(单文件归属 env 解析逻辑),runtime.ts 通过
+> `import { getLLMProviderOrDefault, getLLMModelOrDefault, getLLMReasoningEffortOrDefault } from "./env.js"`
+> 引用。避免常量与 helper 跨文件放置带来的隐式耦合。
 
 ### 1.3 修改 `buildPiCliArgs`(`runtime.ts`)
 
 ```typescript
 import {
-  getLLMReasoningEffort,
   getLLMProviderOrDefault,
   getLLMModelOrDefault,
+  getLLMReasoningEffortOrDefault,
 } from "./env.js";
+// 注:原 import 的 getLLMReasoningEffort 移除(改用 OrDefault 变体)
 
 export function buildPiCliArgs(input: BuildPiCliArgsInput): string[] {
   const argv: string[] = ["-p", input.prompt];
 
   // provider: env > DEFAULT_LLM_PROVIDER(永远显式传,杜绝 pi 内置 fallback)
-  let provider: ProviderName;
-  try {
-    provider = getLLMProviderOrDefault();
-  } catch (err) {
-    // env 非法值 fail-fast,沿用 getLLMProvider 抛错
-    throw err;
-  }
+  // 非法值由 getLLMProviderOrDefault 内部 throw,这里不需要 try-catch
+  const provider = getLLMProviderOrDefault();
   if (!process.env.LLM_PROVIDER || process.env.LLM_PROVIDER.trim() === "") {
     console.log(`[flower-providers] LLM_PROVIDER 未配置,fallback 到 "${provider}"`);
   }
@@ -136,15 +151,25 @@ export function buildPiCliArgs(input: BuildPiCliArgsInput): string[] {
   }
   argv.push("--model", modelId);
 
-  // reasoning effort:缺省继续透传(pi 自己走 medium)
-  const effort = getLLMReasoningEffort();
-  if (effort !== undefined) {
-    argv.push("--thinking", effort);
+  // reasoning effort: env > DEFAULT_LLM_REASONING_EFFORT
+  const effort = getLLMReasoningEffortOrDefault();
+  if (!process.env.LLM_REASONING_EFFORT || process.env.LLM_REASONING_EFFORT.trim() === "") {
+    console.log(`[flower-providers] LLM_REASONING_EFFORT 未配置,fallback 到 "${effort}"`);
   }
+  argv.push("--thinking", effort);
 
   return argv;
 }
 ```
+
+**行为变化总览**(对接入方实际可感知):
+
+| env 配置 | 当前 argv | 改后 argv |
+|---|---|---|
+| 全空 | `["-p", PROMPT]` | `["-p", PROMPT, "--provider", "havefun-openai-responses", "--model", "gpt-5.5", "--thinking", "high"]` + 3 行 log |
+| 只配 `LLM_MODEL=claude-opus-4-7` | `[..., "--model", "claude-opus-4-7"]` | `[..., "--provider", "havefun-openai-responses", "--model", "claude-opus-4-7", "--thinking", "high"]` ⚠️ 协议不匹配 → pi 启动期 throw |
+| `LLM_PROVIDER=invalid` + 合法 model | `[..., "--model", X]`(吃错降级) | **throw** `/LLM_PROVIDER 非法值/` |
+| 三个都配齐 | `[..., user-set...]` | 不变(用户值优先) |
 
 ## 2. 数据流
 
@@ -152,28 +177,30 @@ export function buildPiCliArgs(input: BuildPiCliArgsInput): string[] {
 env (LLM_PROVIDER / LLM_MODEL / LLM_REASONING_EFFORT)
     ↓
 buildPiCliArgs
-    ├─ getLLMProviderOrDefault()  → "havefun-anthropic"(若缺省)
-    │                                or 用户配的合法值
-    ├─ getLLMModelOrDefault()     → "claude-sonnet-4-6"(若缺省)
-    │                                or 用户配的字符串
-    └─ getLLMReasoningEffort()    → undefined(若缺省) or 合法值
+    ├─ getLLMProviderOrDefault()        → "havefun-openai-responses"(若缺省)
+    │                                      or 用户配的合法值;非法值 throw
+    ├─ getLLMModelOrDefault()           → "gpt-5.5"(若缺省)
+    │                                      or 用户配的字符串
+    └─ getLLMReasoningEffortOrDefault() → "high"(若缺省)
+                                          or 用户配的合法值;非法值 throw
     ↓
-argv = ["-p", prompt, "--provider", X, "--model", Y, ("--thinking", Z)?]
-    ↓
+argv = ["-p", prompt, "--provider", X, "--model", Y, "--thinking", Z]
+    ↓ (3 个 argv 项必然存在,不再有降级路径)
 piMain(argv, ...)
     ↓
-pi CLI 拿到显式 --provider/--model → 走 register.ts 注册的 havefun-* provider
+pi CLI 拿到显式 --provider/--model/--thinking → 走 register.ts 注册的 havefun-* provider
     ↓
-LLM 请求走 havefun 网关 baseUrl + LLM_API_KEY
+LLM 请求走 havefun 网关 baseUrl + LLM_API_KEY,思考预算 = high
 ```
 
 ## 3. 兼容性 / 回滚
 
 ### 3.1 兼容性
 
-- ops-bot 形态:**零影响**,`getDefaultModel`/`getLLMProvider`/`getLLMModel` throw 行为不变
-- code-reviewer 已配齐 env 的部署:**零影响**,fallback 路径走不到
-- code-reviewer 未配 env 的部署:**行为改变**——从"侥幸命中 havefun 或走 pi 内置"变为"显式走 havefun + sonnet-4-6"。**这就是我们想要的变更**
+- ops-bot 形态:**零影响**,`getDefaultModel`/`getLLMProvider`/`getLLMModel`/`getDefaultReasoningEffort`/`getLLMReasoningEffort` 行为完全不变
+- code-reviewer 已配齐三个 env 的部署:**零影响**,fallback 路径走不到
+- code-reviewer 未配 env 的部署:**行为改变**——从"侥幸命中 havefun + pi 内置 gpt-5.4 medium"变为"显式走 havefun-openai-responses + gpt-5.5 + high"。**这就是我们想要的变更**
+- code-reviewer 配了**非法** `LLM_PROVIDER` 的部署:**行为改变**——从"吃错降级到只传 model"变为"显式 throw LLM_PROVIDER 非法值"。属于行为修正,commit message 加 BREAKING-NOTE 提示接入方
 
 ### 3.2 回滚
 

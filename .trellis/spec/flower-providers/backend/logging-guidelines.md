@@ -17,11 +17,32 @@
 
 | 函数 | 何时用 |
 |------|--------|
-| `console.log` | **不用**(本包不输出常规日志) |
+| `console.log` | **几乎不用**(本包不输出常规日志);**例外**:CLI 路径 `buildPiCliArgs` 在 env 缺省 fallback 时打提示,见下文 |
 | `console.warn` | **不用** |
 | `console.error` | **不用**(错误直接 throw,让顶层 catch 决定怎么打) |
 
 `registerHavefunProviders` / `getDefaultModel` / `buildHavefunModel` 三个公开函数都遵守上述约束。
+
+### 例外:CLI 路径 fallback 提示(2026-05-21 新增)
+
+`buildPiCliArgs`(code-reviewer CLI 路径)在 env 缺省 fallback 时,**允许**调用 `console.log` 打提示:
+
+```typescript
+// 示例(env 全空时)
+console.log(`[flower-providers] LLM_PROVIDER 未配置,fallback 到 "havefun-openai-responses"`);
+console.log(`[flower-providers] LLM_MODEL 未配置,fallback 到 "gpt-5.5"`);
+console.log(`[flower-providers] LLM_REASONING_EFFORT 未配置,fallback 到 "high"`);
+```
+
+理由:
+- opt-in 给业务方接入的 CI 工具,需要让接入方明确感知"我在用默认值,改 env 可覆盖",避免"为什么 model 是 gpt-5.5?"类型的排查
+- info 级(`console.log` 非 `console.warn`),避免被 SIEM 误报为告警
+- 每次调用最多 3 行(provider / model / effort 各 1 行),不刷屏
+
+约束(仍生效):
+- **绝不**输出 `apiKey` / `baseUrl`(本任务的 fallback 日志只含 provider name / model id / effort 字符串,均非敏感)
+- 前缀固定 `[flower-providers]`,便于业务方 grep
+- env 配齐时**不**触发(`if (!process.env.X || process.env.X.trim() === "") console.log(...)`)
 
 ---
 

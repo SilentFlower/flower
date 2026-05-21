@@ -32,6 +32,38 @@ export const ALLOWED_REASONING_EFFORTS: readonly ModelThinkingLevel[] = [
 ];
 
 /**
+ * code-reviewer CLI 路径(`buildPiCliArgs`)在 `LLM_PROVIDER` 缺省时使用的默认 provider
+ *
+ * @remarks 选择依据:2026-05-21 在 `xhgj003027/xhgj-iqs-ui` MR-2 pipeline 2127 / job 7552
+ *          的 stress test 用 `gpt-5.5 + high effort` 跑通 5 文件 6 issue 评审,
+ *          这是当前生产侧已验证的"reviewer 推荐组合"。默认对齐 stress 实测,
+ *          业务方零配置即拿到与生产对齐的行为。
+ *
+ *          **仅 CLI 路径使用**;ops-bot SDK 路径(`getDefaultModel`)在缺省时仍 fail-fast,
+ *          因为服务常驻部署期应显式配齐 env。
+ */
+export const DEFAULT_LLM_PROVIDER: ProviderName = "havefun-openai-responses";
+
+/**
+ * code-reviewer CLI 路径(`buildPiCliArgs`)在 `LLM_MODEL` 缺省时使用的默认 model id
+ *
+ * @remarks 与 `DEFAULT_LLM_PROVIDER` 协议匹配(`gpt-5.5.nativeApi === "openai-responses"`,
+ *          见 `catalog.ts:BUILTIN_MODELS` 中 gpt-5.5 entry)。stress test 实测稳定组合的 model 端。
+ */
+export const DEFAULT_LLM_MODEL = "gpt-5.5";
+
+/**
+ * code-reviewer CLI 路径(`buildPiCliArgs`)在 `LLM_REASONING_EFFORT` 缺省时使用的默认 effort
+ *
+ * @remarks
+ *          - 与 stress test 显式配置(`LLM_REASONING_EFFORT=high`)对齐
+ *          - 不选 `xhigh`:留给"显式想要"的项目,控成本与响应时间
+ *          - 仅影响 CLI 路径;ops-bot SDK 路径走 `getDefaultReasoningEffort`
+ *            (env > per-model > global="high"),本常量不参与该决策链
+ */
+export const DEFAULT_LLM_REASONING_EFFORT: ModelThinkingLevel = "high";
+
+/**
  * 读取 LLM 网关 baseUrl(**根 URL,不含任何路径后缀**)
  *
  * @returns 非空字符串,已去除尾部斜杠
@@ -110,6 +142,24 @@ export function getLLMProvider(): ProviderName {
 }
 
 /**
+ * 读取 `LLM_PROVIDER`;缺省时返回 `DEFAULT_LLM_PROVIDER`
+ *
+ * @returns 4 个合法 provider 名之一(env 配置值或默认值)
+ * @throws 当 env 配了**非法值**时仍走 `getLLMProvider` 的 fail-fast,只对"缺省"兜底,不对"非法值"兜底
+ *
+ * @remarks **仅** code-reviewer CLI 路径(`runtime.ts:buildPiCliArgs`)使用;
+ *          ops-bot SDK 路径请用 `getLLMProvider()`,它在缺省时 fail-fast,
+ *          强制运维显式配置以避免服务带病运行。
+ */
+export function getLLMProviderOrDefault(): ProviderName {
+	const raw = process.env.LLM_PROVIDER;
+	if (!raw || raw.trim() === "") {
+		return DEFAULT_LLM_PROVIDER;
+	}
+	return getLLMProvider();
+}
+
+/**
  * 读取并校验 `LLM_MODEL` 环境变量
  *
  * @returns 非空字符串(具体合法性由 runtime 层结合合并清单再校验)
@@ -121,6 +171,24 @@ export function getLLMModel(): string {
 		throw new Error("LLM_MODEL 未配置:请在环境变量中设置默认模型 id");
 	}
 	return value;
+}
+
+/**
+ * 读取 `LLM_MODEL`;缺省时返回 `DEFAULT_LLM_MODEL`
+ *
+ * @returns 非空字符串(env 配置值或默认值);具体合法性由下游 `getMergedModels` 校验
+ *
+ * @remarks **仅** code-reviewer CLI 路径(`runtime.ts:buildPiCliArgs`)使用;
+ *          ops-bot SDK 路径请用 `getLLMModel()`,它在缺省时 fail-fast。
+ *          任意非空字符串透传,因为本函数不持有 model 合法性的知识
+ *          (合法性判定在 `getMergedModels` + `getDefaultModel` 那一层)。
+ */
+export function getLLMModelOrDefault(): string {
+	const raw = process.env.LLM_MODEL;
+	if (!raw || raw.trim() === "") {
+		return DEFAULT_LLM_MODEL;
+	}
+	return raw;
 }
 
 /**
@@ -144,6 +212,35 @@ export function getLLMReasoningEffort(): ModelThinkingLevel | undefined {
 		throw new Error(`LLM_REASONING_EFFORT 非法值 "${trimmed}":合法值:${ALLOWED_REASONING_EFFORTS.join(" / ")}`);
 	}
 	return trimmed as ModelThinkingLevel;
+}
+
+/**
+ * 读取 `LLM_REASONING_EFFORT`;缺省时返回 `DEFAULT_LLM_REASONING_EFFORT`
+ *
+ * @returns 6 个合法 `ModelThinkingLevel` 之一(env 配置值或默认值)
+ * @throws 当 env 配了**非法值**时仍走 `getLLMReasoningEffort` 的 fail-fast
+ *
+ * @remarks **仅** code-reviewer CLI 路径(`runtime.ts:buildPiCliArgs`)使用;
+ *          ops-bot SDK 路径请用 `runtime.ts:getDefaultReasoningEffort`,
+ *          它有 per-model 默认 + 全局兜底的三层决策链。
+ *
+ *          本函数与 SDK 路径的关键差异:CLI 路径不知道 modelId(在 argv 翻译阶段
+ *          model 还没解析),所以用一个全局默认 effort 即可;SDK 路径在
+ *          `streamFn` 内拿到 `model.id` 后,可以按 model 走 per-model 表。
+ */
+export function getLLMReasoningEffortOrDefault(): ModelThinkingLevel {
+	const raw = process.env.LLM_REASONING_EFFORT;
+	if (!raw || raw.trim() === "") {
+		return DEFAULT_LLM_REASONING_EFFORT;
+	}
+	// 非空时复用 getLLMReasoningEffort 的合法性校验;它对合法值返回非 undefined
+	// 但 TS 类型签名包含 undefined,这里收窄
+	const validated = getLLMReasoningEffort();
+	if (validated === undefined) {
+		// 不可达分支:raw 非空且 trim 非空,getLLMReasoningEffort 要么返回值要么 throw
+		return DEFAULT_LLM_REASONING_EFFORT;
+	}
+	return validated;
 }
 
 /**

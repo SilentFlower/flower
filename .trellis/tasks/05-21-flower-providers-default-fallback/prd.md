@@ -21,26 +21,31 @@
 
 ## 2. Goal
 
-`code-reviewer` 形态(走 `buildPiCliArgs` 路径)在 `LLM_PROVIDER` / `LLM_MODEL` 缺省时,**自动 fallback 到 flower-providers 内置的合理默认值**,确保:
+`code-reviewer` 形态(走 `buildPiCliArgs` 路径)在 `LLM_PROVIDER` / `LLM_MODEL` / `LLM_REASONING_EFFORT` 缺省时,**自动 fallback 到 flower-providers 内置的合理默认值**,确保:
 - `--provider <havefun-*>` 总是显式传给 pi CLI(永远不让 pi 走自己的内置 provider)
 - `--model <havefun BUILTIN_MODELS 中存在的 id>` 总是显式传给 pi CLI
+- `--thinking <effort>` 总是显式传给 pi CLI(避免 pi 内置 `medium` 默认)
+- 三个值的默认 = **stress test 实测稳定组合**(`havefun-openai-responses + gpt-5.5 + high`),业务方零配置即拿到与生产对齐的行为
 - LLM 调用**保证**走 havefun 网关 + 我们的 `LLM_API_KEY`
 
 ## 3. Requirements
 
 ### R1 · 默认值常量化
 
-`flower-providers/src/runtime.ts` 中新增 2 个 export 常量:
+`flower-providers/src/env.ts` 顶部(贴近 `ALLOWED_REASONING_EFFORTS`)新增 3 个 export 常量:
 
 ```typescript
-export const DEFAULT_LLM_PROVIDER: ProviderName = "havefun-anthropic";
-export const DEFAULT_LLM_MODEL = "claude-sonnet-4-6";
+export const DEFAULT_LLM_PROVIDER: ProviderName = "havefun-openai-responses";
+export const DEFAULT_LLM_MODEL = "gpt-5.5";
+export const DEFAULT_LLM_REASONING_EFFORT: ModelThinkingLevel = "high";
 ```
 
-选择理由:
-- `havefun-anthropic` + `claude-sonnet-4-6`:速度 + 准确性折中(reviewer 的核心使用面),`BUILTIN_MODELS` 中已存在、protocol 自动匹配、`baseUrl` 自动拼对
-- **不选 opus-4-7**:更贵,要做默认对所有接入方都加成本,opus 留给"显式想要"的项目
-- **不选 haiku**:reasoning=false,reviewer 思考深度不够
+选择理由(2026-05-21 用户决策,见 prd §0 + walkthrough-blocker-consistency §0):
+- **stress test 实测稳定组合**:`xhgj003027/xhgj-iqs-ui` MR-2 pipeline 2127 / job 7552 用 `gpt-5.5 + high effort` 跑通了 5 文件 6 issue 的评审,这是当前生产侧已验证的"reviewer 推荐组合"。把它做成默认 → 业务方零配置即拿到与生产对齐的行为
+- `havefun-openai-responses` + `gpt-5.5`:`BUILTIN_MODELS` 中已存在(catalog.ts:246-256)、`nativeApi: "openai-responses"` 与 provider 协议匹配、`baseUrl` 自动拼 `/v1`
+- `DEFAULT_LLM_REASONING_EFFORT = "high"`:对应 `getDefaultReasoningEffort` per-model 表里 gpt-5.5=`xhigh` 的"次高档"。**不**选 xhigh 因为 high 已经是 stress 实测组合,xhigh 改成本/响应时间太激进,留给"显式想要"的项目
+- **不选 claude-sonnet-4-6 + high**:虽然 sonnet 价格便宜、Anthropic 协议稳定,但与当前生产侧默认接入推荐(gpt-5.5)不一致,会让业务方默认行为偏离 stress test
+- **不选 gpt-5.4 medium**:那是 pi 内置默认,正是本任务要消除的"侥幸路径"
 
 ### R2 · `buildPiCliArgs` 缺省时填默认 + 打日志
 
@@ -48,16 +53,18 @@ export const DEFAULT_LLM_MODEL = "claude-sonnet-4-6";
 
 - `LLM_PROVIDER` 缺省 → `DEFAULT_LLM_PROVIDER` + `console.log("[flower-providers] LLM_PROVIDER 未配置,fallback 到 \"<default>\"")`
 - `LLM_MODEL` 缺省 → `DEFAULT_LLM_MODEL` + 同上格式日志
-- `--provider` / `--model` argv **必然存在**,pi CLI 拿到的不再是空
-- 每次调用最多打 2 行日志(provider 1 行 + model 1 行),不刷屏
+- `LLM_REASONING_EFFORT` 缺省 → `DEFAULT_LLM_REASONING_EFFORT` + 同上格式日志
+- `--provider` / `--model` / `--thinking` argv **必然存在**,pi CLI 拿到的不再是空
+- 每次调用最多打 3 行日志(provider / model / effort 各 1 行),不刷屏
 
 ### R3 · 不破坏 fail-fast 路径
 
-`getLLMProvider()` / `getLLMModel()` 当前**仍然 throw**(`env.ts` 现有契约,ops-bot 形态走 `getDefaultModel()` 依赖这个 throw 来 fail-fast),**本任务不动**。
+`getLLMProvider()` / `getLLMModel()` / `getLLMReasoningEffort()` 当前**仍然按各自现有契约处理**(前两者缺省 throw;`getLLMReasoningEffort` 缺省返回 undefined,非法值 throw)。**本任务不动这三个函数**。
 
-新增 2 个 helper(仍在 `env.ts` 里):
+新增 3 个 helper(仍在 `env.ts` 里):
 - `getLLMProviderOrDefault(): ProviderName` — 空 → DEFAULT_LLM_PROVIDER;非法值仍走 `getLLMProvider` 的 fail-fast(只对缺省值兜底,不对非法值兜底)
 - `getLLMModelOrDefault(): string` — 空 → DEFAULT_LLM_MODEL;非空任意字符串透传,具体合法性由下游 `getMergedModels` 校验
+- `getLLMReasoningEffortOrDefault(): ModelThinkingLevel` — 空 → DEFAULT_LLM_REASONING_EFFORT;非法值仍走 `getLLMReasoningEffort` 的 fail-fast
 
 只在 `buildPiCliArgs` 内使用。
 
@@ -65,50 +72,68 @@ export const DEFAULT_LLM_MODEL = "claude-sonnet-4-6";
 
 ops-bot 形态走 `getDefaultModel()` → 缺 env 仍 throw(服务常驻,部署时应显式配齐 env,**不应**用默认值带病运行)。本任务**只**对 CLI 路径加 fallback。
 
-### R5 · 不影响 reasoning effort
+### R5 · CLI 路径 reasoning effort 也补默认(2026-05-21 用户决策扩范围)
 
-`LLM_REASONING_EFFORT` 缺省继续透传给 pi(让 pi 走自己的 medium 默认),**不**fallback 到 high 或 xhigh。理由:思考预算与"是否走 havefun 网关"无关,不绑入本任务;真要默认 high 单开任务讨论。
+`LLM_REASONING_EFFORT` 缺省时,`buildPiCliArgs` fallback 到 `DEFAULT_LLM_REASONING_EFFORT = "high"`,与 stress test 实测组合对齐。
+
+- **CLI 路径**(`buildPiCliArgs`):env 缺省 → fallback 到 high(本任务新增)
+- **SDK 路径**(`getDefaultReasoningEffort`,ops-bot 用):**完全不动**,仍按 env > per-model > global="high" 决定
+
+理由:R1 把默认 model 改成 gpt-5.5 后,若 effort 仍由 pi 内置 medium 决定,业务方零配置实际跑的是 `gpt-5.5 + medium`,与 stress 用的 `gpt-5.5 + high` 不一致。统一三个值都 fallback,才能保证"零配置 = stress test 同款"。
 
 ### R6 · README + spec 同步
 
-- `packages/flower-providers/README.md` env 表加注:"`LLM_PROVIDER` / `LLM_MODEL` 缺省时 `buildPiCliArgs`(code-reviewer CLI 路径)fallback 到 `havefun-anthropic` + `claude-sonnet-4-6`;`getDefaultModel`(ops-bot 路径)仍 fail-fast"
-- `.trellis/spec/flower-providers/backend/index.md` 加一节:CLI 路径 vs SDK 路径的缺省语义不同的原因
+- `packages/flower-providers/README.md` env 表加注:"`LLM_PROVIDER` / `LLM_MODEL` / `LLM_REASONING_EFFORT` 缺省时 `buildPiCliArgs`(code-reviewer CLI 路径)fallback 到 `havefun-openai-responses` + `gpt-5.5` + `high`;`getDefaultModel` / `getDefaultReasoningEffort`(ops-bot 路径)仍 fail-fast / 走 per-model 默认"
+- `.trellis/spec/flower-providers/backend/index.md` 加一节:CLI 路径 vs SDK 路径的缺省语义不同的原因(含 reasoning effort)
 
 ## 4. Out of Scope
 
-- ❌ 修改 `getLLMProvider()` / `getLLMModel()` throw 语义(本任务**不**改 env.ts 现有 throw 行为,只新增 OrDefault 变体)
-- ❌ 给 `getDefaultModel()`(ops-bot 路径)加 fallback
-- ❌ `LLM_REASONING_EFFORT` 默认值改动
+- ❌ 修改 `getLLMProvider()` / `getLLMModel()` / `getLLMReasoningEffort()` 现有 throw 语义(本任务**不**改 env.ts 现有 throw 行为,只新增 OrDefault 变体)
+- ❌ 给 `getDefaultModel()` / `getDefaultReasoningEffort()`(ops-bot 路径)加 fallback
 - ❌ `LLM_BASE_URL` / `LLM_API_KEY` 缺省 fallback(基础设施凭据,缺省必须 fail-fast)
 - ❌ harness 模板 / 业务方 `.gitlab-ci.yml` 改动(本任务在 flower-providers 内部解决)
+- ❌ 修改 `PER_MODEL_DEFAULT_EFFORT` 表(ops-bot 路径 gpt-5.5=xhigh 不动,本任务只动 CLI 路径默认)
 
 ## 5. Acceptance Criteria
 
 ### AC1 · 单元测试(`packages/flower-providers/src/__tests__/`)
 
-- [ ] **AC1.1** `getLLMProviderOrDefault()` 在 env 不配 → 返回 `"havefun-anthropic"`
-- [ ] **AC1.2** `getLLMProviderOrDefault()` 在 env=`havefun-openai-responses` → 透传
+#### AC1.A · env.test.ts 新增(`OrDefault` 三件)
+
+- [ ] **AC1.1** `getLLMProviderOrDefault()` 在 env 不配 → 返回 `"havefun-openai-responses"`
+- [ ] **AC1.2** `getLLMProviderOrDefault()` 在 env=`havefun-anthropic` → 透传
 - [ ] **AC1.3** `getLLMProviderOrDefault()` 在 env=非法值(如 `openai`)→ 仍 throw(沿用 fail-fast,**只对缺省兜底**)
-- [ ] **AC1.4** `getLLMModelOrDefault()` 在 env 不配 → 返回 `"claude-sonnet-4-6"`
-- [ ] **AC1.5** `getLLMModelOrDefault()` 在 env=`gpt-5.5` → 透传(任意非空字符串)
-- [ ] **AC1.6** `buildPiCliArgs` 在 env 全空 → argv 含 `["--provider", "havefun-anthropic", "--model", "claude-sonnet-4-6"]`
-- [ ] **AC1.7** `buildPiCliArgs` 在仅配 `LLM_MODEL` → argv 含 default provider + 用户 model
-- [ ] **AC1.8** `buildPiCliArgs` 在都配 → argv 中 provider/model 等于用户值(不被覆盖)
-- [ ] **AC1.9** `buildPiCliArgs` fallback 时 `console.log` 收到对应日志(用 vitest spy)
+- [ ] **AC1.4** `getLLMModelOrDefault()` 在 env 不配 → 返回 `"gpt-5.5"`
+- [ ] **AC1.5** `getLLMModelOrDefault()` 在 env=`claude-opus-4-7` → 透传(任意非空字符串)
+- [ ] **AC1.6** `getLLMReasoningEffortOrDefault()` 在 env 不配 → 返回 `"high"`
+- [ ] **AC1.7** `getLLMReasoningEffortOrDefault()` 在 env=`xhigh` → 透传
+- [ ] **AC1.8** `getLLMReasoningEffortOrDefault()` 在 env=非法值(如 `max`)→ 仍 throw
+
+#### AC1.B · runtime.test.ts 改写现有 `buildPiCliArgs` case + 新增
+
+- [ ] **AC1.9** `buildPiCliArgs` 在 env 全空 → argv 等于 `["-p", PROMPT, "--provider", "havefun-openai-responses", "--model", "gpt-5.5", "--thinking", "high"]`
+- [ ] **AC1.10** `buildPiCliArgs` 在仅配 `LLM_MODEL=claude-opus-4-7` → argv 含 default provider + 用户 model + default effort
+- [ ] **AC1.11** `buildPiCliArgs` 在三个 env 都配 → argv 中 provider/model/effort 等于用户值(不被覆盖)
+- [ ] **AC1.12** `buildPiCliArgs` 在 `LLM_PROVIDER=invalid` → throw `/LLM_PROVIDER 非法值/`(语义从原"降级到只传 model"变为"显式 fail-fast")
+- [ ] **AC1.13** `buildPiCliArgs` fallback 时 `console.log` 收到 3 行对应日志(用 `vi.spyOn(console, "log")`)
 
 ### AC2 · 集成验证
 
-- [ ] 在 `xhgj003027/xhgj-iqs-ui` 复跑一次 reviewer(**故意不配** `LLM_PROVIDER` / `LLM_MODEL`),job trace 中应:
-  - 看到 `[flower-providers] LLM_PROVIDER 未配置,fallback 到 "havefun-anthropic"` 日志
-  - 看到对应 model fallback 日志
+- [ ] 在 `xhgj003027/xhgj-iqs-ui` 复跑一次 reviewer(**故意不配** `LLM_PROVIDER` / `LLM_MODEL` / `LLM_REASONING_EFFORT`),job trace 中应:
+  - 看到 `[flower-providers] LLM_PROVIDER 未配置,fallback 到 "havefun-openai-responses"` 日志
+  - 看到 `[flower-providers] LLM_MODEL 未配置,fallback 到 "gpt-5.5"` 日志
+  - 看到 `[flower-providers] LLM_REASONING_EFFORT 未配置,fallback 到 "high"` 日志
   - 后续 LLM 调用确实走 havefun 网关(可由 SIEM 端核对 endpoint host)
+  - 评审输出质量与 stress test(pipeline 2127 / job 7552 显式配 gpt-5.5+high)等价
 
 ### AC3 · 旧行为兼容
 
 - [ ] `getLLMProvider()` 缺省仍 throw(中文错误信息含合法值列表)
 - [ ] `getLLMModel()` 缺省仍 throw
+- [ ] `getLLMReasoningEffort()` 缺省仍返回 undefined / 非法值仍 throw
 - [ ] `getDefaultModel()` 缺省仍 throw(ops-bot 路径不被影响)
-- [ ] 现有所有 vitest 单测全过
+- [ ] `getDefaultReasoningEffort()` 行为完全不变(env > per-model > "high")
+- [ ] 现有所有 vitest 单测全过(改写完 4 个 buildPiCliArgs 现有 case 后,加上 13 个新 case,总数从 149 → ~158)
 - [ ] biome / tsc 干净
 
 ### AC4 · 文档
@@ -118,9 +143,11 @@ ops-bot 形态走 `getDefaultModel()` → 缺 env 仍 throw(服务常驻,部署�
 
 ## 6. Risks
 
-- ⚠️ **默认值选错伤所有未配 env 的接入方**:`havefun-anthropic + claude-sonnet-4-6` 的选择需要确认 havefun 网关确实开通了 anthropic 协议 + sonnet-4-6 model id 可用。**实施前先 curl 网关 `/v1/models` 验证一次**(若运维已封掉某个 protocol,需调整默认)。
-- ⚠️ **日志噪音**:fallback 时打日志会让"忘配 env"的接入方一直看到提示,部分团队可能体验差。**mitigation**:用 `console.log`(info 级)而非 `console.warn`,避免被 SIEM 误报为告警;且只在 `buildPiCliArgs` 调用瞬间打 1-2 行,不进事件循环。
+- ⚠️ **默认值选错伤所有未配 env 的接入方**:`havefun-openai-responses + gpt-5.5 + high` 的选择需要确认 havefun 网关确实开通了 openai-responses 协议 + gpt-5.5 model id 可用。**实施前先 curl 网关 `POST /v1/responses` 验证一次**(若运维已封掉该 protocol 或 model 下线,需调整默认)。stress test 在 2026-05-21 已用此组合跑通,网关侧支持目前确定。
+- ⚠️ **gpt-5.5 + high 成本/响应时间高于 sonnet-4-6 + high**:gpt-5.5 reasoning summary 模式比 sonnet 慢一些。**mitigation**:若有"成本敏感型"接入方,显式配 `LLM_PROVIDER=havefun-anthropic` + `LLM_MODEL=claude-sonnet-4-6` 即可覆盖,默认成本由 reviewer "推荐组合"的产品定位决定(stress 实测稳定 > 单点最便宜)。
+- ⚠️ **日志噪音**:fallback 时打 3 行 `console.log`(provider/model/effort 各 1 行)会让"忘配 env"的接入方一直看到提示,部分团队可能体验差。**mitigation**:用 `console.log`(info 级)而非 `console.warn`,避免被 SIEM 误报为告警;且只在 `buildPiCliArgs` 调用瞬间打 3 行,不进事件循环。
 - ⚠️ **隐式默认 vs 显式配置的工程取向**:有些团队希望"缺 env 立刻报错",本任务的方向是"缺 env 自动兜底"。两条路都合理,本任务选后者**仅**因为 reviewer 是 opt-in 给业务方接入的 CI 工具,**降低接入门槛**优先于"显式配置文化"。**ops-bot 走另一条路**(`getDefaultModel` 仍 fail-fast)保留显式配置选项。
+- ⚠️ **`buildPiCliArgs` 现有"非法 provider 降级"行为消失**:当前实测路径下,`LLM_PROVIDER` 被配成非法值会"吃错降级到只传 --model"。改后会 throw `LLM_PROVIDER 非法值`。这其实是行为修正(显式错误优于隐式),但 commit message 要明确写 BREAKING-NOTE 提醒接入方。
 
 ## 7. 关联任务
 

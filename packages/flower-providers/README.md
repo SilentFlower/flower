@@ -73,12 +73,12 @@ new Agent({
 |------|:----:|------|
 | `LLM_BASE_URL` | ✓ | LLM 网关**根 URL**(自部署 vLLM / 内部 AI Gateway / 任意 OpenAI 兼容代理)。**不要带 `/v1` / `/v1beta` / `/anthropic` 等后缀** — 本包按 provider 自动拼:openai-* → `/v1`,gemini → `/v1beta`,anthropic 无后缀(Anthropic SDK 自己拼 `/v1/messages`) |
 | `LLM_API_KEY` | ✓ | API key。**不会经过本包代码** — pi 直接从 env resolve;ops-bot 路径在 streamFn 中直读 |
-| `LLM_PROVIDER` | ✓ | 默认 provider,合法值:`havefun-openai` / `havefun-openai-responses` / `havefun-anthropic` / `havefun-gemini` |
-| `LLM_MODEL` | ✓ | 默认模型 id,必须存在于合并模型清单(builtin + extras),且其 `nativeApi` 与 `LLM_PROVIDER` 对应协议一致 |
+| `LLM_PROVIDER` | ✓(SDK 路径)| 默认 provider,合法值:`havefun-openai` / `havefun-openai-responses` / `havefun-anthropic` / `havefun-gemini`。**CLI 路径**(`buildPiCliArgs`,code-reviewer 用)缺省 fallback 到 `havefun-openai-responses`(2026-05-21 stress test 实测稳定组合) |
+| `LLM_MODEL` | ✓(SDK 路径)| 默认模型 id,必须存在于合并模型清单(builtin + extras),且其 `nativeApi` 与 `LLM_PROVIDER` 对应协议一致。**CLI 路径**缺省 fallback 到 `gpt-5.5` |
 | `LLM_EXTRA_MODELS_JSON` |   | (可选)JSON 数组,注入额外模型,格式见下文 |
-| `LLM_REASONING_EFFORT` |   | (可选)统一调节"思考预算",合法值 `off / minimal / low / medium / high / xhigh`。配置后覆盖所有 model 的默认 effort;不配则按 per-model 默认拉到该 model 的实际上限 |
+| `LLM_REASONING_EFFORT` |   | (可选)统一调节"思考预算",合法值 `off / minimal / low / medium / high / xhigh`。**SDK 路径**配置后覆盖所有 model 的默认 effort,不配则按 per-model 默认拉到该 model 的实际上限。**CLI 路径**缺省 fallback 到 `high`(stress test 显式配置端) |
 
-任一必填 env 缺失或非法,启动期 fail-fast 抛错。可选 env 若有值但非法,首次调用对应函数时也会 fail-fast。
+任一**SDK 路径**必填 env 缺失或非法,启动期 fail-fast 抛错(`getDefaultModel` / `buildHavefunModel` / `getDefaultReasoningEffort`)。**CLI 路径**(`buildPiCliArgs`)对 `LLM_PROVIDER` / `LLM_MODEL` / `LLM_REASONING_EFFORT` 缺省自动 fallback 到 stress test 实测稳定组合(`havefun-openai-responses + gpt-5.5 + high`),非法值仍 fail-fast。可选 env 若有值但非法,首次调用对应函数时也会 fail-fast。
 
 ### `LLM_EXTRA_MODELS_JSON` 示例
 
