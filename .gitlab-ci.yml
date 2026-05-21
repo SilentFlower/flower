@@ -1,50 +1,49 @@
-# flower 仓内网 GitLab CI 入口(company 分支专属)
+# flower 仓内网 GitLab CI 入口(company 分支 + MR pipeline)
 #
 # 目的:
-#   build flower 各 CLI 镜像 push 到 Harbor,给业务方(如 xhgj-iqs-boot)
-#   通过 extends .flower-code-review 消费(评审 MR)。
+#   1. 在 company 分支 push / tag 时 build 镜像 push 到 Harbor(给业务方消费)
+#   2. 在 MR pipeline 时跑 code-review(flower 自评 PR,dogfooding)
 #
-# 分支隔离:
-#   - 本文件**仅在 company 分支存在**,github main 不污染
-#   - origin (github) 不参与 GitLab CI;只在 company remote (gitlab.xhgjdev.com) 跑
+# 分支隔离:本文件仅在 company 分支存在;origin (github) 不参与 GitLab CI
 #
 # 模板来源:digital-rd-infra/devops-infra(devops-infra-harness)
-#   - node-cli-image.yml(与 V3 主路径 application.yml 并行,不经 ci_planner.py)
-#   - 用法 + 字段含义见 harness templates/node-cli-image.yml 头注
 
 include:
   - project: 'digital-rd-infra/devops-infra'
     ref: main
     file:
-      # .gitlab-ci-base.yml 提供全局变量 HARBOR_HOST / KANIKO_IMAGE / SKOPEO_IMAGE 等;
-      # 不 include 这个 → node-cli-image.yml 拿不到 ${KANIKO_IMAGE} / ${HARBOR_HOST}(实测空)
-      - '/templates/.gitlab-ci-base.yml'
-      # node-cli-image.yml 提供 .node-cli-image hidden job(Kaniko build & push 镜像)
-      - '/templates/node-cli-image.yml'
+      - '/templates/.gitlab-ci-base.yml'    # 提供 HARBOR_HOST / KANIKO_IMAGE 等全局变量
+      - '/templates/node-cli-image.yml'     # 提供 .node-cli-image hidden job(Kaniko build & push)
 
-# Workflow rules:只在 company 分支 push / 打 tag 时触发,避免无意 fork 触发
+# Workflow rules:允许 company 分支 push / tag / MR pipeline 触发
 workflow:
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_TAG'
     - if: '$CI_COMMIT_BRANCH == "company"'
     - when: never
 
-# stages 由 .gitlab-ci-base.yml 提供(build / package / deploy);本仓只用 build。
-# 不重复声明,避免与 base.yml 冲突
+# .gitlab-ci-base.yml 已声明 stages: [build, package, deploy];本仓追加 review
+stages:
+  - build
+  - review
 
-# build flower-code-reviewer 镜像 push 到 Harbor base/flower-code-reviewer:<sha> + :latest
-# iqs-boot 已在消费 base/flower-code-reviewer:<tag>(harness application.yml `.flower-code-review`
-# 默认 FLOWER_REGISTRY_NAMESPACE=base),首批保留同 namespace 兼容
+# ─────────────────────────────────────────────────────────────────────
+# Job 1: build flower-code-reviewer 镜像
+# 只在 push 到 company / tag 时跑(MR pipeline 不重复 build)
+# ─────────────────────────────────────────────────────────────────────
 build-flower-code-reviewer:
   extends: .node-cli-image
-  # Override harness 默认的 tags: [infra-build-proxy](该 tag 的 runner 在本实例不存在/不可见,
-  # 个人项目跑会卡 pending)。改用 default instance runner(tags=[]),与 iqs-boot 的
-  # package-java(用 runner id=1, type=instance_type)路径一致。
-  # 风险:default runner 没有公网代理,npm install 可能需要内网 mirror —— 若 fail,
-  # 在 Dockerfile 里显式配 .npmrc registry 指向内网 nexus 即可。
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == "company"'
+    - when: never
+  # Override harness 默认的 tags: [infra-build-proxy](该 tag 的 runner 在本实例不存在)。
+  # 改用 default instance runner(tags=[]),与 iqs-boot 的 package-java 同路径
   tags: []
-  # 复测 runner 是否允许 image.pull_policy: always(用户已让 admin 加白名单)。
-  # 通过即可启用 .flower-code-review 的 latest + always 自动滚动方案(MR 157)。
+  # pull_policy: always 启用浮动 latest(runner admin 2026-05-21 已加白名单)
   image:
     name: ${KANIKO_IMAGE}
     entrypoint: [""]
@@ -53,5 +52,53 @@ build-flower-code-reviewer:
     IMAGE_NAME: 'flower-code-reviewer'
     SUB_DIR: 'packages/flower-code-reviewer'
     REGISTRY_NAMESPACE: 'base'
-    # IMAGE_TAG 默认 = ${CI_COMMIT_SHORT_SHA}(模板兜底);PUSH_LATEST=true 自动也推 :latest
-    # 若需锁版本只推 sha 不推 latest:加 PUSH_LATEST: "false"
+
+# ─────────────────────────────────────────────────────────────────────
+# Job 2: code-review(dogfooding — flower 自评 PR)
+#
+# 临时方案:inline 复制 harness .flower-code-review hidden job 完整定义,
+# 因为 include application.yml 会拖入 V3 plan-pipeline / run-child-pipeline。
+# 等 harness 拆出独立 templates/review-flower-code-reviewer.yml 后,
+# 可改回:
+#   code-review:
+#     extends: .flower-code-review
+#
+# 4 个 secret(REVIEWER_BOT_TOKEN / LLM_BASE_URL / LLM_API_KEY / SIEM_INGEST_URL)
+# 已配 project-level CI Variables
+# ─────────────────────────────────────────────────────────────────────
+code-review:
+  stage: review
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: on_success
+    - when: never
+  needs: []
+  tags: []
+  image:
+    name: "${HARBOR_HOST}/base/flower-code-reviewer:latest"
+    pull_policy: always
+  variables:
+    FLOWER_MAX_FILES: "50"
+    FLOWER_MAX_FILE_SIZE: "51200"
+    GITLAB_TOKEN: "${REVIEWER_BOT_TOKEN}"
+    GITLAB_HOST: "${CI_SERVER_URL}"
+  script:
+    - |
+      set -euo pipefail
+
+      MISSING=""
+      [ -z "${GITLAB_TOKEN:-}" ]    && MISSING="${MISSING} GITLAB_TOKEN(REVIEWER_BOT_TOKEN)"
+      [ -z "${LLM_BASE_URL:-}" ]    && MISSING="${MISSING} LLM_BASE_URL"
+      [ -z "${LLM_API_KEY:-}" ]     && MISSING="${MISSING} LLM_API_KEY"
+      [ -z "${SIEM_INGEST_URL:-}" ] && MISSING="${MISSING} SIEM_INGEST_URL"
+      if [ -n "${MISSING}" ]; then
+        echo "❌ flower-code-reviewer 必填 secret 缺失:${MISSING}"
+        exit 1
+      fi
+
+      echo ">>> 🤖 reviewer 探针: max_files=${FLOWER_MAX_FILES}, mr_iid=${CI_MERGE_REQUEST_IID}"
+      echo ">>> 🤖 secret 长度: gitlab_token_len=${#GITLAB_TOKEN}, llm_api_key_len=${#LLM_API_KEY}, siem_url_len=${#SIEM_INGEST_URL}"
+
+      flower-review --mr-iid "${CI_MERGE_REQUEST_IID}"
+  allow_failure: true
+  timeout: 10 minutes
