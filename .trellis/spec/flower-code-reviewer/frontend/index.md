@@ -257,7 +257,9 @@ done
 | 陷阱 | 实际现象 | 防御 |
 |---|---|---|
 | **flower 仓 `.gitlab-ci.yml` 在 `company` 分支专属** | push 到 main 不触发 image build,什么都没发生 | push 必须到 `company` 分支;main 改动需 `git merge main` 进 company 再 push |
+| **main ↔ company 严格单向** | 在 company 上 commit src/spec/task 改动,反向 merge 回 main 会把 company 专属的 CI 历史(`.gitlab-ci.yml`)污染到 main | **铁律**:src / spec / task / docs 改动**必须**先 commit 到 main,再 `git checkout company && git merge main --no-ff` 进 company;**绝不** company → main。violation 修复:`git reset --soft HEAD~1` 撤回 company 上误 commit,`git stash` + `git checkout main` + `git stash pop` 重 commit,再 merge 回 company |
 | **company 是公共分支,rebase 会改写历史** | 强 push 后他人 fetch 报 non-FF | 用 `git merge main --no-ff` 创建 merge commit,**不** rebase |
+| **transient build 失败:`npm install` ECONNRESET** | image build job 跑到一半 npm registry 网络抖断(2-3min 后报 ECONNRESET) | 不是代码 bug,直接 `POST /projects/:id/pipelines/:id/retry` 重跑(无需新 push);只 retry 失败 job,不重建 pipeline |
 | **GitLab 删评论 API 不分行内 / 整体** | 早期实现尝试 `DELETE /discussions/:disc_id/notes/:note_id` 多走一步拿 disc_id | 直接 `DELETE /merge_requests/:iid/notes/:note_id`,note_id 全局唯一 |
 | **token 是用户自己的 PAT,删 note 会留下"已编辑" footprint** | 评论的 system note "<user> deleted comment" 仍在 MR timeline | 接受为预期行为;若需完全无痕,只能用与 bot 同账号的 token 删 |
 | **pipeline retry vs 新建** | retry 只重跑 failed/canceled job,**reviewer success 后不会再跑** | 用 push 空 commit 或 API 新建 pipeline 而非 retry |
