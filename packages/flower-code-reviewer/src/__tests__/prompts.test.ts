@@ -53,15 +53,25 @@ describe("buildPrompt · 7 条硬约束", () => {
 		expect(prompt).toContain("真实代码上下文约束");
 	});
 
-	// AC1.6 · Fix A 教育:gitlab_get_file_content 的 ref 可省略 + 严禁传 HEAD
-	it("AC1.6 · 工作流第 4 步告诉 LLM:看 source 版本 ref 可省略 + 不要传 HEAD", () => {
-		const prompt = buildPrompt({ skillFilePath, dryRun: false });
-		// 「可省略」措辞
-		expect(prompt).toContain("可省略");
-		// 「不要传 HEAD」措辞(用关键字段断言,避免依赖具体引号风格)
-		expect(prompt).toMatch(/不要传.*HEAD/);
-		// 同步在「严格要求 §7」中也提到严禁 HEAD
+	// AC1.6 · Fix A 教育:LLM 必须显式传 ref(从 prompt 注入的 source branch),严禁 HEAD/省略
+	it("AC1.6 · 工作流第 4 步要求 LLM 显式传 ref = source branch,严禁 HEAD/空/省略", () => {
+		const prompt = buildPrompt({
+			skillFilePath,
+			dryRun: false,
+			sourceBranch: "try/code-review-onboarding",
+		});
+		// 注入的 source branch name 出现在 prompt(LLM 能直接照抄)
+		expect(prompt).toContain("try/code-review-onboarding");
+		// 「必须传」强约束措辞
+		expect(prompt).toMatch(/必须传/);
+		// 严禁 HEAD / 省略
 		expect(prompt).toMatch(/严禁.*HEAD|不要传.*HEAD/);
+	});
+
+	it("AC1.6b · 不传 sourceBranch 时 prompt 有降级 placeholder(本地调试场景)", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		// 没有 sourceBranch 时用 placeholder,LLM 看到提示去查 env
+		expect(prompt).toMatch(/MR source branch.*env CI_MERGE_REQUEST_SOURCE_BRANCH_NAME/);
 	});
 
 	// AC2.5 · Fix B 教育:「工具优先级」段落已经写进 prompt
