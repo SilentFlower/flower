@@ -45,21 +45,23 @@
 ### R2 · bash 白名单扩容(Fix B · 解类 4)
 
 #### R2.1 白名单扩容到只读 + 文本处理常用 Unix 工具
-当前白名单:`/^(git|grep|find|ls|cat|head|tail|wc|file|sed|awk)\b/`(10 个)
-扩容后白名单:加 16 个**纯只读 + 无副作用**的常用 Unix 工具:
+当前白名单:`/^(git|grep|find|ls|cat|head|tail|wc|file|sed|awk)\b/`(11 个)
+扩容后白名单:加 18 个**纯只读 + 无副作用**的常用 Unix 工具(含 modern unix `rg`):
 
 | 类别 | 新增 |
 |---|---|
+| 现代搜索 | `rg`(ripgrep,比 grep 快 + 自动跳 `.gitignore`) |
 | 行号 / 文本处理 | `nl` `sort` `uniq` `tr` `column` `diff` `comm` |
 | 简单输出 | `printf` `echo` |
 | 路径工具 | `basename` `dirname` `realpath` |
 | 环境元信息 | `pwd` `date` `which` `type` `command` |
-| 结构化数据 | `jq` `yq` |
 
 新 regex(建议):
 ```typescript
-const bashAllowList = /^(git|grep|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|uniq|tr|column|diff|comm|printf|echo|basename|dirname|realpath|pwd|date|which|type|command|jq|yq)\b/;
+const BASH_ALLOW_LIST = /^(git|grep|rg|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|uniq|tr|column|diff|comm|printf|echo|basename|dirname|realpath|pwd|date|which|type|command)\b/;
 ```
+
+**注**:`rg` 不在 alpine 默认镜像,需要在 `packages/flower-code-reviewer/Dockerfile:44` 把 `apk add --no-cache git` 改为 `apk add --no-cache git ripgrep`。Dockerfile 改动随本任务一并提交。`jq` / `yq` 同样不在 alpine 默认镜像,本任务暂不加(LLM 大多数评审场景用 `gitlab_*` 工具拿结构化数据已经够,bash 处理 JSON / YAML 需求不高;若以后真有强需求,再单独 PR 加)。
 
 #### R2.2 拒绝清单(永不放行,即便用户后续要求)
 - **`env` / `printenv`**:可能泄漏未 masked 的 secret,即使 GitLab 会 mask 也 defense-in-depth 拦截
@@ -75,7 +77,7 @@ const bashAllowList = /^(git|grep|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|
 - 想看 env → **不可,可能泄漏 secret**
 
 #### R2.4 prompts.ts 加「工具优先级」段(辅助优化)
-明确告诉 LLM:需要 MR / 文件 / 代码信息时,**首选** `gitlab_*` 工具,bash 用于 git 命令 + 文本处理(`nl` / `sort` / `jq` 等)。
+明确告诉 LLM:需要 MR / 文件 / 代码信息时,**首选** `gitlab_*` 工具,bash 用于 git 命令 + 文本处理(`rg` / `nl` / `sort` / `awk` 等)。
 
 ### R3 · exit 1 trace 澄清日志(Fix C · 解类 5)
 
@@ -116,7 +118,8 @@ const bashAllowList = /^(git|grep|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|
 
 ### AC2 · Fix B · bash 白名单扩容 + 错误信息优化单测
 
-- [ ] **AC2.1** 新加的 16 个命令(nl/sort/uniq/tr/column/diff/comm/printf/echo/basename/dirname/realpath/pwd/date/which/type/command/jq/yq)逐一放行(用 it.each 跑一遍)
+- [ ] **AC2.1** 新加的 18 个命令(rg/nl/sort/uniq/tr/column/diff/comm/printf/echo/basename/dirname/realpath/pwd/date/which/type/command)逐一放行(用 it.each 跑一遍)
+- [ ] **AC2.1.dockerfile** `packages/flower-code-reviewer/Dockerfile:44` 已改为 `RUN apk add --no-cache git ripgrep`(白名单放行后容器内可执行,e2e Phase 6 内 `rg --version` 不报 `command not found` 即视为通过)
 - [ ] **AC2.2** `env` / `printenv` 仍被拦截(defense-in-depth)
 - [ ] **AC2.3** `curl` / `tee` / `mv` / `npm` 等高危命令仍被拦截
 - [ ] **AC2.4** 拦截信息保留原 `CI 只读模式:` 前缀,且包含替代工具建议字符串(如拦 `env` → 含 `不可,可能泄漏 secret`)
