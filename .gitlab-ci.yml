@@ -85,9 +85,7 @@ code-review:
   needs: []
   tags: []
   image:
-    # company-test 验证期间 dogfooding 拉本次 build 的隔离 tag(含 ref/bash 白名单/exit 信号 3 个 fix)。
-    # 验证通过后,merge company-test → company 时此行回退为 :latest(走 company 正常 build)。
-    name: "${HARBOR_HOST}/base/flower-code-reviewer:company-test-2180a260"
+    name: "${HARBOR_HOST}/base/flower-code-reviewer:latest"
     pull_policy: always
   variables:
     FLOWER_MAX_FILES: "50"
