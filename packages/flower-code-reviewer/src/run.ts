@@ -130,10 +130,19 @@ export function isLlmFailure(err: unknown): boolean {
 
 /**
  * 评审结果
+ *
+ * - `blockerCount`:本轮 LLM 发出的 blocker 级 line_comment 数量(从 `review-trace.ts` 单例取,与
+ *   `reviewer_list_my_blockers` 工具同源真值;exit 1 时供 cli.ts 写入预告日志)
+ * - `unsupportedFileCount`:本轮「无依据评论」涉及的文件数(LLM 评论了但没读过)
+ *
+ * 两条字段在 cli.ts 中拼装出双路径文案 `N 个 blocker 评论 + M 个无依据评论触发的 blocker`,
+ * 让 trace 读者直接区分 exit 1 是哪条路径触发(避免 unsupported-only 时显示 "0 个 blocker" 反而误导)。
  */
 export interface ReviewResult {
 	exitCode: 0 | 1 | 2;
 	skillUsed: string;
+	blockerCount: number;
+	unsupportedFileCount: number;
 }
 
 /**
@@ -185,9 +194,7 @@ export function scanForBlockers(
 	//    - 新格式:HTML 注释 <!-- severity: blocker -->(藏起来不影响 GitLab 渲染观感)
 	//    - 旧格式:[severity:blocker] 字面前缀(向后兼容旧评论)
 	const blockerMarker = /<!--\s*severity:\s*blocker\s*-->|^\[severity:blocker\]/;
-	const hasNewBlocker = input.after
-		.filter((c) => !input.beforeIds.has(c.id))
-		.some((c) => blockerMarker.test(c.body));
+	const hasNewBlocker = input.after.filter((c) => !input.beforeIds.has(c.id)).some((c) => blockerMarker.test(c.body));
 	if (hasNewBlocker) return true;
 
 	// 2. 无依据评论:LLM 对某些文件发了评论但没读过这些文件
@@ -244,13 +251,16 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 		}
 	}
 
-	// 4. 构造 prompt(把 gitlabVersion + 截断元数据传入)
+	// 4. 构造 prompt(把 gitlabVersion + 截断元数据 + MR source branch 传入)
+	// 注入 sourceBranch:LLM 在 prompt 里能看到具体 branch 名,主动显式传 ref(而非依赖工具兜底)
 	const skillFilePath = join(getSkillsDir(), `${skill}.md`);
+	const sourceBranch = process.env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME?.trim();
 	const prompt = buildPrompt({
 		skillFilePath,
 		dryRun: args.dryRun,
 		gitlabVersion,
 		...(truncation !== undefined ? { truncation } : {}),
+		...(sourceBranch ? { sourceBranch } : {}),
 	});
 
 	// 5. 跑前 snapshot bot 评论 id 集合(用于跑后 diff)
@@ -285,14 +295,14 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 				}
 			}
 			// **不**调 scanForBlockers(没有 LLM 评论可扫,blocker 不应虚报)
-			return { exitCode: 0, skillUsed: skill };
+			return { exitCode: 0, skillUsed: skill, blockerCount: 0, unsupportedFileCount: 0 };
 		}
 		throw err;
 	}
 
 	// 8. 跑后扫 blocker(包含「无依据评论」检查)
 	if (!enableBlockerScan || projectId === undefined) {
-		return { exitCode: 0, skillUsed: skill };
+		return { exitCode: 0, skillUsed: skill, blockerCount: 0, unsupportedFileCount: 0 };
 	}
 	try {
 		const after = await gitlabClient().getBotComments(projectId, mrIid);
@@ -300,6 +310,9 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 		// 「无依据评论」:LLM 对哪些文件发了 line_comment 但没读过这些文件
 		const trace = getTrace();
 		const unsupportedFiles = findUnsupportedComments(trace.readFiles, trace.lineComments);
+		// 本轮 blocker 级 line_comment 数量 — 与 reviewer_list_my_blockers 工具同源真值
+		// (从 trace 单例取,不再二次 filter `after - beforeIds`,避免双源漂移)
+		const lineBlockerCount = trace.lineComments.filter((c) => c.severity === "blocker").length;
 
 		// 若有无依据评论,先发一条整体 blocker 评论让评审作者看见(并被纳入 scan)
 		if (unsupportedFiles.length > 0) {
@@ -316,11 +329,16 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 			after,
 			unsupportedCommentFiles: unsupportedFiles,
 		});
-		return { exitCode: hasBlocker ? 1 : 0, skillUsed: skill };
+		return {
+			exitCode: hasBlocker ? 1 : 0,
+			skillUsed: skill,
+			blockerCount: lineBlockerCount,
+			unsupportedFileCount: unsupportedFiles.length,
+		};
 	} catch (err) {
 		// 评论已发,扫描失败不应反向定罪整个评审
 		console.warn("[code-reviewer] 跑后评论拉取失败,blocker 扫描跳过:", err);
-		return { exitCode: 0, skillUsed: skill };
+		return { exitCode: 0, skillUsed: skill, blockerCount: 0, unsupportedFileCount: 0 };
 	}
 }
 

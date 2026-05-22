@@ -156,18 +156,34 @@ export const gitlabGetFileContentTool = defineTool({
 	name: "gitlab_get_file_content",
 	label: "拉取文件原始内容",
 	description:
-		"拉任意 ref 下的文件原始内容(UTF-8 文本)。ref 默认传 MR source HEAD;需要看 target 版本或历史 commit 时可传对应 ref。同一文件多次拉取请自行缓存,避免重复请求。文件超过 50KB 会被截断,二进制 / 锁文件会被跳过。",
+		"拉任意 ref 下的文件原始内容(UTF-8 文本)。`ref` 可省略 — 省略 / 空字符串 / `'HEAD'` 时自动兜底到当前 MR 的 source branch(`CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`),覆盖大多数评审场景;看 target 版本或历史 commit 时显式传对应 ref。**不要传字面 'HEAD'**:GitLab REST API 不识别该别名,会被解析为 default branch。同一文件多次拉取请自行缓存,避免重复请求。文件超过 50KB 会被截断,二进制 / 锁文件会被跳过。",
 	parameters: Type.Object({
 		path: Type.String({ description: "仓库内相对路径(如 `internal/auth/sign_verify.go`)" }),
-		ref: Type.String({ description: "ref(branch / tag / commit sha)" }),
+		ref: Type.Optional(
+			Type.String({
+				description:
+					"ref(branch / tag / commit sha)。省略时自动兜底到当前 MR 的 source branch;**不要**传 'HEAD' 或空字符串(会触发兜底,但属于不规范输入)",
+			}),
+		),
 	}),
 	async execute(_id, params) {
 		const { projectId } = readEnv();
+		// 先归一化 ref:兜底 source branch / 透传显式 ref / 无 CI env 时抛中文错误(由 catch 包成 content 返回 LLM)
+		let ref: string;
 		try {
-			const content = await safeReadFile({ projectId, path: params.path, ref: params.ref });
+			ref = normalizeRef(params.ref);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			return {
+				content: [{ type: "text", text: `拉取文件失败:${message}` }],
+				details: { path: params.path, ref: params.ref ?? "(missing)", length: 0, error: true },
+			};
+		}
+		try {
+			const content = await safeReadFile({ projectId, path: params.path, ref });
 			const details: { path: string; ref: string; length: number; error?: boolean } = {
 				path: params.path,
-				ref: params.ref,
+				ref,
 				length: content.length,
 			};
 			return {
@@ -180,7 +196,7 @@ export const gitlabGetFileContentTool = defineTool({
 			const message = err instanceof Error ? err.message : String(err);
 			const details: { path: string; ref: string; length: number; error?: boolean } = {
 				path: params.path,
-				ref: params.ref,
+				ref,
 				length: 0,
 				error: true,
 			};
@@ -191,6 +207,44 @@ export const gitlabGetFileContentTool = defineTool({
 		}
 	},
 });
+
+/**
+ * 归一化 LLM 传入的 ref 参数
+ *
+ * **背景**:LLM 受 git CLI 习惯影响常传 `"HEAD"`,GitLab REST API 不识别该别名,
+ * 会被解析为 default branch(若 MR source 文件在 default branch 还不存在 → HTTP 404)。
+ * 此外 LLM 在反复试错时也会出现 `""` / 不传 ref → tool schema 校验失败 / 4xx。
+ * 工具层兜底比 prompt 教育更稳:无副作用工具直接接受 LLM 的偷懒输入。
+ *
+ * 规则:
+ * - `undefined` / 空字符串 / `"HEAD"` → 兜底到 `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`(MR 评审主路径)
+ * - 真实 ref(branch / tag / sha)→ 透传
+ * - 兜底场景无 CI env(本地调试)→ 抛中文 Error,提示显式传 ref
+ *
+ * @param rawRef LLM 传入的 ref 参数原值
+ * @returns 归一化后的 ref(非空字符串)
+ * @throws 当需要兜底但 CI env 缺失时抛 Error(由 tool execute catch 包成 LLM 可读 content)
+ */
+export function normalizeRef(rawRef: string | undefined): string {
+	const trimmed = rawRef?.trim();
+	if (!trimmed || trimmed === "HEAD") {
+		const sourceBranch = process.env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME?.trim();
+		if (sourceBranch) {
+			// 仅当 LLM 显式传 "HEAD" / 空字符串(已学到的反模式)时 warn 教育别这么干;
+			// rawRef === undefined(完全不传)是新 prompt 教育后的预期默认行为,无声兜底,避免 trace 噪音。
+			if (rawRef !== undefined) {
+				console.warn(
+					`[gitlab_get_file_content] ref="${rawRef}" 自动兜底到 source branch "${sourceBranch}";后续请省略 ref 或传具体分支名`,
+				);
+			}
+			return sourceBranch;
+		}
+		throw new Error(
+			`ref 缺失或为 "HEAD" / 空字符串,且环境变量 CI_MERGE_REQUEST_SOURCE_BRANCH_NAME 未设置无法兜底。请显式传 ref(branch / tag / commit sha)。`,
+		);
+	}
+	return trimmed;
+}
 
 /**
  * 从环境变量读 CI 注入的项目 / MR 标识

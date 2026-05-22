@@ -13,18 +13,20 @@ packages/flower-tools-gitlab/src/
   __tests__/tool-sanitize.test.ts ← + 6 case(AC1.*)
   __tests__/client.test.ts        ← (若 client.ts 也动)+ 兼容 case
 
-packages/flower-code-reviewer/src/
-  prompts.ts                 ← §「工作流」第 4 步 + 加「工具优先级」段
-  cli.ts (或 run.ts)         ← exit 1 前打预告日志
-  __tests__/cli.test.ts (或 run.test.ts) ← + 2 case(AC3.*)
-  __tests__/prompts.test.ts  ← + 2 case(AC1.6 / AC2.4 字符串断言)
+packages/flower-code-reviewer/
+  Dockerfile                 ← Fix B 配套:apk add ripgrep(白名单放行后容器内可执行)
+  src/prompts.ts             ← §「工作流」第 4 步 + 加「工具优先级」段
+  src/cli.ts                 ← exit 1 前打预告日志(分两路径文案:line blocker + unsupported)
+  src/run.ts                 ← ReviewResult 接口扩字段 + 从 trace 取真值
+  src/__tests__/cli.test.ts (新建)         ← + 4 case(AC3.*)
+  src/__tests__/prompts.test.ts            ← + 2 case(AC1.6 / AC2.5 字符串断言)
 
 packages/flower-compliance/src/
-  <bash-tool 拦截相关>.ts    ← 错误信息加替代建议
-  __tests__/<对应>.test.ts   ← + 3 case(AC2.*)
+  index.ts                   ← bashAllowList regex 扩容 + buildBashBlockReason helper
+  __tests__/index.test.ts    ← + 3 case(AC2.*)
 ```
 
-完全不动:`flower-providers`、`flower-tools-common`、`observability.ts`、`extension.ts`。
+完全不动:`flower-providers`、`flower-tools-common`、`observability.ts`、`extension.ts`、`reviewer-self-tools.ts`(Fix C 直接读 `trace` 与 `reviewer_list_my_blockers` 同源,工具本身无需变更)。
 
 ### 0.2 跨包改动顺序
 
@@ -150,18 +152,36 @@ describe("normalizeRef", () => {
 const bashAllowList = /^(git|grep|find|ls|cat|head|tail|wc|file|sed|awk)\b/;
 ```
 
-只覆盖 10 个命令,大量纯只读工具被拦。
+只覆盖 11 个命令,大量纯只读工具被拦。
 
-### 2.2 扩容后白名单(26 个)
+### 2.2 扩容后白名单(29 个)
 
 ```typescript
-const bashAllowList = /^(git|grep|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|uniq|tr|column|diff|comm|printf|echo|basename|dirname|realpath|pwd|date|which|type|command|jq|yq)\b/;
+const BASH_ALLOW_LIST = /^(git|grep|rg|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|uniq|tr|column|diff|comm|printf|echo|basename|dirname|realpath|pwd|date|which|type|command)\b/;
 ```
 
-**新增 16 个** 全部满足:
+**新增 18 个**(含 modern unix `rg`),全部满足:
 - 纯只读(不修改文件 / 系统状态)
 - 无副作用(不发起网络请求 / 不执行其他命令链)
 - 不泄漏未 masked secret(尤其排除 `env` / `printenv`)
+
+### 2.2.1 Dockerfile 同步:apk add ripgrep
+
+`packages/flower-code-reviewer/Dockerfile:44` 当前:
+```dockerfile
+RUN apk add --no-cache git
+```
+
+改为:
+```dockerfile
+RUN apk add --no-cache git ripgrep
+```
+
+理由:`rg` 默认不在 alpine 基础镜像中。**白名单放行 + 容器没装** = `command not found` 错误,反而新增 trace 噪音,背离 Fix B 初衷。`ripgrep` 二进制约 +5MB,可接受。
+
+其余新增命令(`nl` / `sort` / `uniq` / `tr` / `column` / `diff` / `comm` / `printf` / `echo` / `basename` / `dirname` / `realpath` / `pwd` / `date` / `which` / `type` / `command`)都是 alpine `busybox` 默认提供,无需 apk add。
+
+**显式不加**:`jq` / `yq` 同样不在 alpine 默认镜像,本任务**暂不加**到白名单也不 apk install。LLM 评审场景拿结构化数据已经有 `gitlab_*` 工具兜底,bash 处理 JSON / YAML 需求不高;若以后真出现强需求,再单独 PR 扩。
 
 ### 2.3 拒绝清单(不放行,defense-in-depth)
 
@@ -216,7 +236,8 @@ function buildBashBlockMessage(firstWord: string): string {
   - 历史评论 → `gitlab_get_previous_review`
 - **bash 用法**:
   - ✅ 可用:`git` 系列(log / show / diff / blame / branch …)
-  - ✅ 可用:文本处理(`grep` / `sed` / `awk` / `sort` / `uniq` / `tr` / `nl` / `column` / `printf` / `echo` / `jq` / `yq` 等)
+  - ✅ 可用:搜索(`grep` / `rg` — 推荐 `rg`,更快 + 自动跳 `.gitignore`)
+  - ✅ 可用:文本处理(`sed` / `awk` / `sort` / `uniq` / `tr` / `nl` / `column` / `printf` / `echo` 等)
   - ✅ 可用:路径 / 元信息(`pwd` / `basename` / `dirname` / `realpath` / `date` / `which`)
   - ❌ **禁用**:`env` / `printenv`(可能泄漏 secret)
   - ❌ **禁用**:`curl` / `wget`(网络外发)
@@ -227,11 +248,13 @@ function buildBashBlockMessage(firstWord: string): string {
 
 `packages/flower-compliance/src/__tests__/index.test.ts`:
 
-- AC2.1:`it.each` 跑 16 个新增命令,各模拟一个 bash 调用,断言返回 undefined(放行)
+- AC2.1:`it.each` 跑 18 个新增命令(含 `rg`),各模拟一个 bash 调用,断言返回 undefined(放行)
 - AC2.2:`env` / `printenv` 仍返回 block:true
 - AC2.3:`curl` / `tee` / `mv` / `npm` 等高危仍 block
 - AC2.4:`env` 拦截 reason 含 `可能泄漏 secret`;`curl` 含 `禁止网络外发`;`nl` **不应**出现在测试拒绝列表(已放行)
 - AC2.5:`prompts.test.ts` 断言含 `工具优先级` 段
+
+**注**:`rg` 的「容器内可执行」验证不在单测覆盖范围(单测在主仓 node 环境跑,与镜像无关);Phase 6 e2e 在真实镜像里跑 reviewer 时,trace 中观察 LLM 是否能成功执行(若 LLM 命中即可验证 apk install 成功)。
 
 ---
 
@@ -239,59 +262,18 @@ function buildBashBlockMessage(firstWord: string): string {
 
 ### 3.1 改动点选择
 
-两个候选位置:
-
-**A. `cli.ts` main 函数**(末尾,exit 前):
-```typescript
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  const result = await runReview(args);
-  if (result.exitCode === 1) {
-    console.log(`[code-reviewer] 评审完成:发现 blocker,按设计 exit 1(下方 Runner "Job failed" 是预期信号,不是脚本崩溃)`);
-  }
-  process.exit(result.exitCode);
-}
-```
-
-**B. `run.ts` 函数末尾**(return 前):需要传 blockerCount 出来,接口微调
-
-**推荐 A**:更靠近 exit 系统调用,语义清晰;不动 `runReview` 接口。
-
-### 3.2 包含实际 blocker 数
-
-为了让日志更有信息量,需要 `runReview` 返回 blocker count:
-
-```typescript
-// run.ts ReviewResult 接口扩展
-export interface ReviewResult {
-  exitCode: 0 | 1 | 2;
-  skillUsed: string;
-  blockerCount: number;  // ← 新增,exitCode=1 时 > 0
-}
-```
-
-`scanForBlockers` 当前返回 boolean,改返回数字(blockerCount)对调用者也好用:
-
-```typescript
-// 新签名:返回真实 blocker count(>0 即为 fail)
-export function countBlockers(input: ScanForBlockersInput): number {
-  // ... 类似现有 scanForBlockers,只是 some → count
-}
-```
-
-或保持 `scanForBlockers` 返回 boolean,在 `run.ts` 里**重复**遍历一次拿数量(简单点,接口零变更)。
-
-**选后者**:零接口变更,**只多一次 filter + length 计算**(O(n) 评论数,可忽略)。
-
-### 3.3 cli.ts 实装
+**位置**:`cli.ts` main 函数,`process.exit(result.exitCode)` 之前。
 
 ```typescript
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const result = await runReview(args);
   if (result.exitCode === 1) {
+    const parts: string[] = [];
+    if (result.blockerCount > 0) parts.push(`${result.blockerCount} 个 blocker 评论`);
+    if (result.unsupportedFileCount > 0) parts.push(`${result.unsupportedFileCount} 个无依据评论触发的 blocker`);
     console.log(
-      `[code-reviewer] 评审完成:发现 ${result.blockerCount} 个 blocker,` +
+      `[code-reviewer] 评审完成:发现 ${parts.join(" + ")},` +
       `按设计 exit 1(下方 Runner "Job failed" 是预期信号,不是脚本崩溃)`,
     );
   }
@@ -299,11 +281,49 @@ async function main(): Promise<void> {
 }
 ```
 
-### 3.4 单测
+### 3.2 blockerCount 真值来源(关键设计:与 `reviewer_list_my_blockers` 同源)
 
-- AC3.1:exitCode=1 + blockerCount=3 → console.log spy 收到含 "3 个 blocker" + "按设计 exit 1" 的字符串
-- AC3.2:exitCode=0 → console.log spy 不被调用(用 `expect(spy).not.toHaveBeenCalled()`)
-- AC3.3:断言 N 与 blockerCount 一致
+**前版本设计漏洞**:exit 1 路径有两条独立触发(`run.ts:scanForBlockers`):
+1. **line_comment blocker**:`after.filter(!beforeIds).some(c => /<!-- severity: blocker -->/.test(c.body))`
+2. **无依据评论**:`unsupportedCommentFiles.length > 0`
+
+仅按路径 1 数 blockerCount,在路径 2 单独触发时会显示「发现 **0** 个 blocker,按设计 exit 1」 — 反而更误导。
+
+**最终方案**:**复用 `review-trace.ts:trace.lineComments`**(`reviewer_list_my_blockers` 工具就是从同一份数据过滤 blocker 返回的真值),拆分两条路径独立计数。
+
+```typescript
+// run.ts L301 附近(已有 const trace = getTrace())
+const trace = getTrace();
+const unsupportedFiles = findUnsupportedComments(trace.readFiles, trace.lineComments);
+// ↓ 新增一行:与 reviewer_list_my_blockers 同源真值
+const lineBlockerCount = trace.lineComments.filter(c => c.severity === "blocker").length;
+```
+
+**为何用 trace 而不是 `after - beforeIds` filter**:
+- `trace.lineComments` 在 `recordLineComment` 时已持有 severity 字段,无需正则解析 HTML 注释 marker
+- 与 LLM 自己看到的 `reviewer_list_my_blockers.count` 100% 一致,**单一真值源**,不存在「walkthrough N 与 line_comment 数对不上」类问题(姊妹任务 `05-21-walkthrough-blocker-consistency` 的根因正是此)
+- 零额外 traversal:`getTrace()` 本就要调,filter 是 O(n) 但 n ≤ 30 可忽略
+
+### 3.3 ReviewResult 接口扩展
+
+```typescript
+// run.ts:134-137
+export interface ReviewResult {
+  exitCode: 0 | 1 | 2;
+  skillUsed: string;
+  blockerCount: number;          // ← 新增:trace 里 severity==='blocker' 的 line_comment 数
+  unsupportedFileCount: number;  // ← 新增:findUnsupportedComments 返回的文件数
+}
+```
+
+**向后兼容**:接口扩展,旧 caller 不读这两个字段也能编译。E1 fail-open 路径(`run.ts:288, 295, 323`)的 return 也要补这两个字段,值固定为 0(LLM 没跑出 blocker,不算 blocker)。
+
+### 3.4 单测(`__tests__/cli.test.ts` 新建,4 case)
+
+- **AC3.1**:exitCode=1 + blockerCount=3 + unsupportedFileCount=0 → console.log spy 收到含 `3 个 blocker 评论` + `按设计 exit 1` 的字符串,不含 `无依据评论触发`
+- **AC3.2**:exitCode=0 → console.log spy 未被调用(`expect(spy).not.toHaveBeenCalled()`)
+- **AC3.3**:exitCode=1 + blockerCount=0 + unsupportedFileCount=2 → console.log spy 收到含 `2 个无依据评论触发的 blocker` + `按设计 exit 1`,**不含** `0 个 blocker 评论`(若 lineBlocker=0 则不拼这段)
+- **AC3.4**:exitCode=1 + blockerCount=2 + unsupportedFileCount=1 → 文案含 `2 个 blocker 评论 + 1 个无依据评论触发的 blocker`
 
 ---
 
@@ -328,8 +348,9 @@ async function main(): Promise<void> {
 | 跨包改动 | 是否需要 |
 |---|---|
 | `flower-providers` | ❌ 不动 |
-| `flower-tools-gitlab` | ✅ Fix A 主体 |
+| `flower-tools-gitlab` | ✅ Fix A 主体(`index.ts` normalizeRef + tool schema) |
 | `flower-tools-common` | ❌ 不动 |
-| `flower-compliance` | ✅ Fix B 错误文案 |
-| `flower-code-reviewer` | ✅ Fix A 同步 prompts.ts + Fix B 同步 prompts.ts + Fix C cli.ts |
+| `flower-compliance` | ✅ Fix B regex 扩容 + reason helper |
+| `flower-code-reviewer` | ✅ Fix A 同步 prompts.ts + Fix B 同步 prompts.ts + Fix C cli.ts/run.ts + **Dockerfile apk add ripgrep** |
+| 镜像 build pipeline | ✅ Dockerfile 变更 → 自动触发 build-flower-code-reviewer job 产新 image sha |
 | spec | ✅ `.trellis/spec/flower-code-reviewer/backend/index.md` 加节"trace 噪音控制原则"(可选,小条目) |
