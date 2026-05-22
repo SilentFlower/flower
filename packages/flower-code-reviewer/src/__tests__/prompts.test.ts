@@ -52,6 +52,32 @@ describe("buildPrompt · 7 条硬约束", () => {
 		// 第 7 项
 		expect(prompt).toContain("真实代码上下文约束");
 	});
+
+	// AC1.6 · Fix A 教育:gitlab_get_file_content 的 ref 可省略 + 严禁传 HEAD
+	it("AC1.6 · 工作流第 4 步告诉 LLM:看 source 版本 ref 可省略 + 不要传 HEAD", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		// 「可省略」措辞
+		expect(prompt).toContain("可省略");
+		// 「不要传 HEAD」措辞(用关键字段断言,避免依赖具体引号风格)
+		expect(prompt).toMatch(/不要传.*HEAD/);
+		// 同步在「严格要求 §7」中也提到严禁 HEAD
+		expect(prompt).toMatch(/严禁.*HEAD|不要传.*HEAD/);
+	});
+
+	// AC2.5 · Fix B 教育:「工具优先级」段落已经写进 prompt
+	it("AC2.5 · prompt 含「工具优先级」段,告知 bash 白名单边界", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("## 工具优先级");
+		// 鼓励 rg(modern unix 推荐)
+		expect(prompt).toContain("rg");
+		expect(prompt).toContain(".gitignore");
+		// 显式禁用 env / curl
+		expect(prompt).toContain("env");
+		expect(prompt).toContain("可能泄漏 secret");
+		expect(prompt).toContain("禁用");
+		expect(prompt).toContain("curl");
+		expect(prompt).toContain("网络外发");
+	});
 });
 
 describe("buildPrompt · §6.6 alert 块动态切换", () => {

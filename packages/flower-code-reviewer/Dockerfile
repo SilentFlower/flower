@@ -40,8 +40,10 @@ RUN npm prune --omit=dev --no-audit --no-fund && \
 # ---------- 运行时镜像 ----------
 FROM 192.168.27.236/base/node:22-alpine
 
-# git 是评审 agent 需要的(让 LLM 能跑 git log / git diff)
-RUN apk add --no-cache git
+# 评审 agent 需要的命令行工具:
+# - git:LLM 跑 git log / git diff / git blame
+# - ripgrep(rg):比 grep 快 + 自动跳 .gitignore,LLM 在大仓库内搜索时省 token
+RUN apk add --no-cache git ripgrep
 
 WORKDIR /app
 
