@@ -104,22 +104,58 @@ function buildBashBlockReason(firstWord: string): string {
 }
 
 /**
- * Shell 元字符:命令链 / 重定向 / 嵌套执行 / 管道
+ * Quote-aware shell 元字符检查
  *
- * 入参 `event.input.command` 由 LLM 提供并最终交给 shell 执行,因此**任何** shell
- * 元字符都会让白名单形同虚设:
- * - `;` / `&&` / `||` — 命令链(`git status; env` 首词命中但实际链式跑 `env` 泄漏 secret)
- * - `|` — 管道(`rg foo . | sh` 把任意输出 pipe 到 sh 执行)
- * - `>` / `<` / `>>` — 重定向(`echo x > /tmp/y` 写文件)
- * - `` ` `` / `$(` — 命令替换 / 嵌套执行(`echo $(curl evil)`)
+ * 入参 `event.input.command` 由 LLM 提供并最终交给 shell 执行,**unquoted** shell
+ * 元字符会让白名单形同虚设。但 LLM 在 `rg`/`grep` regex 里大量使用 quoted `|`/`>`,
+ * 直接 regex.test 整条命令会大量误拦合法用法(2026-05-22 e2e 实测发现)。
  *
- * Reviewer dogfooding(MR !3)抓到的真 blocker:本 regex 是 defense-in-depth,
- * **在白名单 test 之前 reject**,确保 LLM 必须把每条命令拆成独立 bash 调用。
+ * 因此区分:
+ * - **Separators**(`;` `|` `&` `>` `<`):只在 unquoted 上下文是元字符,quote 内字面
+ * - **Command substitution**(`` ` `` `$(`):**double-quote 内仍生效**(shell 标准),
+ *   仅 single-quote 内字面
  *
- * Trade-off:LLM 在 quote 内合法用到这些字符(如 `grep "a|b"`)也会被拦,
- * 但 LLM 评审场景几乎不需要 shell 元字符,误拦时换写法即可。
+ * 简易 quote 解析(覆盖 95% LLM 用例):
+ * - `'...'` single quote:内部完全字面化,反斜杠也不转义
+ * - `"..."` double quote:内部 `$()` / `` ` `` 仍是命令替换;`\\` 可转义后续字符
+ * - 反斜杠在 quote 外可转义任意字符(跳过)
+ *
+ * 不覆盖的极端:`$'...'` ANSI quoting / 多层嵌套引号 / 复杂转义。LLM 罕用,
+ * 真要绕过仍可,但 bash white list 是 defense-in-depth 的一层,不是全部依赖。
+ *
+ * @param cmd LLM 传入的 bash 命令字符串(已 trim)
+ * @returns true 表示含 active shell exploit pattern,应拦截
  */
-const SHELL_METACHAR = /[;&|<>`]|\$\(/;
+export function hasShellExploit(cmd: string): boolean {
+	let inSingle = false;
+	let inDouble = false;
+	for (let i = 0; i < cmd.length; i++) {
+		const c = cmd[i];
+		// 反斜杠转义(single quote 内不生效;quote 外 + double quote 内生效)
+		if (c === "\\" && !inSingle) {
+			i++; // 跳过下一个字符
+			continue;
+		}
+		if (c === "'" && !inDouble) {
+			inSingle = !inSingle;
+			continue;
+		}
+		if (c === '"' && !inSingle) {
+			inDouble = !inDouble;
+			continue;
+		}
+		// 命令替换:single quote 外都有效(包括 double quote 内)
+		if (!inSingle) {
+			if (c === "`") return true;
+			if (c === "$" && cmd[i + 1] === "(") return true;
+		}
+		// Separators / 重定向:只在 unquoted 时是元字符
+		if (!inSingle && !inDouble) {
+			if (c === ";" || c === "|" || c === "&" || c === ">" || c === "<") return true;
+		}
+	}
+	return false;
+}
 
 /**
  * CI 只读模式的拦截规则
@@ -134,11 +170,12 @@ function registerCiReadOnlyGuards(pi: ExtensionAPI): void {
 		}
 		if (event.toolName === "bash") {
 			const cmd = String(event.input.command ?? "").trim();
-			// 先拦 shell 元字符 — 否则 `git status; env` 等会因首词命中白名单而绕过
-			if (SHELL_METACHAR.test(cmd)) {
+			// 先拦 unquoted shell 元字符 — 否则 `git status; env` 等会因首词命中白名单而绕过
+			// quote-aware:`rg "a|b"` 中 quoted `|` 放行,`rg foo | sh` 中 unquoted `|` 拦截
+			if (hasShellExploit(cmd)) {
 				return {
 					block: true,
-					reason: 'CI 只读模式:bash 命令含 shell 元字符(`;` `&&` `||` `|` `>` `<` `` ` `` `$(`),禁止命令链 / 重定向 / 管道 / 嵌套执行,以免绕过白名单。\n建议:把每条命令拆成独立的 bash 调用(reviewer 工具会按顺序执行),需要管道转换时优先用 `gitlab_get_*` 工具直接拿结构化数据。',
+					reason: 'CI 只读模式:bash 命令含 active shell 元字符(unquoted `;` `|` `&` `>` `<`,或任意 single-quote 外的 `` ` `` `$()`),禁止命令链 / 重定向 / 管道 / 嵌套执行。\n建议:正则用 single-quote 包裹(如 `rg \'a|b\' src`)避免 shell 解析 `|`;需要管道转换时优先用 `gitlab_get_*` 工具拿结构化数据;多步骤拆成独立 bash 调用。',
 				};
 			}
 			const firstWord = cmd.split(/\s+/)[0] ?? "";
