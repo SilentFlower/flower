@@ -251,13 +251,16 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 		}
 	}
 
-	// 4. 构造 prompt(把 gitlabVersion + 截断元数据传入)
+	// 4. 构造 prompt(把 gitlabVersion + 截断元数据 + MR source branch 传入)
+	// 注入 sourceBranch:LLM 在 prompt 里能看到具体 branch 名,主动显式传 ref(而非依赖工具兜底)
 	const skillFilePath = join(getSkillsDir(), `${skill}.md`);
+	const sourceBranch = process.env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME?.trim();
 	const prompt = buildPrompt({
 		skillFilePath,
 		dryRun: args.dryRun,
 		gitlabVersion,
 		...(truncation !== undefined ? { truncation } : {}),
+		...(sourceBranch ? { sourceBranch } : {}),
 	});
 
 	// 5. 跑前 snapshot bot 评论 id 集合(用于跑后 diff)

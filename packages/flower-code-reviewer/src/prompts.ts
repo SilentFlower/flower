@@ -51,6 +51,13 @@ export interface BuildPromptInput {
 		total: number;
 		files: string[];
 	};
+	/**
+	 * 当前 MR 的 source branch 名(`CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`)
+	 *
+	 * 工作流第 4 步要求 LLM **显式传** ref(= 本字段),避免触发工具兜底产生 warn 噪音;
+	 * 不传 / 空 → prompt 提示 LLM 「ref 可省略,工具会兜底到 source branch」(降级路径)。
+	 */
+	sourceBranch?: string;
 }
 
 /**
@@ -78,9 +85,9 @@ ${skillContent}
 2. 调用 \`gitlab_get_mr_files\` 看修改了哪些文件。
 3. 调用 \`gitlab_get_mr_diff\` 看完整 diff。
 4. **每个变更文件**:必须调用 \`gitlab_get_file_content\` 拉完整内容。
-   - **看 MR source 版本**(评审主路径):\`ref\` 参数**可省略**,工具会自动兜底到当前 MR 的 source branch
+   - **看 MR source 版本**(评审主路径):\`ref\` 参数**必须传** \`"${input.sourceBranch ?? "<MR source branch — env CI_MERGE_REQUEST_SOURCE_BRANCH_NAME>"}"\`(本 MR 当前 source branch),不要省略也不要传 \`"HEAD"\`
    - **看 target 版本 / 历史 commit**:显式传 branch 名 / commit sha
-   - **不要传** \`"HEAD"\` 或空字符串:GitLab REST API 不识别 \`HEAD\` 别名(会被解析到 default branch,可能 404)
+   - 工具对 \`"HEAD"\` / 空字符串 / 缺省会兜底到 source branch 并 warn 教育,**主动正确传值**避免噪音
 5. 必要时再调用 \`gitlab_get_file_content\` 拉**相关上下文**(被改函数实现 / 被改类定义 / 调用方)。
 6. 对每个有问题的地方,调用 \`gitlab_post_line_comment\` 发行内评论。
 7. **校对本轮 blocker 真值(强制)**:发完所有 line_comment 后,**必须**调用一次
@@ -156,8 +163,8 @@ ${skillContent}
    只对真问题打 blocker(参考现有规则)。
 
 7. **真实代码上下文约束**(Phase 2 N1):对 MR 改动的**每个变更文件**,必须先调用
-   \`gitlab_get_file_content\`(看 source 版本时 \`ref\` 可省略,工具兜底到 MR source branch;
-   **严禁**传 \`"HEAD"\`)拉完整内容再发出评论。
+   \`gitlab_get_file_content\`(\`ref\` 显式传 \`"${input.sourceBranch ?? "<MR source branch>"}"\`,
+   **严禁**传 \`"HEAD"\` / 空字符串 / 省略)拉完整内容再发出评论。
    鼓励主动拉**相关上下文**(被改函数实现 / 被改类定义 / 调用方),用 \`gitlab_get_file_content\`
    传任意 ref 和路径即可。
    **未拉文件直接发该文件的行内评论 → 视为「无依据评论」 → \`scanForBlockers\` 会拦截为 blocker
