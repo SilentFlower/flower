@@ -104,10 +104,28 @@ function buildBashBlockReason(firstWord: string): string {
 }
 
 /**
+ * Shell 元字符:命令链 / 重定向 / 嵌套执行 / 管道
+ *
+ * 入参 `event.input.command` 由 LLM 提供并最终交给 shell 执行,因此**任何** shell
+ * 元字符都会让白名单形同虚设:
+ * - `;` / `&&` / `||` — 命令链(`git status; env` 首词命中但实际链式跑 `env` 泄漏 secret)
+ * - `|` — 管道(`rg foo . | sh` 把任意输出 pipe 到 sh 执行)
+ * - `>` / `<` / `>>` — 重定向(`echo x > /tmp/y` 写文件)
+ * - `` ` `` / `$(` — 命令替换 / 嵌套执行(`echo $(curl evil)`)
+ *
+ * Reviewer dogfooding(MR !3)抓到的真 blocker:本 regex 是 defense-in-depth,
+ * **在白名单 test 之前 reject**,确保 LLM 必须把每条命令拆成独立 bash 调用。
+ *
+ * Trade-off:LLM 在 quote 内合法用到这些字符(如 `grep "a|b"`)也会被拦,
+ * 但 LLM 评审场景几乎不需要 shell 元字符,误拦时换写法即可。
+ */
+const SHELL_METACHAR = /[;&|<>`]|\$\(/;
+
+/**
  * CI 只读模式的拦截规则
  *
  * - write / edit 工具完全禁用
- * - bash 只允许白名单内的子命令(见 `BASH_ALLOW_LIST`)
+ * - bash 先拦 shell 元字符(防绕过),再校验首词在 `BASH_ALLOW_LIST` 内
  */
 function registerCiReadOnlyGuards(pi: ExtensionAPI): void {
 	pi.on("tool_call", async (event) => {
@@ -116,6 +134,13 @@ function registerCiReadOnlyGuards(pi: ExtensionAPI): void {
 		}
 		if (event.toolName === "bash") {
 			const cmd = String(event.input.command ?? "").trim();
+			// 先拦 shell 元字符 — 否则 `git status; env` 等会因首词命中白名单而绕过
+			if (SHELL_METACHAR.test(cmd)) {
+				return {
+					block: true,
+					reason: 'CI 只读模式:bash 命令含 shell 元字符(`;` `&&` `||` `|` `>` `<` `` ` `` `$(`),禁止命令链 / 重定向 / 管道 / 嵌套执行,以免绕过白名单。\n建议:把每条命令拆成独立的 bash 调用(reviewer 工具会按顺序执行),需要管道转换时优先用 `gitlab_get_*` 工具直接拿结构化数据。',
+				};
+			}
 			const firstWord = cmd.split(/\s+/)[0] ?? "";
 			if (!BASH_ALLOW_LIST.test(cmd)) {
 				return { block: true, reason: buildBashBlockReason(firstWord) };

