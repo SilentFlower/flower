@@ -66,11 +66,27 @@ describe("normalizeRef · ref 弹性化兜底", () => {
 		expect(() => normalizeRef("HEAD")).toThrow(/请显式传 ref/);
 	});
 
-	it("兜底时 console.warn 打提示(便于 trace 读者理解)", () => {
+	it("rawRef='HEAD' 兜底时 console.warn 教育(便于 LLM 改习惯)", () => {
 		const warnSpy = vi.spyOn(console, "warn");
 		normalizeRef("HEAD");
 		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("自动兜底到 source branch"));
 		expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(SOURCE_BRANCH));
+	});
+
+	it("rawRef='' 兜底时 console.warn 教育(显式空字符串也是反模式)", () => {
+		const warnSpy = vi.spyOn(console, "warn");
+		normalizeRef("");
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+		expect(warnSpy.mock.calls[0]?.[0]).toContain('ref=""');
+	});
+
+	// 2026-05-22 e2e 发现:LLM 学到「ref 可省略」后每次拉文件都触发兜底 warn,反成新噪音。
+	// undefined 是 prompt 教育后的预期默认行为,无声兜底。
+	it("rawRef=undefined(不传)静默兜底,**不** warn(避免 trace 噪音)", () => {
+		const warnSpy = vi.spyOn(console, "warn");
+		const result = normalizeRef(undefined);
+		expect(result).toBe(SOURCE_BRANCH);
+		expect(warnSpy).not.toHaveBeenCalled();
 	});
 
 	it("ref 含前后空格 → trim 后透传(不当作空字符串兜底)", () => {

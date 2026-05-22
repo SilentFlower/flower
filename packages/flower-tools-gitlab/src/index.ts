@@ -230,7 +230,13 @@ export function normalizeRef(rawRef: string | undefined): string {
 	if (!trimmed || trimmed === "HEAD") {
 		const sourceBranch = process.env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME?.trim();
 		if (sourceBranch) {
-			console.warn(`[gitlab_get_file_content] ref="${rawRef ?? "(missing)"}" 自动兜底到 source branch "${sourceBranch}"`);
+			// 仅当 LLM 显式传 "HEAD" / 空字符串(已学到的反模式)时 warn 教育别这么干;
+			// rawRef === undefined(完全不传)是新 prompt 教育后的预期默认行为,无声兜底,避免 trace 噪音。
+			if (rawRef !== undefined) {
+				console.warn(
+					`[gitlab_get_file_content] ref="${rawRef}" 自动兜底到 source branch "${sourceBranch}";后续请省略 ref 或传具体分支名`,
+				);
+			}
 			return sourceBranch;
 		}
 		throw new Error(
