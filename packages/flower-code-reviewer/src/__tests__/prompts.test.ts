@@ -1,8 +1,8 @@
 /**
- * `prompts.ts` 单元测试:GitLab 版本动态切换 alert 块 + 7 条硬约束都在 prompt 里
+ * `prompts.ts` 单元测试:GitLab 版本动态切换 alert 块 + 行窗上下文约束都在 prompt 里
  *
  * 覆盖 implement.md §Phase 2 关键改动:
- * - 第 7 条约束(每变更文件必读 gitlab_get_file_content)写进 prompt
+ * - 第 7 条约束(评论前必读 gitlab_get_file_content 行窗)写进 prompt
  * - §6.6 alert 块根据 gitlabVersion 动态切换(17.10+ vs 旧版本)
  * - severity 词表 `blocker | major | minor`(不是 `info | warning`)
  */
@@ -17,12 +17,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const skillFilePath = join(here, "..", "..", "skills", "general.md");
 
 describe("buildPrompt · 7 条硬约束", () => {
-	it("第 7 条:每变更文件必读 gitlab_get_file_content", () => {
+	it("第 7 条:评论前必须读取相关行窗", () => {
 		const prompt = buildPrompt({ skillFilePath, dryRun: false });
 		expect(prompt).toContain("gitlab_get_file_content");
-		expect(prompt).toContain("每个变更文件");
+		expect(prompt).toContain("评论前");
+		expect(prompt).toContain("相关行窗");
 		expect(prompt).toContain("无依据评论");
 		expect(prompt).toContain("scanForBlockers");
+		expect(prompt).not.toContain("拉完整内容");
 	});
 
 	it("severity 词表用 blocker / major / minor(不是 info / warning)", () => {
@@ -33,11 +35,14 @@ describe("buildPrompt · 7 条硬约束", () => {
 		expect(prompt).not.toContain("`warning`");
 	});
 
-	it("工作流程含拉文件内容步骤(`gitlab_get_file_content` 在编号步骤里)", () => {
+	it("工作流程含按行窗读取上下文步骤(`gitlab_get_file_content` 在编号步骤里)", () => {
 		const prompt = buildPrompt({ skillFilePath, dryRun: false });
-		// 步骤 4 / 5 提到拉文件内容
-		expect(prompt).toMatch(/4\.\s+\*\*每个变更文件\*\*/);
-		expect(prompt).toMatch(/5\.\s+.*相关上下文/);
+		expect(prompt).toContain("基于 diff 初筛风险点");
+		expect(prompt).toContain("不要为了覆盖率把所有变更文件无脑读取一遍");
+		expect(prompt).toMatch(/5\.\s+.*相关行窗/);
+		expect(prompt).toContain("startLine");
+		expect(prompt).toContain("endLine");
+		expect(prompt).toContain("续读提示");
 	});
 
 	it("评论 markdown 样式段落含 6 项原有约束 + 第 7 项新约束", () => {
@@ -54,7 +59,7 @@ describe("buildPrompt · 7 条硬约束", () => {
 	});
 
 	// AC1.6 · Fix A 教育:LLM 必须显式传 ref(从 prompt 注入的 source branch),严禁 HEAD/省略
-	it("AC1.6 · 工作流第 4 步要求 LLM 显式传 ref = source branch,严禁 HEAD/空/省略", () => {
+	it("AC1.6 · 工作流第 5 步要求 LLM 显式传 ref = source branch,严禁 HEAD/空/省略", () => {
 		const prompt = buildPrompt({
 			skillFilePath,
 			dryRun: false,
@@ -72,6 +77,26 @@ describe("buildPrompt · 7 条硬约束", () => {
 		const prompt = buildPrompt({ skillFilePath, dryRun: false });
 		// 没有 sourceBranch 时用 placeholder,LLM 看到提示去查 env
 		expect(prompt).toMatch(/MR source branch.*env CI_MERGE_REQUEST_SOURCE_BRANCH_NAME/);
+	});
+
+	it("上下文读取预算默认 500 行 / 最大 1000 行 / 每轮 5 个行窗", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("默认 500 行");
+		expect(prompt).toContain("最多返回 1000 行");
+		expect(prompt).toContain("每一轮最多读取 **5** 个行窗");
+	});
+
+	it("上下文读取预算可由 buildPrompt 入参注入", () => {
+		const prompt = buildPrompt({
+			skillFilePath,
+			dryRun: false,
+			contextReadBatchSize: 3,
+			contextReadDefaultLines: 200,
+			contextReadMaxLines: 800,
+		});
+		expect(prompt).toContain("默认 200 行");
+		expect(prompt).toContain("最多返回 800 行");
+		expect(prompt).toContain("每一轮最多读取 **3** 个行窗");
 	});
 
 	// AC2.5 · Fix B 教育:「工具优先级」段落已经写进 prompt

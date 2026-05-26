@@ -29,8 +29,10 @@ import {
 import type { CliArgs } from "./args.js";
 import { detectGitlabVersion, type GitlabVersion } from "./comments/index.js";
 import extensionFactory from "./extension.js";
+import { preparePiSettings } from "./pi-settings.js";
 import { buildPrompt } from "./prompts.js";
 import { findUnsupportedComments, getTrace, resetTrace } from "./review-trace.js";
+import { resolveReviewRuntimeConfig } from "./runtime-config.js";
 import { pickSkill } from "./skill-selector.js";
 
 /**
@@ -109,13 +111,40 @@ export function isLlmFailure(err: unknown): boolean {
 	const errorName = err.name.toLowerCase();
 
 	// 2. 关键字命中 LLM / provider 相关 → LLM 失败
-	const llmKeywords = ["llm", "provider", "anthropic", "openai", "gemini", "model", "stream", "completion", "havefun"];
+	const llmKeywords = [
+		"llm",
+		"provider",
+		"anthropic",
+		"openai",
+		"gemini",
+		"model",
+		"stream",
+		"completion",
+		"havefun",
+		"sse",
+		"finish_reason",
+		"message_stop",
+	];
 	if (llmKeywords.some((k) => message.includes(k) || errorName.includes(k))) {
 		return true;
 	}
 
 	// 3. 网络 / 超时关键字
-	const networkKeywords = ["econnrefused", "etimedout", "aborterror", "timeout", "fetch failed", "network"];
+	const networkKeywords = [
+		"econnrefused",
+		"etimedout",
+		"aborterror",
+		"timeout",
+		"fetch failed",
+		"network",
+		"no data",
+		"empty response",
+		"ended without",
+		"stream ended",
+		"terminated",
+		"socket hang up",
+		"body_timeout",
+	];
 	if (networkKeywords.some((k) => message.includes(k) || errorName.includes(k))) {
 		return true;
 	}
@@ -126,6 +155,22 @@ export function isLlmFailure(err: unknown): boolean {
 
 	// 5. 默认非 LLM 失败(fail close)
 	return false;
+}
+
+/**
+ * reviewer 总评审软超时错误
+ *
+ * 用独立错误类让 fail-open 文案能区分「LLM 网关异常」与「自动评审超时」。
+ */
+export class ReviewSoftTimeoutError extends Error {
+	override readonly name = "ReviewSoftTimeoutError";
+
+	/**
+	 * @param timeoutMs 触发软超时的毫秒数
+	 */
+	constructor(readonly timeoutMs: number) {
+		super(`自动评审超时:${timeoutMs}ms 内 piMain 未完成`);
+	}
 }
 
 /**
@@ -255,10 +300,14 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 	// 注入 sourceBranch:LLM 在 prompt 里能看到具体 branch 名,主动显式传 ref(而非依赖工具兜底)
 	const skillFilePath = join(getSkillsDir(), `${skill}.md`);
 	const sourceBranch = process.env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME?.trim();
+	const runtimeConfig = resolveReviewRuntimeConfig();
 	const prompt = buildPrompt({
 		skillFilePath,
 		dryRun: args.dryRun,
 		gitlabVersion,
+		contextReadBatchSize: runtimeConfig.contextReadBatchSize,
+		contextReadDefaultLines: runtimeConfig.contextReadDefaultLines,
+		contextReadMaxLines: runtimeConfig.contextReadMaxLines,
 		...(truncation !== undefined ? { truncation } : {}),
 		...(sourceBranch ? { sourceBranch } : {}),
 	});
@@ -278,10 +327,18 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 	// 6. env → pi CLI argv,7. 跑 pi-coding-agent print 模式 + E1 LLM fail open
 	//    extensionFactories 注入 provider / compliance / tools / review-trace 监听器
 	const piArgv = buildPiCliArgs({ prompt });
+	const piAgentDir = preparePiSettings(runtimeConfig);
+	console.log(
+		`[code-reviewer] pi settings 已注入: agent_dir=${piAgentDir}, provider_timeout_ms=${runtimeConfig.llmRequestTimeoutMs}, provider_retries=${runtimeConfig.llmProviderMaxRetries}, agent_retries=${runtimeConfig.llmAgentMaxRetries}, review_timeout_ms=${runtimeConfig.reviewTimeoutMs}, context_lines=${runtimeConfig.contextReadDefaultLines}/${runtimeConfig.contextReadMaxLines}`,
+	);
 	try {
-		await piMain(piArgv, {
-			extensionFactories: [extensionFactory],
-		});
+		await runPiMainWithSoftTimeout(
+			() =>
+				piMain(piArgv, {
+					extensionFactories: [extensionFactory],
+				}),
+			runtimeConfig.reviewTimeoutMs,
+		);
 	} catch (err) {
 		// E1:LLM 网关失败 → fail open(post warning 评论 + exit 0,pipeline 不阻塞)
 		// 非 LLM 失败(GitLab API 错 / 配置错) → 正常抛错,由 cli.ts 顶层 catch 转 exit 2
@@ -289,7 +346,7 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 			console.warn("[code-reviewer] LLM 网关失败,fail open + 发 warning 评论:", err);
 			if (enableBlockerScan && projectId !== undefined) {
 				try {
-					await gitlabClient().postMrComment(projectId, mrIid, buildLlmFailureNotice(), "minor");
+					await gitlabClient().postMrComment(projectId, mrIid, buildLlmFailureNotice(err), "minor");
 				} catch (postErr) {
 					console.warn("[code-reviewer] 发表 LLM 失败 warning 评论失败:", postErr);
 				}
@@ -352,7 +409,7 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
  */
 export function buildUnsupportedCommentNotice(files: string[]): string {
 	const list = files.map((f) => `- \`${f}\``).join("\n");
-	return `无依据评论:对以下文件发出评论但未调用 \`gitlab_get_file_content\` 拉过完整内容\n\n${list}\n\n请在拉取文件后再评审。`;
+	return `无依据评论:对以下文件发出评论但未调用 \`gitlab_get_file_content\` 读取过相关代码上下文\n\n${list}\n\n请在读取该文件相关行窗后再评审。`;
 }
 
 /**
@@ -364,8 +421,38 @@ export function buildUnsupportedCommentNotice(files: string[]): string {
  *
  * @returns markdown body(注:不带 severity 前缀,前缀由 `postMrComment` 自动添加)
  */
-export function buildLlmFailureNotice(): string {
+export function buildLlmFailureNotice(err?: unknown): string {
+	if (err instanceof ReviewSoftTimeoutError) {
+		return "⚠️ flower-code-reviewer 自动评审超时,未能完成自动评审,请手工 review 本 MR。\n\n错误详情已上报 SIEM。";
+	}
 	return "⚠️ flower-code-reviewer 因 LLM 网关异常未能完成自动评审,请手工 review 本 MR。\n\n错误详情已上报 SIEM。";
+}
+
+/**
+ * 带总评审软超时运行 piMain
+ *
+ * @param run 实际执行 piMain 的函数
+ * @param timeoutMs 软超时毫秒数;0 表示关闭
+ * @returns piMain 原始返回
+ * @throws 超时时抛 `ReviewSoftTimeoutError`
+ */
+export async function runPiMainWithSoftTimeout<T>(run: () => Promise<T>, timeoutMs: number): Promise<T> {
+	if (timeoutMs <= 0) {
+		return run();
+	}
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			run(),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new ReviewSoftTimeoutError(timeoutMs)), timeoutMs);
+			}),
+		]);
+	} finally {
+		if (timer !== undefined) {
+			clearTimeout(timer);
+		}
+	}
 }
 
 /**
