@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "reviewer 前端 spec 索引;S4 / S5 / S6 / S11 写作时需对照"}
+{"file": ".trellis/spec/guides/index.md", "reason": "项目共享 guide 索引;实施前看是否有 HTML / docs 风格约定"}
+{"file": ".trellis/spec/flower-providers/backend/index.md", "reason": "B2.2 flower-providers 节实施时对照(env 转 argv / 4 个 havefun-* provider 注册)"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/index.md", "reason": "B2.3 flower-tools-gitlab 节实施时对照(5 个 REST tool 契约)"}
+{"file": ".trellis/spec/flower-tools-common/backend/index.md", "reason": "B2.4 flower-tools-common 节实施时对照(stub 工具集)"}
+{"file": ".trellis/spec/flower-tools-arms/backend/index.md", "reason": "B2.5 flower-tools-arms 节实施时对照(ARMS API stub)"}
+{"file": ".trellis/spec/flower-compliance/backend/index.md", "reason": "B2.6 flower-compliance 节实施时对照(3 个 mode / 拦截 / SIEM)"}
+{"file": ".trellis/spec/flower-ops-bot/backend/index.md", "reason": "B2.7 flower-ops-bot 节实施时对照(钉钉 bot 形态)"}
+{"file": "intro.html", "reason": "原 intro.html 视觉与文字基准;sub-agent 写 Part B 时须沿用其风格(serif / sans / mono / 5 色调色板 / 学术手稿调性)"}
+{"file": "research/pi-internal-mechanism.md", "reason": "Phase B R-1 产出;B1.2 内部运作机制内容来源"}
+{"file": "research/pi-vs-peers.md", "reason": "Phase B R-2 产出;B1.4 设计哲学 / 同类对比内容来源"}
+{"file": "research/packages-survey.md", "reason": "Phase B R-3 产出;B2.2-B2.7 内容来源"}
+{"file": "research/cross-package-dataflow.md", "reason": "Phase B R-4 产出;B3.1-B3.4 内容来源"}

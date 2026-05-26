@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "校 B2.1 reviewer 节内容与现有 reviewer spec 一致"}
+{"file": ".trellis/spec/guides/index.md", "reason": "校文档风格 / 中英文混排 / 提交规范"}
+{"file": "intro.html", "reason": "校 Part A 字符级保留(AC1.2)— 与 git mv 后的 docs/intro.html 内 Part A 区域逐字符比对"}
+{"file": "research/pi-internal-mechanism.md", "reason": "校 B1.2 内容与 research 一致;不确定处是否标 ~推测,以源码为准~"}
+{"file": "research/pi-vs-peers.md", "reason": "校 B1.4 内容是否客观;是否踩同行;trade-off 是否清晰"}
+{"file": "research/packages-survey.md", "reason": "校 B2.2-B2.7 6 个 package 是否覆盖完整 5 字段(R13);是否与本仓库源码一致"}
+{"file": "research/cross-package-dataflow.md", "reason": "校 B3 4 个子流图示是否反映实际代码路径"}
