@@ -1,0 +1,33 @@
+{
+  "id": "reviewer-timeout-sse-context",
+  "name": "reviewer-timeout-sse-context",
+  "title": "reviewer 稳定性:软超时、SSE 重试、上下文收敛",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": "flower-code-reviewer",
+  "priority": "P2",
+  "creator": "silentflower",
+  "assignee": "silentflower",
+  "createdAt": "2026-05-26",
+  "completedAt": null,
+  "branch": "fix/reviewer-timeout-sse-context",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "packages/flower-code-reviewer/src/run.ts",
+    "packages/flower-code-reviewer/src/prompts.ts",
+    "packages/flower-code-reviewer/src/runtime-config.ts",
+    "packages/flower-code-reviewer/src/pi-settings.ts",
+    "packages/flower-tools-gitlab/src/index.ts",
+    "packages/flower-tools-gitlab/src/safe-read.ts"
+  ],
+  "notes": "实现 reviewer 18 分钟软超时、provider timeout/retry settings 注入、SSE/stream 失败 fail-open 识别、gitlab_get_file_content 行窗读取和 prompt 上下文收敛;infra-harness 内层仓同步 .flower-code-review timeout 到 20 minutes。",
+  "meta": {}
+}

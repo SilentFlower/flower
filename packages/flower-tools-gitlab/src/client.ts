@@ -77,7 +77,7 @@ export interface GitlabClient {
 	/**
 	 * 拉任意 ref 下的文件原始内容(N1 · LLM 拉真实代码上下文)
 	 *
-	 * 用于 LLM 评审时拉变更文件完整内容 + 相关上下文(被改函数实现 / 调用方 / 历史版本)。
+	 * 用于 LLM 评审时拉变更文件相关行窗 + 上下文(被改函数实现 / 调用方 / 历史版本)。
 	 * `path` 不需要预先 encode,client 内部统一 encodeURIComponent。
 	 *
 	 * @param projectId 项目 ID(数字或 namespace/path 形式)
@@ -387,8 +387,7 @@ function createRealClient(host: string, token: string): GitlabClient {
 		async postMrLineComment(projectId, mrIid, input) {
 			const refs = await getDiffRefs(projectId, mrIid);
 			const path = `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests/${mrIid}/discussions`;
-			const wrapped =
-				input.severity === "blocker" ? `<!-- severity: blocker -->\n${input.body}` : input.body;
+			const wrapped = input.severity === "blocker" ? `<!-- severity: blocker -->\n${input.body}` : input.body;
 			await gitlabFetch(host, token, path, {
 				method: "POST",
 				body: JSON.stringify({

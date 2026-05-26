@@ -8,8 +8,8 @@
  * 4. severity 三档:`blocker | major | minor`(只对真问题打 blocker;对齐 render / tool schema 词表)
  * 5. 评论 markdown 样式遵循 §「评论 markdown 样式(强制)」段,完整 CodeRabbit-like 4 段式 + walkthrough 折叠
  *    (Phase 1 N2 评论质量优化产物;依据 research/comment-style.md §5/§6 verbatim 复制)
- * 6. **每变更文件必读**:对每个 MR 变更文件必须先调用 `gitlab_get_file_content` 拉完整内容
- *    再评论;否则会被 `scanForBlockers` 拦截为「无依据评论」blocker(Phase 2 N1 落地)
+ * 6. **评论前必读相关行窗**:对某文件发出行内评论前必须先调用 `gitlab_get_file_content`
+ *    读取变更行附近上下文;否则会被 `scanForBlockers` 拦截为「无依据评论」blocker
  *
  * GitLab alert 块兼容:`> [!caution]` 仅 GitLab 17.10+ 支持;`buildPrompt` 根据 `gitlabVersion`
  * 入参动态切换 §6.6 模板的 alert 块格式,LLM 学到的 few-shot 就是"对应版本的正确写法"。
@@ -58,6 +58,17 @@ export interface BuildPromptInput {
 	 * 不传 / 空 → prompt 提示 LLM 「ref 可省略,工具会兜底到 source branch」(降级路径)。
 	 */
 	sourceBranch?: string;
+	/**
+	 * 每轮最多读取多少个代码行窗
+	 *
+	 * 这是 prompt 约束,用于避免 LLM 一次性并发拉十几个大文件窗口。
+	 * 不传时按 5 个窗口描述。
+	 */
+	contextReadBatchSize?: number;
+	/** 未指定行号时工具默认返回多少行 */
+	contextReadDefaultLines?: number;
+	/** 工具单次最多返回多少行 */
+	contextReadMaxLines?: number;
 }
 
 /**
@@ -72,6 +83,9 @@ export function buildPrompt(input: BuildPromptInput): string {
 		: "";
 
 	const truncationHint = renderTruncationHint(input.truncation);
+	const contextReadBatchSize = input.contextReadBatchSize ?? 5;
+	const contextReadDefaultLines = input.contextReadDefaultLines ?? 500;
+	const contextReadMaxLines = input.contextReadMaxLines ?? 1000;
 
 	return `你是资深代码评审 agent。请对当前 GitLab MR 做评审。
 
@@ -84,11 +98,15 @@ ${skillContent}
 1. 先调用 \`gitlab_get_previous_review\` 看自己之前在本 MR 发过哪些评论,**不要重复**。
 2. 调用 \`gitlab_get_mr_files\` 看修改了哪些文件。
 3. 调用 \`gitlab_get_mr_diff\` 看完整 diff。
-4. **每个变更文件**:必须调用 \`gitlab_get_file_content\` 拉完整内容。
+4. 基于 diff 初筛风险点,不要为了覆盖率把所有变更文件无脑读取一遍。
+5. 准备对某文件发表行内评论、diff 不足以支撑判断、或需要确认被改函数 / 类型 / 调用方时,调用 \`gitlab_get_file_content\` 读取**相关行窗**。
    - **看 MR source 版本**(评审主路径):\`ref\` 参数**必须传** \`"${input.sourceBranch ?? "<MR source branch — env CI_MERGE_REQUEST_SOURCE_BRANCH_NAME>"}"\`(本 MR 当前 source branch),不要省略也不要传 \`"HEAD"\`
    - **看 target 版本 / 历史 commit**:显式传 branch 名 / commit sha
+   - **优先传行号**:\`startLine\` / \`endLine\` 取变更行附近窗口(例如变更行前后 80-150 行),避免读取不相关代码
+   - 未传行号时工具只返回文件开头默认 ${contextReadDefaultLines} 行;单次最多返回 ${contextReadMaxLines} 行
+   - 没拿到想要的数据时,按工具返回的续读提示读取相邻下一段或上一段
+   - 每一轮最多读取 **${contextReadBatchSize}** 个行窗,按 blocker 风险和评论必要性排序
    - 工具对 \`"HEAD"\` / 空字符串 / 缺省会兜底到 source branch 并 warn 教育,**主动正确传值**避免噪音
-5. 必要时再调用 \`gitlab_get_file_content\` 拉**相关上下文**(被改函数实现 / 被改类定义 / 调用方)。
 6. 对每个有问题的地方,调用 \`gitlab_post_line_comment\` 发行内评论。
 7. **校对本轮 blocker 真值(强制)**:发完所有 line_comment 后,**必须**调用一次
    \`reviewer_list_my_blockers\`(无参),拿到本轮你刚发的 blocker 列表 \`{count, blockers:[{path,line,title}]}\`。
@@ -117,7 +135,7 @@ ${skillContent}
 - **MR / 文件 / 代码信息**:首选 \`gitlab_*\` 工具,**不要**用 bash 兜底
   - MR 文件列表 → \`gitlab_get_mr_files\`
   - MR diff → \`gitlab_get_mr_diff\`
-  - 文件全文 → \`gitlab_get_file_content\`
+  - 文件行窗 → \`gitlab_get_file_content(path, ref, startLine, endLine)\`
   - 历史评论 → \`gitlab_get_previous_review\`
 - **bash 用法**:
   - ✅ 可用:\`git\` 系列(log / show / diff / blame / branch …)
@@ -162,14 +180,14 @@ ${skillContent}
    \`gitlab_post_comment\` 工具自动以 HTML 注释形式注入(用户看不到),不需要你在 body 里手写。
    只对真问题打 blocker(参考现有规则)。
 
-7. **真实代码上下文约束**(Phase 2 N1):对 MR 改动的**每个变更文件**,必须先调用
+7. **真实代码上下文约束**(Phase 2 N1):对准备发表行内评论的文件,必须先调用
    \`gitlab_get_file_content\`(\`ref\` 显式传 \`"${input.sourceBranch ?? "<MR source branch>"}"\`,
-   **严禁**传 \`"HEAD"\` / 空字符串 / 省略)拉完整内容再发出评论。
-   鼓励主动拉**相关上下文**(被改函数实现 / 被改类定义 / 调用方),用 \`gitlab_get_file_content\`
-   传任意 ref 和路径即可。
+   **严禁**传 \`"HEAD"\` / 空字符串 / 省略)读取评论行附近的相关行窗再发出评论。
+   鼓励主动读取**相关上下文**(被改函数实现 / 被改类定义 / 调用方),优先传 \`startLine\` / \`endLine\`,
+   不足时再续读相邻行段。
    **未拉文件直接发该文件的行内评论 → 视为「无依据评论」 → \`scanForBlockers\` 会拦截为 blocker
    (自我阻塞)**。
-   你可以重复读同一文件(client 内部已防重复请求),但**不能跳过读取**。
+   你可以重复读同一文件的不同窗口,但**不能跳过评论前读取**。
 
 8. **MR diff size cap**(Phase 3 E2,**仅在触发截断时生效**):
    如果下方出现「**MR 文件截断说明**」段,意味着本次 MR 文件数超过上限,你看到的
