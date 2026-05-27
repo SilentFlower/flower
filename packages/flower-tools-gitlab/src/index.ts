@@ -140,23 +140,24 @@ export const gitlabGetPreviousReviewTool = defineTool({
 });
 
 /**
- * 拉取任意 ref 的文件原始内容(N1 · LLM 拉真实代码上下文)
+ * 拉取任意 ref 的文件行窗(N1 · LLM 拉真实代码上下文)
  *
- * 用于 LLM 评审时拉变更文件完整内容 + 相关上下文(被改函数实现 / 调用方 / 历史版本)。
- * Prompt 强约束「每文件必读」:对每个变更文件必须先调本工具拉完整内容再评论,
+ * 用于 LLM 评审时拉变更行附近上下文(被改函数实现 / 调用方 / 历史版本)。
+ * Prompt 强约束「评论前必读」:对某文件发出行内评论前必须先调本工具读取相关行窗,
  * 否则会被 `run.ts:scanForBlockers` 拦截为「无依据评论」blocker。
  *
  * 工具内部通过 `safeReadFile` 做两层防护:
  * - **二进制后缀跳过**(`.png` / `.lock` 等)→ 返回 placeholder,不发请求节省 token
+ * - **行窗读取**(默认 500 行,单次最多 1000 行)→ 未取够时按返回提示续读
  * - **size cap**(env `FLOWER_MAX_FILE_SIZE`,默认 50KB)→ 超出截断 + 加 ⚠️ HTML 注释
  *
- * LLM 永远不会拿到超 50KB 的原始文件,杜绝 context window 被单文件吃掉的情况。
+ * LLM 永远不会默认拿到整份大文件,杜绝 context window 被单文件吃掉的情况。
  */
 export const gitlabGetFileContentTool = defineTool({
 	name: "gitlab_get_file_content",
-	label: "拉取文件原始内容",
+	label: "拉取文件行窗",
 	description:
-		"拉任意 ref 下的文件原始内容(UTF-8 文本)。`ref` 可省略 — 省略 / 空字符串 / `'HEAD'` 时自动兜底到当前 MR 的 source branch(`CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`),覆盖大多数评审场景;看 target 版本或历史 commit 时显式传对应 ref。**不要传字面 'HEAD'**:GitLab REST API 不识别该别名,会被解析为 default branch。同一文件多次拉取请自行缓存,避免重复请求。文件超过 50KB 会被截断,二进制 / 锁文件会被跳过。",
+		"拉任意 ref 下的文件行窗(UTF-8 文本)。默认返回 1-500 行;可传 startLine/endLine 读取指定 1-based 闭区间,单次最多 1000 行,未取够时按返回的续读提示读取下一段。`ref` 可省略 — 省略 / 空字符串 / `'HEAD'` 时自动兜底到当前 MR 的 source branch(`CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`),覆盖大多数评审场景;看 target 版本或历史 commit 时显式传对应 ref。**不要传字面 'HEAD'**:GitLab REST API 不识别该别名,会被解析为 default branch。文件窗口超过 50KB 会被截断,二进制 / 锁文件会被跳过。",
 	parameters: Type.Object({
 		path: Type.String({ description: "仓库内相对路径(如 `internal/auth/sign_verify.go`)" }),
 		ref: Type.Optional(
@@ -165,6 +166,8 @@ export const gitlabGetFileContentTool = defineTool({
 					"ref(branch / tag / commit sha)。省略时自动兜底到当前 MR 的 source branch;**不要**传 'HEAD' 或空字符串(会触发兜底,但属于不规范输入)",
 			}),
 		),
+		startLine: Type.Optional(Type.Number({ description: "起始行号(1-based,闭区间);不传时从第 1 行开始" })),
+		endLine: Type.Optional(Type.Number({ description: "结束行号(1-based,闭区间);不传时默认读取 500 行" })),
 	}),
 	async execute(_id, params) {
 		const { projectId } = readEnv();
@@ -180,10 +183,25 @@ export const gitlabGetFileContentTool = defineTool({
 			};
 		}
 		try {
-			const content = await safeReadFile({ projectId, path: params.path, ref });
-			const details: { path: string; ref: string; length: number; error?: boolean } = {
+			const content = await safeReadFile({
+				projectId,
 				path: params.path,
 				ref,
+				startLine: params.startLine,
+				endLine: params.endLine,
+			});
+			const details: {
+				path: string;
+				ref: string;
+				startLine?: number;
+				endLine?: number;
+				length: number;
+				error?: boolean;
+			} = {
+				path: params.path,
+				ref,
+				...(params.startLine !== undefined ? { startLine: params.startLine } : {}),
+				...(params.endLine !== undefined ? { endLine: params.endLine } : {}),
 				length: content.length,
 			};
 			return {
@@ -194,9 +212,18 @@ export const gitlabGetFileContentTool = defineTool({
 			// 把错误以 content 形式返回,LLM 能感知失败并尝试别的 path/ref;
 			// 真正鉴权 / 致命错误由上层 runReview 决定是否 abort(本工具不抛)
 			const message = err instanceof Error ? err.message : String(err);
-			const details: { path: string; ref: string; length: number; error?: boolean } = {
+			const details: {
+				path: string;
+				ref: string;
+				startLine?: number;
+				endLine?: number;
+				length: number;
+				error?: boolean;
+			} = {
 				path: params.path,
 				ref,
+				...(params.startLine !== undefined ? { startLine: params.startLine } : {}),
+				...(params.endLine !== undefined ? { endLine: params.endLine } : {}),
 				length: 0,
 				error: true,
 			};

@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-05-26 | reviewer 稳定性:软超时、SSE 重试、上下文收敛 | `5a9cfe4` | `fix/reviewer-timeout-sse-context` |
 | 7 | 2026-05-27 | 归档 code-reviewer-detailed-html · intro.html reviewer 章节事实口径修正收尾 | `cccf174` | `doc/code-reviewer-detailed-html` |
 | 6 | 2026-05-21 | flower-providers env 缺省 fallback + 内网 GitLab CI 全链路打通 | `db4668c` | `main` |
 | 5 | 2026-05-20 | code-reviewer 评审质量优化 + 边界防御 + 三件套收口 | `22016b8`, `329ff53` | `main` |

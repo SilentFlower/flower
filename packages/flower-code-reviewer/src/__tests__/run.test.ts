@@ -21,7 +21,9 @@ import {
 	buildLlmFailureNotice,
 	buildUnsupportedCommentNotice,
 	isLlmFailure,
+	ReviewSoftTimeoutError,
 	resolveMaxFiles,
+	runPiMainWithSoftTimeout,
 	scanForBlockers,
 } from "../run.js";
 
@@ -297,6 +299,12 @@ describe("isLlmFailure · E1 LLM vs GitLab 错误区分", () => {
 		expect(isLlmFailure(new Error("Stream ended without finish_reason"))).toBe(true);
 	});
 
+	it("空 SSE / 无 finish / message_stop / terminated 关键字 → LLM 失败", () => {
+		expect(isLlmFailure(new Error("SSE empty response: no data"))).toBe(true);
+		expect(isLlmFailure(new Error("stream ended before message_stop"))).toBe(true);
+		expect(isLlmFailure(new Error("response terminated before finish_reason"))).toBe(true);
+	});
+
 	it("ECONNREFUSED → LLM 失败(网络层失败保守归类 LLM)", () => {
 		expect(isLlmFailure(new Error("ECONNREFUSED connect to llm-gateway"))).toBe(true);
 	});
@@ -346,5 +354,26 @@ describe("buildLlmFailureNotice · E1 warning 文案", () => {
 		expect(buildLlmFailureNotice()).toBe(
 			"⚠️ flower-code-reviewer 因 LLM 网关异常未能完成自动评审,请手工 review 本 MR。\n\n错误详情已上报 SIEM。",
 		);
+	});
+
+	it("ReviewSoftTimeoutError → 自动评审超时文案", () => {
+		const body = buildLlmFailureNotice(new ReviewSoftTimeoutError(1080000));
+		expect(body).toContain("自动评审超时");
+		expect(body).toContain("请手工 review");
+		expect(body).not.toContain("LLM 网关异常");
+	});
+});
+
+describe("runPiMainWithSoftTimeout", () => {
+	it("run 在 timeout 前 resolve → 返回原值", async () => {
+		await expect(runPiMainWithSoftTimeout(async () => "ok", 100)).resolves.toBe("ok");
+	});
+
+	it("run 超过 timeout → 抛 ReviewSoftTimeoutError", async () => {
+		await expect(runPiMainWithSoftTimeout(() => new Promise(() => {}), 1)).rejects.toBeInstanceOf(ReviewSoftTimeoutError);
+	});
+
+	it("timeoutMs=0 → 关闭软超时", async () => {
+		await expect(runPiMainWithSoftTimeout(async () => "ok", 0)).resolves.toBe("ok");
 	});
 });

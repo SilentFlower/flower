@@ -135,6 +135,20 @@ describe("runReview · E1 LLM fail open", () => {
 		expect(mockedPostMrComment).toHaveBeenCalledTimes(1);
 	});
 
+	it("piMain 长时间不 resolve → soft timeout 后 fail open + post 自动评审超时 warning", async () => {
+		vi.stubEnv("FLOWER_REVIEW_TIMEOUT_MS", "1");
+		mockedPiMain.mockImplementationOnce(() => new Promise(() => {}));
+
+		const result = await runReview({ mrIid: 42, skill: "general", dryRun: false });
+
+		expect(result.exitCode).toBe(0);
+		expect(mockedPostMrComment).toHaveBeenCalledTimes(1);
+		const [, , body, severity] = mockedPostMrComment.mock.calls[0] ?? [];
+		expect(body).toContain("自动评审超时");
+		expect(body).toContain("请手工 review");
+		expect(severity).toBe("minor");
+	});
+
 	it("piMain 抛 AuthError(非 LLM 失败)→ runReview 抛(fail close)", async () => {
 		mockedPiMain.mockRejectedValueOnce(new AuthError("401 Unauthorized"));
 

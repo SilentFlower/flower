@@ -3,7 +3,7 @@
  *
  * 覆盖:
  * - 二进制后缀跳过(.png / .lock / .pdf 等),不发请求
- * - 正常文本透传(< 50KB)
+ * - 正常文本按行窗返回,默认 500 行
  * - 超 size cap → 截断 + 末尾追加 ⚠️ 注释
  * - 中文 UTF-8 内容不乱码
  * - env `FLOWER_MAX_FILE_SIZE` override 生效
@@ -27,7 +27,7 @@ vi.mock("../client.js", () => {
 });
 
 import { FileNotFoundError, gitlabClient } from "../client.js";
-import { safeReadFile } from "../safe-read.js";
+import { resolveContextReadDefaultLines, resolveContextReadMaxLines, safeReadFile } from "../safe-read.js";
 
 // vi.mocked 拿到 vi.fn 的 mock 实例,供 mockResolvedValueOnce / mockRejectedValueOnce 使用
 const mockedGetFileContent = vi.mocked(gitlabClient().getFileContent);
@@ -70,7 +70,7 @@ describe("safeReadFile · 二进制后缀跳过", () => {
 	});
 });
 
-describe("safeReadFile · 文本文件透传", () => {
+describe("safeReadFile · 文本文件行窗", () => {
 	beforeEach(() => {
 		mockedGetFileContent.mockReset();
 		vi.unstubAllEnvs();
@@ -80,12 +80,15 @@ describe("safeReadFile · 文本文件透传", () => {
 		vi.unstubAllEnvs();
 	});
 
-	it("< 50KB 文本完整透传,不加任何注释", async () => {
+	it("< 500 行文本返回行窗元信息 + 全部内容", async () => {
 		const code = "export function add(a: number, b: number): number {\n\treturn a + b;\n}\n";
 		mockedGetFileContent.mockResolvedValueOnce(code);
 
 		const result = await safeReadFile({ projectId: "g/r", path: "src/math.ts", ref: "main" });
-		expect(result).toBe(code);
+		expect(result).toContain("<!-- 文件: src/math.ts @ main -->");
+		expect(result).toContain("<!-- 行窗: 1-3 / 共 3 行 -->");
+		expect(result).toContain("<!-- 续读提示:已到文件末尾 -->");
+		expect(result).toContain(code.trimEnd());
 		expect(mockedGetFileContent).toHaveBeenCalledWith("g/r", "src/math.ts", "main");
 	});
 
@@ -94,18 +97,61 @@ describe("safeReadFile · 文本文件透传", () => {
 		mockedGetFileContent.mockResolvedValueOnce(code);
 
 		const result = await safeReadFile({ projectId: "g/r", path: "src/中文.ts", ref: "main" });
-		expect(result).toBe(code);
 		expect(result).toContain("加法运算");
 		expect(result).toContain("加法(甲: number, 乙: number)");
 	});
 
-	it("正好等于 50KB 边界:不截断", async () => {
-		const content = "x".repeat(51200);
+	it("未传行号时默认只返回前 500 行,并提示下一段续读", async () => {
+		const content = Array.from({ length: 600 }, (_, i) => `line-${i + 1}`).join("\n");
 		mockedGetFileContent.mockResolvedValueOnce(content);
 
-		const result = await safeReadFile({ projectId: "g/r", path: "big.ts", ref: "main" });
-		expect(result).toBe(content);
-		expect(result).not.toContain("⚠️");
+		const result = await safeReadFile({ projectId: "g/r", path: "src/long.ts", ref: "main" });
+
+		expect(result).toContain("<!-- 行窗: 1-500 / 共 600 行 -->");
+		expect(result).toContain("line-1");
+		expect(result).toContain("line-500");
+		expect(result).not.toContain("line-501");
+		expect(result).toContain("startLine=501, endLine=1500");
+	});
+
+	it("显式 startLine/endLine 时只返回该闭区间", async () => {
+		const content = Array.from({ length: 20 }, (_, i) => `line-${i + 1}`).join("\n");
+		mockedGetFileContent.mockResolvedValueOnce(content);
+
+		const result = await safeReadFile({ projectId: "g/r", path: "src/range.ts", ref: "main", startLine: 5, endLine: 8 });
+
+		expect(result).toContain("<!-- 行窗: 5-8 / 共 20 行 -->");
+		expect(result).toContain("line-5");
+		expect(result).toContain("line-8");
+		expect(result).not.toContain("line-4");
+		expect(result).not.toContain("line-9");
+	});
+
+	it("显式区间超过 1000 行时截断到单次最大行数并提示续读", async () => {
+		const content = Array.from({ length: 1200 }, (_, i) => `line-${i + 1}`).join("\n");
+		mockedGetFileContent.mockResolvedValueOnce(content);
+
+		const result = await safeReadFile({ projectId: "g/r", path: "src/max.ts", ref: "main", startLine: 1, endLine: 1200 });
+
+		expect(result).toContain("<!-- 行窗: 1-1000 / 共 1200 行 -->");
+		expect(result).toContain("单次最多读取 1000 行");
+		expect(result).toContain("line-1000");
+		expect(result).not.toContain("line-1001");
+		expect(result).toContain("startLine=1001");
+	});
+
+	it("env 可覆盖默认读取行数和单次最大行数", async () => {
+		vi.stubEnv("FLOWER_CONTEXT_READ_DEFAULT_LINES", "3");
+		vi.stubEnv("FLOWER_CONTEXT_READ_MAX_LINES", "4");
+		const content = Array.from({ length: 10 }, (_, i) => `line-${i + 1}`).join("\n");
+		mockedGetFileContent.mockResolvedValueOnce(content);
+
+		const result = await safeReadFile({ projectId: "g/r", path: "src/env.ts", ref: "main" });
+
+		expect(resolveContextReadDefaultLines()).toBe(3);
+		expect(resolveContextReadMaxLines()).toBe(4);
+		expect(result).toContain("<!-- 行窗: 1-3 / 共 10 行 -->");
+		expect(result).toContain("startLine=4, endLine=7");
 	});
 });
 
@@ -128,10 +174,10 @@ describe("safeReadFile · size cap 截断", () => {
 		const result = await safeReadFile({ projectId: "g/r", path: "big.ts", ref: "main" });
 
 		// 主体应是前 51200 个 a,后面跟着注释(不含任何 'z')
-		expect(result.startsWith("a".repeat(51200))).toBe(true);
+		expect(result).toContain("<!-- 文件: big.ts @ main -->");
+		expect(result).toContain("a".repeat(100));
 		expect(result).not.toContain("z");
-		expect(result).toContain("⚠️ 文件过大");
-		expect(result).toContain("61440 bytes");
+		expect(result).toContain("⚠️ 文件窗口过大");
 		expect(result).toContain("仅展示前 51200 bytes");
 	});
 
@@ -142,9 +188,9 @@ describe("safeReadFile · size cap 截断", () => {
 
 		const result = await safeReadFile({ projectId: "g/r", path: "tiny.ts", ref: "main" });
 
-		expect(result.startsWith("x".repeat(100))).toBe(true);
+		expect(result).toContain("<!-- 文件: tiny.ts @ main -->");
 		expect(result).toContain("仅展示前 100 bytes");
-		expect(result).toContain("500 bytes"); // 原始长度也被展示
+		expect(result).toMatch(/文件窗口过大 \(\d+ bytes\)/);
 	});
 
 	it("env `FLOWER_MAX_FILE_SIZE` 无效值(非数字)→ 退回默认 50KB", async () => {
@@ -155,7 +201,8 @@ describe("safeReadFile · size cap 截断", () => {
 		const result = await safeReadFile({ projectId: "g/r", path: "x.ts", ref: "main" });
 
 		// 仍按默认 50KB 截断
-		expect(result.startsWith("a".repeat(51200))).toBe(true);
+		expect(result).toContain("<!-- 文件: x.ts @ main -->");
+		expect(result).toContain("a".repeat(100));
 		expect(result).toContain("仅展示前 51200 bytes");
 	});
 });

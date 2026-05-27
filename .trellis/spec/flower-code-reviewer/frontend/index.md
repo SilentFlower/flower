@@ -49,7 +49,7 @@
 3. 不在 `cli.ts` / `run.ts` 里直接 console.log 评审意见(必须走 GitLab 工具;dry-run `--dry-run` 是例外)
 4. 改 prompt 时知道必要的硬约束:
    - **severity 词表 = `blocker | major | minor`**(对齐 flower-tools-gitlab `severitySchema` 与 `comments/render.ts`,**禁止**残留旧词表 `info | warning | blocker`)
-   - 工具优先(评论必须经 GitLab 工具发出)/ 不重复评论 / 第 4 条「禁止 `^/<quick-action>` 行」/ 第 7 条「每变更文件必读 `gitlab_get_file_content`」/ 第 8 条「diff 截断时必须写 N/M 截断说明」
+   - 工具优先(评论必须经 GitLab 工具发出)/ 不重复评论 / 第 4 条「禁止 `^/<quick-action>` 行」/ 第 7 条「评论前必须读取相关行窗 `gitlab_get_file_content(path, ref, startLine, endLine)`」/ 第 8 条「diff 截断时必须写 N/M 截断说明」
 
 ---
 
@@ -84,7 +84,7 @@
 | **E1 · LLM 网关 fail open** | `isLlmFailure(err)` 5 级判定(AuthError 黑名单 / LLM 关键字 / 网络关键字 / HTTP 5xx 429 / 默认 fail close);LLM 失败 → `buildLlmFailureNotice` warning 评论 + `return exitCode: 0` 不阻塞 pipeline;**非 LLM 错误(AuthError / FileNotFoundError)正常抛**;但 `scanForBlockers` 触发的 blocker(已成功评出的)仍 fail close | `run.ts` |
 | **E2 · MR diff size cap** | env `FLOWER_MAX_FILES`(默认 50);`applyDiffCap` 按 churn(additions + deletions)降序稳定排序取 top N;截断时 prompt 注入 `truncation: {shown, total}` → LLM 在 walkthrough 必须写「⚠️ 本次仅评 N/M 个最大变更文件,其余请手工 review」 | `run.ts` + `prompts.ts` |
 | **E3 · quick action sanitize** | `sanitizeQuickActions(body)`(在 `@flower-ai/flower-tools-common`),50+ quick action 关键字 + 大小写不敏感;首字符 `/` → `&#47;`;flower-tools-gitlab 的 post 评论工具 execute 内 wrap;与 prompt 第 4 条硬约束形成**双层防御** | `flower-tools-common/src/sanitize.ts` + `flower-tools-gitlab/src/index.ts` |
-| **E5 · 单文件 size cap + 二进制跳过** | `safeReadFile` wrapper 在 `flower-tools-gitlab/src/safe-read.ts` 工具层,`gitlab_get_file_content` execute 内 wrap;env `FLOWER_MAX_FILE_SIZE`(默认 51200);二进制按后缀(18 类)跳过;LLM 永远拿不到超 50KB 或二进制原始内容 | `flower-tools-gitlab/src/safe-read.ts` |
+| **E5 · 行窗读取 + size cap + 二进制跳过** | `safeReadFile` wrapper 在 `flower-tools-gitlab/src/safe-read.ts` 工具层,`gitlab_get_file_content` execute 内 wrap;默认只返回 500 行,显式 `startLine/endLine` 时单次最多 1000 行;env `FLOWER_MAX_FILE_SIZE`(默认 51200);二进制按后缀(18 类)跳过;LLM 默认拿不到整份大文件或二进制原始内容 | `flower-tools-gitlab/src/safe-read.ts` |
 | **E4 · markdown 校验** | **延后**(remark 依赖较重);mitigation 暂留 prompt 5 个完整模板样例引导 LLM 复制 |
 
 ### 4. 评审 trace 单例 + 「无依据评论」blocker 拦截

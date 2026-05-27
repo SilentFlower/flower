@@ -10,6 +10,7 @@
  *
  * 行为:
  * - **二进制后缀跳过**:`.png` / `.zip` / `.lock` 等返回 HTML 注释 placeholder,不发请求
+ * - **行窗读取**:默认只返回文件开头 500 行;显式 `startLine` / `endLine` 时最多返回 1000 行
  * - **size cap**:`FLOWER_MAX_FILE_SIZE`(默认 51200 bytes = 50KB)以上截断,末尾追加 ⚠️ 注释提示
  * - **失败透传**:client 抛错(FileNotFoundError / AuthError 等)不吞,让 caller 决定怎么处理
  *
@@ -59,6 +60,8 @@ const BINARY_EXT: ReadonlySet<string> = new Set([
  * 避免单文件吃掉评审上下文窗口。
  */
 const DEFAULT_MAX_FILE_SIZE = 51200;
+const DEFAULT_CONTEXT_READ_LINES = 500;
+const DEFAULT_CONTEXT_READ_MAX_LINES = 1000;
 
 /**
  * 读取大小上限(byte)。优先级:env `FLOWER_MAX_FILE_SIZE` > 默认 50KB。
@@ -74,6 +77,32 @@ function resolveMaxFileSize(): number {
 }
 
 /**
+ * 默认读取行数。优先级:env `FLOWER_CONTEXT_READ_DEFAULT_LINES` > 默认 500 行。
+ *
+ * @returns 未传行号时返回的默认行数
+ */
+export function resolveContextReadDefaultLines(): number {
+	return resolvePositiveIntegerEnv("FLOWER_CONTEXT_READ_DEFAULT_LINES", DEFAULT_CONTEXT_READ_LINES);
+}
+
+/**
+ * 单次读取最大行数。优先级:env `FLOWER_CONTEXT_READ_MAX_LINES` > 默认 1000 行。
+ *
+ * @returns 单次 `gitlab_get_file_content` 最多返回的行数
+ */
+export function resolveContextReadMaxLines(): number {
+	return resolvePositiveIntegerEnv("FLOWER_CONTEXT_READ_MAX_LINES", DEFAULT_CONTEXT_READ_MAX_LINES);
+}
+
+function resolvePositiveIntegerEnv(name: string, fallback: number): number {
+	const raw = process.env[name];
+	if (raw === undefined || raw.trim() === "") return fallback;
+	const parsed = Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+	return parsed;
+}
+
+/**
  * `safeReadFile` 输入参数
  */
 export interface SafeReadFileInput {
@@ -83,6 +112,10 @@ export interface SafeReadFileInput {
 	path: string;
 	/** ref(branch / tag / commit sha);默认 caller 传 MR source HEAD */
 	ref: string;
+	/** 起始行号(1-based,闭区间);不传时从第 1 行开始 */
+	startLine?: number;
+	/** 结束行号(1-based,闭区间);不传时按默认行数读取 */
+	endLine?: number;
 }
 
 /**
@@ -90,7 +123,7 @@ export interface SafeReadFileInput {
  *
  * 行为:
  * - 后缀命中 `BINARY_EXT` → 返回 `<!-- 二进制文件已跳过: ${path} -->`(不发请求,节省 token)
- * - 否则调 `gitlabClient().getFileContent(...)`,体积超 cap → 截断 + 加 ⚠️ 注释
+ * - 否则调 `gitlabClient().getFileContent(...)`,按行窗裁剪后再做 size cap
  *
  * @param input 见 `SafeReadFileInput`
  * @returns 文件内容(可能含 HTML 注释提示)
@@ -104,10 +137,82 @@ export async function safeReadFile(input: SafeReadFileInput): Promise<string> {
 
 	const content = await gitlabClient().getFileContent(input.projectId, input.path, input.ref);
 	const maxSize = resolveMaxFileSize();
+	const windowed = sliceLineWindow(content, {
+		path: input.path,
+		ref: input.ref,
+		startLine: input.startLine,
+		endLine: input.endLine,
+	});
 
-	if (content.length > maxSize) {
+	if (windowed.length > maxSize) {
 		// HTML 注释形式的截断提示:既不污染 markdown,LLM 又能看见
-		return `${content.slice(0, maxSize)}\n<!-- ⚠️ 文件过大 (${content.length} bytes),仅展示前 ${maxSize} bytes -->`;
+		return `${windowed.slice(0, maxSize)}\n<!-- ⚠️ 文件窗口过大 (${windowed.length} bytes),仅展示前 ${maxSize} bytes -->`;
 	}
-	return content;
+	return windowed;
+}
+
+interface SliceLineWindowInput {
+	path: string;
+	ref: string;
+	startLine?: number;
+	endLine?: number;
+}
+
+function sliceLineWindow(content: string, input: SliceLineWindowInput): string {
+	const lines = splitLines(content);
+	const totalLines = lines.length;
+	const maxLines = resolveContextReadMaxLines();
+	const defaultLines = Math.min(resolveContextReadDefaultLines(), maxLines);
+	const startLine = normalizeLine(input.startLine, 1);
+	const requestedEndLine = normalizeLine(input.endLine, startLine + defaultLines - 1);
+	const normalizedEndLine = Math.max(requestedEndLine, startLine);
+	const cappedEndLine = Math.min(normalizedEndLine, startLine + maxLines - 1);
+	const actualEndLine = Math.min(cappedEndLine, totalLines);
+	const body = startLine <= totalLines ? lines.slice(startLine - 1, actualEndLine).join("\n") : "";
+	const nextStartLine = actualEndLine + 1;
+	const hasMore = nextStartLine <= totalLines;
+	const truncatedByMax = normalizedEndLine > cappedEndLine;
+
+	const displayedRange = startLine <= totalLines ? `${startLine}-${actualEndLine}` : "空";
+	const comments = [
+		`<!-- 文件: ${input.path} @ ${input.ref} -->`,
+		`<!-- 行窗: ${displayedRange} / 共 ${totalLines} 行 -->`,
+	];
+	if (startLine > totalLines) {
+		comments.push(`<!-- ⚠️ 请求起始行 ${startLine} 超出文件总行数 ${totalLines},没有可展示内容 -->`);
+	}
+	if (truncatedByMax) {
+		comments.push(`<!-- ⚠️ 单次最多读取 ${maxLines} 行,已截断请求区间 -->`);
+	}
+	comments.push(renderContinueHint({ path: input.path, ref: input.ref, nextStartLine, maxLines, hasMore }));
+	return [comments.join("\n"), body].filter((part) => part.length > 0).join("\n");
+}
+
+function splitLines(content: string): string[] {
+	if (content.length === 0) return [];
+	const lines = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+	if (lines.at(-1) === "") {
+		lines.pop();
+	}
+	return lines;
+}
+
+function normalizeLine(raw: number | undefined, fallback: number): number {
+	if (raw === undefined || !Number.isFinite(raw)) return fallback;
+	const normalized = Math.floor(raw);
+	return normalized > 0 ? normalized : fallback;
+}
+
+function renderContinueHint(input: {
+	path: string;
+	ref: string;
+	nextStartLine: number;
+	maxLines: number;
+	hasMore: boolean;
+}): string {
+	if (!input.hasMore) {
+		return "<!-- 续读提示:已到文件末尾 -->";
+	}
+	const nextEndLine = input.nextStartLine + input.maxLines - 1;
+	return `<!-- 续读提示:如需更多上下文,继续调用 gitlab_get_file_content(path="${input.path}", ref="${input.ref}", startLine=${input.nextStartLine}, endLine=${nextEndLine}) -->`;
 }
