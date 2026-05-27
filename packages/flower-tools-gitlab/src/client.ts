@@ -10,13 +10,19 @@
  * - 错误信息含 HTTP code + 响应体前 200 字符(便于排错,防 token / 内部信息全量泄漏)
  * - 10s 超时
  * - 5xx + 网络错误**重试 1 次**(sleep 2s);429 不重试(限流意味着配额耗尽,继续重试火上浇油)
- * - **severity 前缀**:`[severity:<level>] ` 写进真实评论 body —— `run.ts` 的 blocker 扫描凭此 regex 识别
+ * - **severity marker**:仅 blocker 自动写入 `<!-- severity: blocker -->` HTML 注释,用户视图不显示
  * - **severity 词表**`blocker | major | minor`(对齐 prompts.ts 模板 + render 函数;
  *   Phase 2 起统一,旧的 `info | warning` 已下线)
  * - **diff_refs 内部缓存** per-MR(行内评论需 base_sha/start_sha/head_sha,避免每次发评论都拉 changes)
  * - **bot username 自查**:通过 `GET /api/v4/user` 一次 + 缓存,避免硬编码 env
  * - **gitlab_get_file_content**(N1):拉任意 ref 的文件原始内容,供 LLM 拿真实代码上下文
  */
+
+import {
+	type PreparedProjectWorkspace,
+	type PrepareProjectWorkspaceInput,
+	prepareProjectWorkspace,
+} from "./workspace.js";
 
 /**
  * 严重程度(对齐 prompts.ts 模板与 render 函数词表)
@@ -60,6 +66,28 @@ export interface BotComment {
 }
 
 /**
+ * GitLab 项目摘要。
+ */
+export interface GitlabProjectSummary {
+	id: number;
+	path_with_namespace: string;
+	default_branch: string | undefined;
+	web_url: string | undefined;
+}
+
+/**
+ * GitLab 分支摘要。
+ */
+export interface GitlabBranchSummary {
+	name: string;
+	default: boolean;
+	protected: boolean;
+	commit_short_id: string | undefined;
+	committed_date: string | undefined;
+	title: string | undefined;
+}
+
+/**
  * GitLab 客户端
  */
 export interface GitlabClient {
@@ -74,6 +102,33 @@ export interface GitlabClient {
 	postMrComment(projectId: string, mrIid: number, body: string, severity: Severity): Promise<void>;
 	postMrLineComment(projectId: string, mrIid: number, input: LineCommentInput): Promise<void>;
 	getBotComments(projectId: string, mrIid: number): Promise<BotComment[]>;
+	/**
+	 * 列出指定 group 下的项目摘要。
+	 *
+	 * @param group GitLab group 路径
+	 * @param options.includeSubgroups 是否包含子 group
+	 * @param options.search 可选项目名搜索词
+	 * @returns 项目摘要列表
+	 */
+	listGroupProjects(
+		group: string,
+		options?: { includeSubgroups?: boolean | undefined; search?: string | undefined },
+	): Promise<GitlabProjectSummary[]>;
+	/**
+	 * 列出指定项目的分支摘要。
+	 *
+	 * @param project GitLab 项目路径或 ID
+	 * @param options.search 可选分支搜索词
+	 * @returns 分支摘要列表
+	 */
+	listProjectBranches(project: string, options?: { search?: string | undefined }): Promise<GitlabBranchSummary[]>;
+	/**
+	 * 准备跨项目只读本地工作区。
+	 *
+	 * @param input 工作区准备参数
+	 * @returns 本地路径与实际 commit
+	 */
+	prepareProjectWorkspace(input: PrepareProjectWorkspaceInput): Promise<PreparedProjectWorkspace>;
 	/**
 	 * 拉任意 ref 下的文件原始内容(N1 · LLM 拉真实代码上下文)
 	 *
@@ -162,6 +217,24 @@ interface NoteItem {
 	body: string;
 	author: { username: string };
 	position?: { new_path?: string; new_line?: number };
+}
+
+interface ProjectItem {
+	id: number;
+	path_with_namespace?: string;
+	default_branch?: string;
+	web_url?: string;
+}
+
+interface BranchItem {
+	name: string;
+	default?: boolean;
+	protected?: boolean;
+	commit?: {
+		short_id?: string;
+		committed_date?: string;
+		title?: string;
+	};
 }
 
 let cachedClient: GitlabClient | undefined;
@@ -418,6 +491,50 @@ function createRealClient(host: string, token: string): GitlabClient {
 					file: n.position?.new_path,
 					line: n.position?.new_line,
 				}));
+		},
+
+		async listGroupProjects(group, options = {}) {
+			const params = new URLSearchParams({
+				simple: "true",
+				per_page: "100",
+				order_by: "path",
+				sort: "asc",
+				include_subgroups: String(options.includeSubgroups ?? true),
+			});
+			if (options.search?.trim()) {
+				params.set("search", options.search.trim());
+			}
+			const path = `/api/v4/groups/${encodeURIComponent(group)}/projects?${params.toString()}`;
+			const resp = await gitlabFetch(host, token, path, {}, { classifyError: true });
+			const projects = (await resp.json()) as ProjectItem[];
+			return projects.map((project) => ({
+				id: project.id,
+				path_with_namespace: project.path_with_namespace ?? "",
+				default_branch: project.default_branch,
+				web_url: project.web_url,
+			}));
+		},
+
+		async listProjectBranches(project, options = {}) {
+			const params = new URLSearchParams({ per_page: "100" });
+			if (options.search?.trim()) {
+				params.set("search", options.search.trim());
+			}
+			const path = `/api/v4/projects/${encodeURIComponent(project)}/repository/branches?${params.toString()}`;
+			const resp = await gitlabFetch(host, token, path, {}, { classifyError: true });
+			const branches = (await resp.json()) as BranchItem[];
+			return branches.map((branch) => ({
+				name: branch.name,
+				default: branch.default ?? false,
+				protected: branch.protected ?? false,
+				commit_short_id: branch.commit?.short_id,
+				committed_date: branch.commit?.committed_date,
+				title: branch.commit?.title,
+			}));
+		},
+
+		async prepareProjectWorkspace(input) {
+			return prepareProjectWorkspace(host, token, input);
 		},
 
 		async getFileContent(projectId, filePath, ref) {
