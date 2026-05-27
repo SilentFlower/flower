@@ -25,5 +25,8 @@ coverage/
 .tmp/
 tmp/
 
+# Playwright MCP 临时 snapshot / console log(本地验证用)
+.playwright-mcp/
+
 # skill-garden 安装时生成的 workflow.md 备份(本地回滚用)
 .trellis/workflow.md.bak

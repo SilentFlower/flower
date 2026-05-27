@@ -35,10 +35,32 @@
 		--mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
 		--serif: "Source Han Serif SC", "Songti SC", "SimSun", ui-serif, Georgia, serif;
 		--sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto, sans-serif;
+
+		/* === spacing scale · 2026-05-27 新增,用于 sidebar / 卡片化 / 节奏统一 === */
+		--gap-1: 4px;
+		--gap-2: 8px;
+		--gap-3: 16px;
+		--gap-4: 24px;
+		--gap-5: 32px;
+		--gap-6: 48px;
+		--gap-7: 64px;
+		--gap-8: 96px;
+
+		/* === sidebar 快捷导航 token === */
+		--sidebar-w: 260px;
+		--sidebar-w-md: 200px;
+
+		/* === z-index 分层(sidebar / toggle / scrim) === */
+		--z-scrim: 49;
+		--z-sidebar: 50;
+		--z-toggle: 51;
 	}
 
 	* { box-sizing: border-box; }
 	html, body { margin: 0; padding: 0; }
+	html { scroll-behavior: smooth; }
+	/* 锚点跳转留出气息空间,避免被 sticky hamburger / sidebar header 遮挡 */
+	section, .part-b details { scroll-margin-top: 24px; }
 	body {
 		background: var(--bg);
 		color: var(--ink);
@@ -53,7 +75,233 @@
 	code, pre, .mono { font-family: var(--mono); font-size: 0.92em; }
 	pre { margin: 0; }
 
-	.wrap { max-width: 1180px; margin: 0 auto; padding: 0 32px; }
+	.wrap { max-width: 920px; margin: 0 auto; padding: 0 var(--gap-5); }
+
+	/* ============================================================
+	   左侧固定 sidebar(快捷导航)· 2026-05-27 新增
+	   ============================================================ */
+	.side-nav {
+		position: fixed;
+		top: 0; left: 0; bottom: 0;
+		width: var(--sidebar-w);
+		background: var(--paper);
+		border-right: 1px solid var(--line);
+		overflow-y: auto;
+		overflow-x: hidden;
+		z-index: var(--z-sidebar);
+		font-family: var(--sans);
+		font-size: 13px;
+		padding: var(--gap-5) 0 var(--gap-4);
+	}
+	.side-nav header {
+		padding: 0 var(--gap-4) var(--gap-4);
+		border-bottom: 1px solid var(--line);
+		display: flex; align-items: baseline; justify-content: space-between;
+	}
+	.side-nav .brand {
+		font-family: var(--serif);
+		font-size: 16px;
+		font-weight: 600;
+		color: var(--ink);
+		text-decoration: none;
+		border: none;
+		letter-spacing: -0.01em;
+	}
+	.side-nav .brand:hover { color: var(--accent-2); }
+	.side-nav .brand small {
+		display: block;
+		font-family: var(--mono);
+		font-size: 10px;
+		font-weight: 400;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		color: var(--ink-3);
+		margin-top: 4px;
+	}
+	.side-nav-close {
+		display: none;
+		background: none; border: none;
+		font-size: 28px; line-height: 1;
+		color: var(--ink-3);
+		cursor: pointer;
+		padding: 0 var(--gap-2);
+	}
+	.side-nav nav { padding-top: var(--gap-3); }
+
+	/* sidebar 一级 group label(Part A / Part B 大标) */
+	.side-nav h6 {
+		font-family: var(--mono);
+		font-size: 10px;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		color: var(--ink-3);
+		margin: var(--gap-4) var(--gap-3) var(--gap-2);
+		padding: 0 0 var(--gap-2);
+		border-bottom: 1px solid var(--line);
+		font-weight: 600;
+	}
+	.side-nav h6::before {
+		content: "§ ";
+		color: var(--accent-2);
+		font-family: var(--serif);
+		font-weight: 600;
+	}
+
+	/* sidebar 链接通用 */
+	.side-nav ul { list-style: none; padding: 0; margin: 0; }
+	.side-nav a {
+		display: block;
+		padding: 6px var(--gap-3);
+		color: var(--ink-2);
+		text-decoration: none;
+		border: none;
+		border-left: 2px solid transparent;
+		transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+	}
+	.side-nav a:hover {
+		color: var(--ink);
+		background: rgba(216,209,194,0.25);
+	}
+	.side-nav a.active {
+		color: var(--accent-2);
+		background: var(--bg-2);
+		border-left-color: var(--accent-2);
+		font-weight: 600;
+	}
+
+	/* 二级:章节(Part A 01~07,Part B B0/B1/B2/B3) */
+	.side-nav > nav > div > ul > li > a {
+		font-family: var(--sans);
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--ink);
+	}
+
+	/* 三级:子节(B1.1~B1.4 / B2.1~B2.7 / B3.1~B3.4) */
+	.side-nav .nav-sub {
+		list-style: none;
+		margin: 0 0 var(--gap-2) calc(var(--gap-3) + 6px);
+		padding: 0;
+		border-left: 1px dashed var(--line);
+	}
+	.side-nav .nav-sub > li > a {
+		font-family: var(--sans);
+		font-size: 12px;
+		font-weight: 400;
+		color: var(--ink-2);
+		padding: 4px var(--gap-3) 4px calc(var(--gap-3) + 10px);
+	}
+
+	/* 四级:B2.1 内 S1~S12 — 切到 mono,呈"技术清单"感 */
+	.side-nav .nav-sub-2 {
+		margin-left: calc(var(--gap-3) + 4px);
+		border-left: 1px dashed rgba(216,209,194,0.55);
+	}
+	.side-nav .nav-sub-2 > li > a {
+		font-family: var(--mono);
+		font-size: 11px;
+		font-weight: 400;
+		color: var(--ink-3);
+		padding: 2px var(--gap-3) 2px calc(var(--gap-3) + 22px);
+		letter-spacing: 0.02em;
+	}
+	.side-nav .nav-sub-2 > li > a.active {
+		color: var(--accent-2);
+		background: var(--bg-2);
+	}
+	.side-nav .nav-sub-2 > li > a:hover {
+		color: var(--ink);
+	}
+
+	/* ============================================================
+	   主内容区(原 body 子元素全部移入 <main class="doc-main">)
+	   ============================================================ */
+	.doc-main { margin-left: var(--sidebar-w); }
+
+	/* ============================================================
+	   Hamburger 按钮 + 蒙层(移动端)
+	   ============================================================ */
+	.nav-toggle {
+		display: none;
+		position: fixed;
+		top: var(--gap-3);
+		left: var(--gap-3);
+		width: 44px;
+		height: 44px;
+		background: var(--paper);
+		border: 1px solid var(--line-strong);
+		border-radius: 0;
+		padding: 0;
+		cursor: pointer;
+		z-index: var(--z-toggle);
+		box-shadow: 2px 2px 0 0 var(--ink);
+		transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.15s ease;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+	}
+	.nav-toggle:hover { background: var(--bg-2); }
+	.nav-toggle:active {
+		transform: translate(2px, 2px);
+		box-shadow: 0 0 0 0 var(--ink);
+	}
+	.nav-toggle span {
+		display: block;
+		width: 22px;
+		height: 2px;
+		background: var(--ink);
+		margin: 4px auto;
+		transform-origin: center;
+		transition: transform 0.22s ease, opacity 0.22s ease;
+	}
+	.nav-toggle[aria-expanded="true"] span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+	.nav-toggle[aria-expanded="true"] span:nth-child(2) { opacity: 0; transform: scaleX(0); }
+	.nav-toggle[aria-expanded="true"] span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+	.nav-scrim {
+		position: fixed;
+		inset: 0;
+		background: rgba(26,29,26,0.35);
+		opacity: 0;
+		pointer-events: none;
+		z-index: var(--z-scrim);
+		transition: opacity 240ms cubic-bezier(0.32, 0.72, 0, 1);
+	}
+	.nav-scrim.show { opacity: 1; pointer-events: auto; }
+
+	/* ============================================================
+	   响应式 3 断点
+	   ============================================================ */
+	/* 平板 768~1180px:sidebar 收窄 + 隐藏四级(S1~S12) */
+	@media (max-width: 1180px) and (min-width: 768px) {
+		.side-nav { width: var(--sidebar-w-md); }
+		.doc-main { margin-left: var(--sidebar-w-md); }
+		.side-nav .nav-sub-2 { display: none; }
+		section { padding: 64px 0 80px; }
+	}
+
+	/* 移动 <768px:sidebar 退化为抽屉,hamburger 显形 */
+	@media (max-width: 767px) {
+		.side-nav {
+			width: min(280px, 80vw);
+			transform: translateX(-100%);
+			transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+			box-shadow:
+				1px 0 0 0 var(--line-strong) inset,
+				8px 0 24px rgba(26,29,26,0.12);
+		}
+		.side-nav.show { transform: translateX(0); }
+		.side-nav-close { display: inline-block; }
+		.doc-main { margin-left: 0; padding-top: 56px; }
+		.nav-toggle { display: inline-flex; }
+		section, .part-b details { scroll-margin-top: 64px; }
+		section { padding: 48px 0 56px; }
+		.wrap { padding: 0 20px; }
+
+		/* 现有 grid-template-columns: 1fr 1fr / repeat(N) 处补单列 fallback */
+		.hero .axes { grid-template-columns: 1fr; }
+		.arch { grid-template-columns: 1fr; gap: var(--gap-5); }
+	}
 
 	/* ============================================================
 	   顶部状态条
@@ -767,6 +1015,93 @@
 <body>
 
 <!-- ============================================================
+     Hamburger 按钮 + 蒙层 + 左侧固定 sidebar(2026-05-27 新增)
+     桌面 hamburger 隐藏;移动端 hamburger 显形,sidebar 退化为抽屉
+     ============================================================ -->
+<button class="nav-toggle" aria-label="打开导航" aria-controls="side-nav" aria-expanded="false">
+	<span></span><span></span><span></span>
+</button>
+<div class="nav-scrim" aria-hidden="true"></div>
+
+<aside class="side-nav" id="side-nav" aria-label="文档导航">
+	<header>
+		<a href="#top" class="brand" id="top">
+			Flower
+			<small>架构 · 决策 · 愿景</small>
+		</a>
+		<button class="side-nav-close" aria-label="关闭导航">×</button>
+	</header>
+	<nav>
+		<div class="nav-group">
+			<h6>Part A · 愿景</h6>
+			<ul>
+				<li><a href="#sec-arch" data-target="sec-arch">01 架构 · 一座洋葱</a></li>
+				<li><a href="#sec-pi" data-target="sec-pi">02 pi 是什么</a></li>
+				<li><a href="#sec-same-root" data-target="sec-same-root">03 同根不同枝</a></li>
+				<li><a href="#sec-why" data-target="sec-why">04 为什么这样设计</a></li>
+				<li><a href="#sec-vision" data-target="sec-vision">05 未来愿景</a></li>
+				<li><a href="#sec-evolution" data-target="sec-evolution">06 演进路径</a></li>
+			</ul>
+		</div>
+		<div class="nav-group">
+			<h6>Part B · 工程手册</h6>
+			<ul>
+				<li><a href="#part-b" data-target="part-b">工程手册扉页</a></li>
+				<li><a href="#b0-intro" data-target="b0-intro">B0 · 引子</a></li>
+				<li>
+					<a href="#b1-pi" data-target="b1-pi">B1 · pi 框架深度分析</a>
+					<ul class="nav-sub">
+						<li><a href="#b1-1" data-target="b1-1">B1.1 API 表面</a></li>
+						<li><a href="#b1-2" data-target="b1-2">B1.2 内部运作机制</a></li>
+						<li><a href="#b1-3" data-target="b1-3">B1.3 flower 怎么用 pi</a></li>
+						<li><a href="#b1-4" data-target="b1-4">B1.4 设计哲学 · 同类对比</a></li>
+					</ul>
+				</li>
+				<li>
+					<a href="#b2-packages" data-target="b2-packages">B2 · 7 个 package</a>
+					<ul class="nav-sub">
+						<li>
+							<a href="#b2-1" data-target="b2-1">B2.1 flower-code-reviewer ★</a>
+							<ul class="nav-sub nav-sub-2">
+								<li><a href="#b2-1-s1" data-target="b2-1-s1">S1 · 一句话定位</a></li>
+								<li><a href="#b2-1-s2" data-target="b2-1-s2">S2 · 触发链路图</a></li>
+								<li><a href="#b2-1-s3" data-target="b2-1-s3">S3 · 包依赖</a></li>
+								<li><a href="#b2-1-s4" data-target="b2-1-s4">S4 · 9 个源文件</a></li>
+								<li><a href="#b2-1-s5" data-target="b2-1-s5">S5 · 评审工作流</a></li>
+								<li><a href="#b2-1-s6" data-target="b2-1-s6">S6 · 关键 features</a></li>
+								<li><a href="#b2-1-s7" data-target="b2-1-s7">S7 · 错误处理 exit</a></li>
+								<li><a href="#b2-1-s8" data-target="b2-1-s8">S8 · 配置与 env</a></li>
+								<li><a href="#b2-1-s9" data-target="b2-1-s9">S9 · GitLab CI 接入</a></li>
+								<li><a href="#b2-1-s10" data-target="b2-1-s10">S10 · 容器与部署</a></li>
+								<li><a href="#b2-1-s11" data-target="b2-1-s11">S11 · 局限 roadmap</a></li>
+								<li><a href="#b2-1-s12" data-target="b2-1-s12">S12 · few-shot</a></li>
+							</ul>
+						</li>
+						<li><a href="#b2-2" data-target="b2-2">B2.2 flower-providers</a></li>
+						<li><a href="#b2-3" data-target="b2-3">B2.3 flower-tools-gitlab</a></li>
+						<li><a href="#b2-4" data-target="b2-4">B2.4 flower-tools-common</a></li>
+						<li><a href="#b2-5" data-target="b2-5">B2.5 flower-tools-arms</a></li>
+						<li><a href="#b2-6" data-target="b2-6">B2.6 flower-compliance</a></li>
+						<li><a href="#b2-7" data-target="b2-7">B2.7 flower-ops-bot</a></li>
+					</ul>
+				</li>
+				<li>
+					<a href="#b3-dataflow" data-target="b3-dataflow">B3 · 跨包数据流</a>
+					<ul class="nav-sub">
+						<li><a href="#b3-1" data-target="b3-1">B3.1 LLM 调用链</a></li>
+						<li><a href="#b3-2" data-target="b3-2">B3.2 tool dispatch</a></li>
+						<li><a href="#b3-3" data-target="b3-3">B3.3 observability 旁路</a></li>
+						<li><a href="#b3-4" data-target="b3-4">B3.4 SIEM 审计</a></li>
+					</ul>
+				</li>
+			</ul>
+		</div>
+	</nav>
+</aside>
+
+<main class="doc-main">
+
+<!-- ============================================================
      顶部状态条
      ============================================================ -->
 <div class="topbar">
@@ -823,7 +1158,7 @@
 <!-- ============================================================
      §01 架构总览
      ============================================================ -->
-<section>
+<section id="sec-arch">
 	<div class="wrap">
 		<div class="sec-head">
 			<div class="sec-num">§ 01</div>
@@ -898,7 +1233,7 @@
 <!-- ============================================================
      §02 pi 是什么 — 我们站在哪个肩膀上
      ============================================================ -->
-<section>
+<section id="sec-pi">
 	<div class="wrap">
 		<div class="sec-head">
 			<div class="sec-num">§ 02</div>
@@ -1017,7 +1352,7 @@
 <!-- ============================================================
      §03 同根不同枝
      ============================================================ -->
-<section>
+<section id="sec-same-root">
 	<div class="wrap">
 		<div class="sec-head">
 			<div class="sec-num">§ 03</div>
@@ -1065,7 +1400,7 @@
 <!-- ============================================================
      §03 设计决策 — 这是核心
      ============================================================ -->
-<section>
+<section id="sec-why">
 	<div class="wrap">
 		<div class="sec-head">
 			<div class="sec-num">§ 04</div>
@@ -1185,7 +1520,7 @@
 <!-- ============================================================
      §04 未来愿景 — 六大进阶能力
      ============================================================ -->
-<section>
+<section id="sec-vision">
 	<div class="wrap">
 		<div class="sec-head">
 			<div class="sec-num">§ 05</div>
@@ -1274,7 +1609,7 @@
 <!-- ============================================================
      §05 演进路径 — 从被动到主动
      ============================================================ -->
-<section>
+<section id="sec-evolution">
 	<div class="wrap">
 		<div class="sec-head">
 			<div class="sec-num">§ 06</div>
@@ -1398,70 +1733,109 @@
 	/* ============================================================
 	   Part B · 工程手册专属样式(沿用 Part A 的设计令牌)
 	   ============================================================ */
+	/* Part A↔Part B 翻页扉页(2026-05-27 重做:墨色 + 琥珀厚底边) */
 	.part-divider {
-		padding: 96px 0 64px;
-		border-top: 8px double var(--line-strong);
-		border-bottom: 2px solid var(--line-strong);
-		background: var(--paper);
+		background: var(--ink);
+		color: var(--paper);
+		padding: 120px 0 96px;
+		margin: 0;
+		border-top: 1px solid var(--line-strong);
+		border-bottom: 8px solid var(--accent-3);
 		text-align: left;
+		position: relative;
+	}
+	.part-divider::before {
+		content: "PART B";
+		position: absolute;
+		top: var(--gap-5);
+		left: 50%;
+		transform: translateX(-50%);
+		font-family: var(--mono);
+		font-size: 11px;
+		letter-spacing: 0.4em;
+		color: var(--accent-3);
 	}
 	.part-divider .wrap { padding-top: 0; padding-bottom: 0; }
 	.part-divider small {
 		font-family: var(--mono); font-size: 12px;
 		letter-spacing: 0.2em; text-transform: uppercase;
-		color: var(--accent-2);
+		color: var(--accent-3);
 		display: block; margin-bottom: 12px;
 	}
 	.part-divider h2 {
-		font-family: var(--serif); font-size: 56px; font-weight: 600;
-		margin: 0 0 16px; letter-spacing: -0.01em;
+		font-family: var(--serif);
+		font-size: clamp(48px, 7vw, 88px);
+		font-weight: 600;
+		margin: 0 0 var(--gap-4);
+		letter-spacing: -0.02em;
+		line-height: 1.05;
 	}
 	.part-divider .sub {
-		font-size: 18px; color: var(--ink-2);
-		max-width: 720px;
+		font-size: 19px;
+		color: rgba(251,248,243,0.78);
+		max-width: 640px;
+	}
+	@media (max-width: 767px) {
+		.part-divider { padding: 80px 0 64px; border-bottom-width: 6px; }
 	}
 
-	/* Part B TOC */
+	/* Part B 正文目录卡片(主导航已迁至左侧 sidebar,此卡片作为 Part B 起点的章节地图) */
 	nav.toc-b {
-		padding: 48px 0 24px;
+		padding: var(--gap-6) 0 var(--gap-4);
 		border-bottom: 1px solid var(--line);
 	}
+	nav.toc-b .wrap > h6,
 	nav.toc-b h6 {
 		font-family: var(--mono); font-size: 11px;
 		letter-spacing: 0.2em; text-transform: uppercase;
-		color: var(--ink-3); margin: 0 0 16px;
+		color: var(--ink-3); margin: 0 0 var(--gap-3);
+	}
+	nav.toc-b h6::before {
+		content: "§ ";
+		color: var(--accent-2);
+		font-family: var(--serif);
 	}
 	nav.toc-b ul {
 		list-style: none; padding: 0; margin: 0;
-		columns: 2; column-gap: 48px;
+		columns: 2; column-gap: var(--gap-6);
 	}
-	nav.toc-b ul ul { columns: 1; margin: 4px 0 12px 16px; }
+	nav.toc-b ul ul {
+		columns: 1;
+		margin: var(--gap-1) 0 var(--gap-3) var(--gap-3);
+		border-left: 1px dashed var(--line);
+		padding-left: var(--gap-3);
+	}
 	nav.toc-b li {
 		font-family: var(--sans); font-size: 14px;
 		break-inside: avoid;
-		margin-bottom: 4px;
+		margin-bottom: var(--gap-1);
 	}
-	nav.toc-b > ul > li { font-weight: 600; margin-top: 8px; }
+	nav.toc-b > .wrap > ul > li,
+	nav.toc-b > ul > li { font-weight: 600; margin-top: var(--gap-2); }
 	nav.toc-b a {
 		border-bottom: none;
 		color: var(--ink);
 	}
 	nav.toc-b a:hover { color: var(--accent-2); }
+	@media (max-width: 767px) {
+		nav.toc-b ul { columns: 1; }
+	}
 
-	/* Part B section 通用 */
-	.part-b section { padding: 72px 0; border-bottom: 1px solid var(--line); }
+	/* Part B section 通用 — 节奏比 Part A 略紧凑(details 自带切分) */
+	.part-b section { padding: 64px 0 80px; border-bottom: 1px solid var(--line); }
 	.part-b .sec-head h2 {
 		font-family: var(--serif); font-size: 32px;
 	}
+	.part-b > section > .wrap > .sec-head { margin-bottom: var(--gap-5); }
 
-	/* Package 卡片(B2) */
+	/* Package 卡片(B2 Quick Facts dt/dd) */
 	.package-card {
 		display: grid; grid-template-columns: 110px 1fr; gap: 12px 24px;
 		margin: 16px 0 8px;
 		padding: 16px 20px;
 		border: 1px solid var(--line);
 		background: var(--paper);
-		border-radius: 6px;
+		border-radius: 2px;
 		font-size: 14px;
 	}
 	.package-card dt {
@@ -1470,24 +1844,90 @@
 		color: var(--ink-3);
 	}
 	.package-card dd { margin: 0; color: var(--ink); }
-
-	/* details / summary 折叠交互 */
-	.part-b details {
-		margin: 12px 0;
-		border: 1px solid var(--line);
-		border-radius: 4px;
-		background: var(--paper);
+	@media (max-width: 767px) {
+		.package-card { grid-template-columns: 1fr; gap: 4px 0; }
 	}
+
+	/* ============================================================
+	   details / summary 折叠卡片(2026-05-27 重做:Border 主导 + chevron)
+	   ============================================================ */
+	.part-b details {
+		background: var(--paper);
+		border: 1px solid var(--line);
+		border-radius: 2px;
+		padding: 20px 28px;
+		margin-bottom: 14px;
+		transition: border-color 0.2s ease, background 0.2s ease;
+		position: relative;
+	}
+	.part-b details:hover { border-color: var(--ink-3); }
+	.part-b details[open] {
+		border-color: var(--ink-3);
+		border-top: 2px solid var(--ink);
+	}
+
 	.part-b details > summary {
 		cursor: pointer;
-		padding: 12px 18px;
-		font-family: var(--sans); font-weight: 600;
-		list-style-position: inside;
+		list-style: none;
+		font-family: var(--serif);
+		font-size: 17px;
+		font-weight: 600;
+		color: var(--ink);
+		padding-left: 30px;
+		position: relative;
+		user-select: none;
+		line-height: 1.4;
 		border-bottom: 1px solid transparent;
+		margin: -20px -28px 0;
+		padding-top: 18px; padding-right: 28px; padding-bottom: 18px;
 	}
-	.part-b details[open] > summary { border-bottom-color: var(--line); }
-	.part-b details > :not(summary) { padding: 16px 20px; }
-	.part-b details details > :not(summary) { padding: 12px 16px; }
+	.part-b details > summary::-webkit-details-marker { display: none; }
+	.part-b details > summary::before {
+		content: "›";
+		position: absolute;
+		left: 14px;
+		top: 50%;
+		transform: translateY(-55%) rotate(0);
+		transform-origin: 50% 55%;
+		font-family: var(--serif);
+		font-size: 24px;
+		font-weight: 400;
+		color: var(--accent-3);
+		transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), color 0.15s ease;
+	}
+	.part-b details[open] > summary::before {
+		transform: translateY(-55%) rotate(90deg);
+	}
+	.part-b details > summary:hover::before { color: var(--accent-2); }
+	.part-b details[open] > summary {
+		border-bottom-color: var(--line);
+		margin-bottom: var(--gap-3);
+	}
+	.part-b details > :not(summary) { padding: 0; }
+	.part-b details details > :not(summary) { padding: 0; }
+
+	/* 嵌套 details(若存在更深嵌套):墨绿左条 + 透明底 */
+	.part-b details details {
+		border: none;
+		border-left: 2px solid var(--line);
+		border-radius: 0;
+		padding: var(--gap-3) var(--gap-4);
+		margin: var(--gap-3) 0 var(--gap-3);
+		background: transparent;
+	}
+	.part-b details details:hover { border-left-color: var(--ink-3); }
+	.part-b details details[open] {
+		border-left-color: var(--accent);
+		border-top: none;
+		background: rgba(44,93,63,0.025);
+	}
+	.part-b details details > summary {
+		font-size: 15px;
+		padding: 0 0 0 24px;
+		margin: 0;
+	}
+	.part-b details details > summary::before { left: 0; font-size: 20px; }
+	.part-b details details[open] > summary { border-bottom-color: var(--line); padding-bottom: var(--gap-3); margin-bottom: var(--gap-3); }
 
 	/* 源码链接 footer */
 	.source-ref {
@@ -1534,6 +1974,85 @@
 	.part-b pre.code .kw { color: #e09a4f; }
 	.part-b pre.code .str { color: #a8c97f; }
 	.part-b pre.code .cmt { color: #7e7e6e; font-style: italic; }
+
+	/* ============================================================
+	   B2.1 outer panel(reviewer S1~S12 群)— 2026-05-27 新增
+	   ============================================================ */
+	.part-b details#b2-1 {
+		border: 1px solid var(--ink-3);
+		border-left: 3px solid var(--accent);
+		background: var(--paper);
+		padding: 24px 32px 32px;
+		margin-bottom: var(--gap-5);
+		border-radius: 2px;
+	}
+	.part-b details#b2-1[open] {
+		border-top: 2px solid var(--ink);
+		border-left-color: var(--accent);
+	}
+	.part-b details#b2-1 > summary { font-size: 19px; }
+	.part-b details#b2-1 > summary .star {
+		color: var(--accent-2);
+		font-size: 0.85em;
+		margin-left: 4px;
+		vertical-align: 0.05em;
+	}
+
+	/* B2.1 内的子 details(S1~S12)用统一紧凑卡片,墨绿左条联结归属 */
+	.part-b details#b2-1 > details {
+		border: 1px solid var(--line);
+		border-left: 2px solid var(--line);
+		border-radius: 2px;
+		background: var(--paper);
+		padding: 16px 24px;
+		margin: 12px 0;
+	}
+	.part-b details#b2-1 > details:hover { border-left-color: var(--ink-3); }
+	.part-b details#b2-1 > details[open] {
+		border-left-color: var(--accent);
+		border-top-color: var(--ink-3);
+		border-top-width: 1px;
+		background: rgba(44,93,63,0.02);
+	}
+	.part-b details#b2-1 > details > summary {
+		font-size: 15px;
+		padding: 0 0 0 26px;
+		margin: 0;
+	}
+	.part-b details#b2-1 > details > summary::before { left: 0; font-size: 20px; }
+
+	/* B2.1 outer summary 之后的 panel-label(S1—S12 · reviewer 操作手册) */
+	.part-b .panel-label {
+		margin: var(--gap-3) 0 var(--gap-4);
+		padding: 0 0 var(--gap-2);
+		border-bottom: 1px dashed var(--line);
+		font-family: var(--mono);
+		font-size: 10px;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		color: var(--accent-3);
+		display: flex;
+		align-items: baseline;
+		gap: var(--gap-3);
+	}
+	.part-b .panel-label::before {
+		content: "§";
+		font-family: var(--serif);
+		font-size: 18px;
+		letter-spacing: 0;
+		color: var(--accent);
+		line-height: 1;
+	}
+	.part-b .panel-label .count {
+		margin-left: auto;
+		color: var(--ink-3);
+		letter-spacing: 0.04em;
+		font-size: 10px;
+	}
+	@media (max-width: 767px) {
+		.part-b details#b2-1 { padding: 18px 20px 22px; }
+		.part-b details#b2-1 > details { padding: 14px 18px; }
+	}
 </style>
 
 <header class="part-divider" id="part-b">
@@ -1727,7 +2246,7 @@
 				源码:<code>node_modules/@earendil-works/pi-coding-agent/dist/main.d.ts</code> · <code>dist/core/extensions/types.d.ts</code> § <code>ExtensionAPI</code> · README.md
 			</footer>
 		</details>
-		<details open id="b1-2">
+		<details id="b1-2">
 			<summary>B1.2 内部运作机制(turn loop / tool dispatch / event)</summary>
 			<p>
 				API 表面只是 pi 给 extension 的「接缝」;真正决定一个评审跑起来长什么样的,是 pi 内部把这些接缝串成的<strong>生命周期机制</strong>。本节按四层展开:turn loop 序列 / event 系统 / tool dispatch 7 步 / extension factory lifecycle。
@@ -1871,7 +2390,7 @@ user sends another prompt ◄─────────────────
 				源码:<code>node_modules/@earendil-works/pi-coding-agent/docs/extensions.md</code> § Lifecycle Overview · <code>dist/core/extensions/types.d.ts</code> § ExtensionAPI · <code>dist/core/extensions/runner.d.ts</code> · <code>dist/core/agent-session.d.ts</code>
 			</footer>
 		</details>
-		<details open id="b1-3">
+		<details id="b1-3">
 			<summary>B1.3 flower 怎么用 pi(extension 工厂 / provider 注册)</summary>
 			<p>
 				前两节讲的是 pi 上游<strong>提供了</strong>什么。本节是镜像问题:flower-code-reviewer 在 pi 这块底盘上,<strong>到底落了哪些东西</strong>?答案集中在两个文件上——<code>extension.ts</code> 是「注册总线」,<code>observability.ts</code> 是「事件监听旁路」。两个文件加起来不到 200 行,但承载了 reviewer 跑通一次评审的全部 pi 集成逻辑。下面把它们精确 dump 出来,reader 不需要切换到 GitHub 就能读完。
@@ -2033,7 +2552,7 @@ user sends another prompt ◄─────────────────
 				源码:<code>packages/flower-code-reviewer/src/extension.ts</code> · <code>packages/flower-code-reviewer/src/observability.ts</code> · <code>packages/flower-providers/src/register.ts</code> § <code>registerHavefunProviders</code>
 			</footer>
 		</details>
-		<details open id="b1-4">
+		<details id="b1-4">
 			<summary>B1.4 设计哲学 · 与同类对比</summary>
 			<p>
 				前三节回答了「pi 给了什么 / 怎么工作 / flower 怎么用」。本节回答最后一个问题:<strong>为什么是 pi</strong>?要回答它,需要先把 pi 放到「同类工具光谱」中找它的位置,再讲 flower 做选择时实际付出了什么、保留了什么。
@@ -2201,10 +2720,14 @@ user sends another prompt ◄─────────────────
 			<h2 class="sec-title">7 个 package 详细职责</h2>
 		</div>
 		<details open id="b2-1">
-			<summary>B2.1 flower-code-reviewer ★(展开 · S1-S12 完整 inline)</summary>
+			<summary>B2.1 flower-code-reviewer <span class="star">★</span></summary>
+			<div class="panel-label">
+				<span>S1 — S12 · reviewer 操作手册</span>
+				<span class="count">12 节 · 默认仅 S1 / S2 / S3 展开</span>
+			</div>
 
 			<p style="font-size: 14px; color: var(--ink-3); margin-top: 0;">
-				<em>本节是 flower-code-reviewer 的完整操作手册,共 S1-S12 十二个子节。S1/S2/S3/S6/S7/S8/S9/S11 默认展开(reader 经常找),S4(9 个顶层源文件 + comments 子目录)/ S5(prompts 工作流字符级 dump)/ S10(容器运维)/ S12(6 个 few-shot 字符级 dump)默认折叠,需要时再点开。</em>
+				<em>本节是 flower-code-reviewer 的完整操作手册,共 S1-S12 十二个子节。S1/S2/S3 默认展开(reader 最常用),S4~S12 默认折叠 — 需要时点开 chevron 即可深潜。Ctrl-F 浏览器搜索可命中折叠节内容,自动展开。</em>
 			</p>
 
 			<!-- ============================================================
@@ -2695,7 +3218,7 @@ ${truncationHint}</pre>
 			<!-- ============================================================
 			     S6 · 关键 features
 			     ============================================================ -->
-			<details open id="b2-1-s6">
+			<details id="b2-1-s6">
 				<summary>S6 · 关键 features 已 ship · 6 个卡片</summary>
 
 				<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px;">
@@ -2740,7 +3263,7 @@ ${truncationHint}</pre>
 			<!-- ============================================================
 			     S7 · exit code + isLlmFailure 五级判定
 			     ============================================================ -->
-			<details open id="b2-1-s7">
+			<details id="b2-1-s7">
 				<summary>S7 · 错误处理与 exit code · 0/1/2 + isLlmFailure 五级判定</summary>
 
 				<h4>exit code 0/1/2 语义</h4>
@@ -2827,7 +3350,7 @@ ${truncationHint}</pre>
 			<!-- ============================================================
 			     S8 · 环境变量表
 			     ============================================================ -->
-			<details open id="b2-1-s8">
+			<details id="b2-1-s8">
 				<summary>S8 · 配置与环境变量表</summary>
 
 				<p>下表对照 <code>packages/flower-providers/src/env.ts</code> 与 <code>packages/flower-code-reviewer/src/run.ts</code> 中所有 <code>process.env.*</code> 实际读取点。</p>
@@ -2952,7 +3475,7 @@ ${truncationHint}</pre>
 			<!-- ============================================================
 			     S9 · GitLab CI yaml
 			     ============================================================ -->
-			<details open id="b2-1-s9">
+			<details id="b2-1-s9">
 				<summary>S9 · GitLab CI 接入(yaml 示例 + allow_failure 取舍)</summary>
 
 				<p>业务方有两种接入方式:<strong>(推荐)include harness 模板</strong> 与 <strong>(备用)直接 inline image 引用</strong>。前者后续 reviewer 镜像 / 配置升级走 harness 模板版本,业务方零改动;后者脱离 harness 自管 image。</p>
@@ -3081,7 +3604,7 @@ exec node /app/packages/flower-code-reviewer/dist/cli.js "$@"</pre>
 			<!-- ============================================================
 			     S11 · 已知局限与 roadmap
 			     ============================================================ -->
-			<details open id="b2-1-s11">
+			<details id="b2-1-s11">
 				<summary>S11 · 已知局限与 roadmap(截至 2026-05-22)</summary>
 
 				<p>本节<strong>诚实</strong>列出当前(2026-05-22 commit 快照)的局限。已合并的 3 个修复 sibling(<code>05-21-reviewer-trace-noise-cleanup</code> / <code>05-21-walkthrough-blocker-consistency</code> / <code>05-21-flower-providers-default-fallback</code>)<em>已从 known-issues 移出</em>,改为"已修复"记录在尾部。</p>
@@ -3691,7 +4214,7 @@ LLM 实际通过 `gitlab_post_line_comment` 发了 **4 条 blocker**,但写 walk
 			<div class="sec-num">B3</div>
 			<h2 class="sec-title">跨包数据流</h2>
 		</div>
-		<details open id="b3-1">
+		<details id="b3-1">
 			<summary>B3.1 LLM 调用链:reviewer → providers → pi-ai → havefun</summary>
 
 			<h3>从一句 prompt 到上游 LLM token:四段串联的网关链路</h3>
@@ -3792,7 +4315,7 @@ type ApiStreamSimpleFunction =
 				源码:<code>packages/flower-code-reviewer/src/run.ts</code> §<code>runReview</code> · <code>packages/flower-providers/src/runtime.ts</code> §<code>buildPiCliArgs</code> · <code>packages/flower-providers/src/register.ts</code> §<code>registerHavefunProviders</code>
 			</footer>
 		</details>
-		<details open id="b3-2">
+		<details id="b3-2">
 			<summary>B3.2 tool dispatch:LLM tool_call → compliance 拦截 → tools-gitlab REST</summary>
 
 			<h3>tool_call 多 handler 串行链:compliance 拦截、audit、trace 与工具执行的协奏</h3>
@@ -3899,7 +4422,7 @@ interface ReviewTrace {
 				源码:<code>packages/flower-compliance/src/index.ts</code> §<code>registerCiReadOnlyGuards</code> / §<code>splitCommandChain</code> · <code>packages/flower-tools-gitlab/src/index.ts</code> §<code>registerGitlabTools</code> · <code>packages/flower-code-reviewer/src/extension.ts</code> §<code>registerReviewTrace</code>
 			</footer>
 		</details>
-		<details open id="b3-3">
+		<details id="b3-3">
 			<summary>B3.3 observability 旁路:pi event → listener → stdout</summary>
 
 			<h3>纯只读旁路:6 个 pi event 经截断后写 stdout,默认开,FLOWER_VERBOSE 可关</h3>
@@ -4000,7 +4523,7 @@ interface AfterProviderResponseEvent { type:"after_provider_response"; status:nu
 				源码:<code>packages/flower-code-reviewer/src/observability.ts</code> §<code>registerObservability</code> · <code>node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts</code> §<code>TurnStartEvent</code> / §<code>MessageUpdateEvent</code>
 			</footer>
 		</details>
-		<details open id="b3-4">
+		<details id="b3-4">
 			<summary>B3.4 SIEM 审计:compliance 拦截 → POST SIEM_INGEST_URL</summary>
 
 			<h3>三类事件 fire-and-forget 上报:fail-open + 2s 超时 + 只上报字段名不上 value</h3>
@@ -4113,6 +4636,118 @@ interface AuditRecord { kind:string; product:string; ts:number; [key:string]:unk
 </section>
 
 </div><!-- /.part-b -->
+
+</main><!-- /.doc-main -->
+
+<!-- ============================================================
+     2026-05-27 新增:scrollspy + hamburger 抽屉 交互
+     scrollspy:IntersectionObserver 监听 section + 一级 details,sidebar 高亮当前可视章节
+     hamburger:移动端打开 / 关闭抽屉,蒙层点击关闭,链接点击自动关闭
+     依赖:0(纯 vanilla JS,降级 = sidebar 仅作锚点列表)
+     ============================================================ -->
+<script>
+(function () {
+	'use strict';
+
+	// ---------- Scrollspy ----------
+	if ('IntersectionObserver' in window) {
+		var ids = [];
+		var links = document.querySelectorAll('.side-nav [data-target]');
+		links.forEach(function (a) { ids.push(a.dataset.target); });
+
+		var targets = ids
+			.map(function (id) { return document.getElementById(id); })
+			.filter(function (t) { return t !== null; });
+
+		var lastActive = null;
+		var activate = function (id) {
+			if (id === lastActive) return;
+			lastActive = id;
+			document.querySelectorAll('.side-nav a.active').forEach(function (a) {
+				a.classList.remove('active');
+			});
+			var link = document.querySelector('.side-nav [data-target="' + id + '"]');
+			if (link) {
+				link.classList.add('active');
+				// 自动滚动 sidebar 让 active 项可见(仅在 sidebar 内,不影响主滚动)
+				var nav = document.getElementById('side-nav');
+				var rect = link.getBoundingClientRect();
+				var navRect = nav.getBoundingClientRect();
+				if (rect.top < navRect.top + 40 || rect.bottom > navRect.bottom - 40) {
+					link.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+				}
+			}
+		};
+
+		var io = new IntersectionObserver(function (entries) {
+			var visibleIds = entries
+				.filter(function (e) { return e.isIntersecting; })
+				.map(function (e) { return e.target.id; });
+			if (visibleIds.length === 0) return;
+			// 选 DOM order 最靠前的 visible target,作为"当前阅读位置"
+			for (var i = 0; i < ids.length; i++) {
+				if (visibleIds.indexOf(ids[i]) !== -1) {
+					activate(ids[i]);
+					return;
+				}
+			}
+		}, {
+			rootMargin: '-10% 0px -70% 0px',
+			threshold: 0
+		});
+
+		targets.forEach(function (t) { io.observe(t); });
+	}
+
+	// ---------- Hamburger / Drawer ----------
+	var toggle = document.querySelector('.nav-toggle');
+	var nav = document.getElementById('side-nav');
+	var scrim = document.querySelector('.nav-scrim');
+	var closeBtn = document.querySelector('.side-nav-close');
+
+	if (toggle && nav && scrim) {
+		var openDrawer = function () {
+			nav.classList.add('show');
+			scrim.classList.add('show');
+			toggle.setAttribute('aria-expanded', 'true');
+			document.body.style.overflow = 'hidden';
+		};
+		var closeDrawer = function () {
+			nav.classList.remove('show');
+			scrim.classList.remove('show');
+			toggle.setAttribute('aria-expanded', 'false');
+			document.body.style.overflow = '';
+		};
+
+		toggle.addEventListener('click', function () {
+			if (toggle.getAttribute('aria-expanded') === 'true') {
+				closeDrawer();
+			} else {
+				openDrawer();
+			}
+		});
+		scrim.addEventListener('click', closeDrawer);
+		if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+
+		// 点击 sidebar 内任意链接(移动端)→ 关闭抽屉
+		nav.querySelectorAll('a[href^="#"]').forEach(function (a) {
+			a.addEventListener('click', function () {
+				if (window.matchMedia('(max-width: 767px)').matches) {
+					// 留 60ms 让锚点跳转启动,再关抽屉,体验更顺
+					setTimeout(closeDrawer, 60);
+				}
+			});
+		});
+
+		// Escape 键关闭抽屉
+		document.addEventListener('keydown', function (e) {
+			if (e.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
+				closeDrawer();
+			}
+		});
+	}
+})();
+</script>
 
 </body>
 </html>
