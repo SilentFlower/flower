@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "检查文档是否符合 flower-code-reviewer 包入口层事实与规范。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/directory-structure.md", "reason": "检查 S4 模块职责和源码路径是否覆盖且没有张冠李戴。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "检查退出码、prompt 硬约束、注册顺序、工具行为等关键事实是否准确。"}
+{"file": ".trellis/spec/guides/index.md", "reason": "检查跨层模式、fail-open、review trace 等架构解释是否与沉淀一致。"}

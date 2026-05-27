@@ -10,17 +10,18 @@
 
 产出一份**单文件、自包含、浏览器直接可看**的 HTML(无外部 JS/CSS 依赖,inline 样式),把 flower-code-reviewer **从外部接入视角到内部实现细节**完整阐述清楚,让读者**不用读代码也能拿到 80% 的信息**。
 
-**同时**:把现有的 `intro.html`(讲整个 monorepo 宏观)也一并搬进新建的 `docs/` 目录,以后所有 HTML 类长文档都集中在 `docs/`,**避免根目录散落**。
+**2026-05-27 变更确认**:用户明确说明本任务的已实现载体是 `docs/intro.html`,不是另起 `docs/code-reviewer-detailed.html`。因此本任务改为在增强版 `docs/intro.html` 的 B2.1 章节内 inline 完成 flower-code-reviewer S1-S12 操作手册,并验收该章节的事实准确性与可读性。
+
+**同时**:把现有的 `intro.html` 搬进新建的 `docs/` 目录,以后所有 HTML 类长文档都集中在 `docs/`,**避免根目录散落**。
 
 ### 文件最终位置
 
 ```
 docs/                                  ← 新增,所有 HTML 长文档归口
-├── intro.html                         ← 从仓库根 git mv 过来,内容不动
-└── code-reviewer-detailed.html        ← 本任务新增,详细讲 flower-code-reviewer
+└── intro.html                         ← 从仓库根移动后增强;B2.1 内含 flower-code-reviewer S1-S12
 ```
 
-`intro.html` 现在没有任何代码 / md 引用它(已 grep 确认),安全 `git mv` 不会破链接。
+`intro.html` 现在没有任何代码 / md 引用它(已 grep 确认),安全移动不会破链接。
 
 ## 2. 视觉与风格约束
 
@@ -76,7 +77,7 @@ docs/                                  ← 新增,所有 HTML 长文档归口
 | 兄弟包 | 用来做什么 |
 |---|---|
 | `flower-providers` | 注册 4 个 havefun-* LLM provider;翻译 env 到 pi CLI argv |
-| `flower-tools-gitlab` | 5 个 GitLab REST tool(get_mr_files / get_mr_diff / get_file_content / get_previous_review / post_comment / post_line_comment) |
+| `flower-tools-gitlab` | 6 个 GitLab REST tool(`gitlab_get_mr_files` / `gitlab_get_mr_diff` / `gitlab_get_file_content` / `gitlab_get_previous_review` / `gitlab_post_comment` / `gitlab_post_line_comment`) |
 | `flower-tools-common` | zentao_search / dingtalk_doc_search(stub,跨产品共享) |
 | `flower-compliance` | ci-readonly 模式:写工具禁用 / bash 白名单 + SIEM 审计 |
 | `@earendil-works/pi-coding-agent` | 上游 agent 框架,提供 piMain / extensions / 内置 read/bash/edit/write 工具 |
@@ -143,9 +144,9 @@ docs/                                  ← 新增,所有 HTML 长文档归口
 | `GITLAB_TOKEN`(实际从 `REVIEWER_BOT_TOKEN` 注入) | 是 | - | GitLab API token,`api` scope |
 | `LLM_BASE_URL` | 是 | - | havefun 网关根 URL |
 | `LLM_API_KEY` | 是 | - | havefun 网关 key |
-| `LLM_PROVIDER` | 否 | (pi 内置)| havefun-anthropic / -openai / -openai-responses / -gemini |
-| `LLM_MODEL` | 否 | (pi 内置 gpt-5.4)| BUILTIN_MODELS 中的 id |
-| `LLM_REASONING_EFFORT` | 否 | (pi 内置 medium)| off/minimal/low/medium/high/xhigh |
+| `LLM_PROVIDER` | 否 | havefun-openai-responses | havefun-anthropic / -openai / -openai-responses / -gemini |
+| `LLM_MODEL` | 否 | gpt-5.5 | BUILTIN_MODELS 中的 id |
+| `LLM_REASONING_EFFORT` | 否 | high | off/minimal/low/medium/high/xhigh |
 | `SIEM_INGEST_URL` | 否 | - | 审计上报 endpoint |
 | `FLOWER_MAX_FILES` | 否 | 50 | diff cap |
 | `FLOWER_MAX_FILE_SIZE` | 否 | 51200 | 单文件 byte 上限 |
@@ -194,17 +195,17 @@ code-review:
 
 ### AC1 · 文件 + 视觉
 
-- [ ] **AC1.1** 新建 `docs/` 目录;新文件位于 `docs/code-reviewer-detailed.html`
-- [ ] **AC1.2** `git mv intro.html docs/intro.html`(保留 git 历史,**不**复制粘贴新增 + 删旧)
-- [ ] **AC1.3** 移动后 intro.html 内容**字符级不变**(用 `git diff -M` 验证 rename 而非内容改动)
-- [ ] **AC1.4** 双击 / 用 `open` / 浏览器 file:// 直接打开两份 HTML 都能完整渲染,无 console error
-- [ ] **AC1.5** 视觉风格 `code-reviewer-detailed.html` 与 `intro.html` 一致(颜色令牌、字体栈、顶部状态条样式 reuse)
-- [ ] **AC1.6** 无外部 JS / CSS / 字体 / mermaid CDN 依赖(grep 文件确认无 `https://` 或 `<script src>`)
-- [ ] **AC1.7** 新文件大小合理(预期 80-150KB,inline 样式 + SVG)
+- [ ] **AC1.1** 新建 `docs/` 目录;增强版文档位于 `docs/intro.html`
+- [ ] **AC1.2** 根目录不再散落 `intro.html`;最终只有 `docs/intro.html`
+- [ ] **AC1.3** `docs/intro.html` 保持单文件自包含,可通过浏览器 `file://` 直接打开
+- [ ] **AC1.4** `docs/intro.html` 能完整渲染,无 console error
+- [ ] **AC1.5** flower-code-reviewer B2.1 章节与 intro.html 整体视觉语言一致(颜色令牌、字体栈、顶部状态条样式 reuse)
+- [ ] **AC1.6** 无外部 JS / CSS / 字体 / mermaid CDN 依赖;允许普通 `<a href="https://...">` 引用链接和代码示例里的 URL
+- [ ] **AC1.7** 文件大小合理(当前工程手册约 250KB,允许包含 monorepo 宏观 + reviewer 深挖章节)
 
 ### AC2 · 内容完整性
 
-- [ ] **AC2.1** S1-S12 全部 sections 落地,每节有正文 + 必要图表
+- [ ] **AC2.1** `docs/intro.html` 的 B2.1 中 S1-S12 全部 sections 落地,每节有正文 + 必要图表
 - [ ] **AC2.2** 9 个内部源文件每个都有专节解释(S4 全覆盖)
 - [ ] **AC2.3** S2 触发链路图 + S3 包依赖图 至少各 1 张(SVG 或 ASCII art)
 - [ ] **AC2.4** S8 env 表所有变量与代码 `flower-providers/src/env.ts` + `flower-code-reviewer/src/run.ts` 实际读的对得上
@@ -215,7 +216,7 @@ code-review:
 
 - [ ] **AC3.1** 全文中文为主,中英文混用风格与 intro.html 一致
 - [ ] **AC3.2** HTML 结构清晰(`<header>` / `<section>` / `<article>` 语义化标签,不用 `<div>` 堆砌)
-- [ ] **AC3.3** 顶部有 TOC(目录锚点),可快速跳到任意 S1-S12
+- [ ] **AC3.3** 文档目录中可进入 B2.1;B2.1 内每个 S1-S12 有稳定锚点
 - [ ] **AC3.4** 关键术语首次出现时**直接给出该术语在源码的路径**(如「`scanForBlockers`(`run.ts:169`)」),便于读者从文档跳到源码
 
 ### AC4 · 校对
@@ -230,7 +231,7 @@ code-review:
 - ❌ 多页面 / SPA / 双语版本 — 单文件中文为主即可
 - ❌ 与 intro.html 合并 — 两份文档保持职责分离(intro 宏观、本文档微观),都进 `docs/` 并存
 - ❌ 跨包的 flower-providers / flower-tools-gitlab / flower-compliance 详细文档 — 本任务**只**讲 flower-code-reviewer,其他包仅引用边界
-- ❌ 改 intro.html 内容 — 只 `git mv` 改位置,内容不动(保持 commit 干净)
+- ❌ 另建 `docs/code-reviewer-detailed.html` — 用户已确认实现载体是 `docs/intro.html`
 - ❌ 给 `docs/` 加 README / index.md — `intro.html` 本身就是入口,不重复造
 
 ## 6. Risks

@@ -63,6 +63,13 @@ export function registerCompliance(pi: ExtensionAPI, options: { mode: Compliance
 const BASH_ALLOW_LIST =
 	/^(git|grep|rg|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|uniq|tr|column|diff|comm|printf|echo|basename|dirname|realpath|pwd|date|which|type|command)\b/;
 
+type BashChainSeparator = ";" | "&&" | "&" | "||" | "|";
+
+interface BashCommandSegment {
+	segment: string;
+	separatorBefore?: BashChainSeparator;
+}
+
 /**
  * 高危命令拦截时附带的替代建议(供 LLM 在下一轮 turn 主动改用对的工具)
  *
@@ -122,10 +129,29 @@ function buildBashBlockReason(firstWord: string): string {
  * @returns 拆出来的每段(已 trim),空段过滤
  */
 export function splitCommandChain(cmd: string): string[] {
-	const segments: string[] = [];
+	return splitCommandChainWithSeparators(cmd).map((s) => s.segment);
+}
+
+/**
+ * Quote-aware 按 chain separator 拆 bash 命令字符串,并保留每段前面的连接符。
+ *
+ * @param cmd LLM 传入的 bash 命令字符串(已 trim)
+ * @returns 拆出来的每段及其前置连接符(已 trim,空段过滤)
+ */
+function splitCommandChainWithSeparators(cmd: string): BashCommandSegment[] {
+	const segments: BashCommandSegment[] = [];
 	let current = "";
+	let separatorBefore: BashChainSeparator | undefined;
 	let inSingle = false;
 	let inDouble = false;
+	const pushSegment = (): void => {
+		const segment = current.trim();
+		if (segment.length > 0) {
+			segments.push({ segment, ...(separatorBefore !== undefined ? { separatorBefore } : {}) });
+			separatorBefore = undefined;
+		}
+		current = "";
+	};
 	for (let i = 0; i < cmd.length; i++) {
 		const c = cmd[i];
 		// 反斜杠转义(single quote 内不生效)
@@ -150,29 +176,41 @@ export function splitCommandChain(cmd: string): string[] {
 		if (!inSingle && !inDouble) {
 			// `;` 单字符分割
 			if (c === ";") {
-				segments.push(current);
-				current = "";
+				pushSegment();
+				separatorBefore = ";";
 				continue;
 			}
 			// `&&` 双字符分割(单 `&` 后台运行也算分割,reviewer 场景不应该后台跑)
 			if (c === "&") {
-				segments.push(current);
-				current = "";
-				if (cmd[i + 1] === "&") i++;
+				pushSegment();
+				if (cmd[i + 1] === "&") {
+					separatorBefore = "&&";
+					i++;
+				} else {
+					separatorBefore = "&";
+				}
 				continue;
 			}
 			// `||` 双字符分割(单 `|` 管道也算分割)
 			if (c === "|") {
-				segments.push(current);
-				current = "";
-				if (cmd[i + 1] === "|") i++;
+				pushSegment();
+				if (cmd[i + 1] === "|") {
+					separatorBefore = "||";
+					i++;
+				} else {
+					separatorBefore = "|";
+				}
 				continue;
 			}
 		}
 		current += c;
 	}
-	if (current.length > 0) segments.push(current);
-	return segments.map((s) => s.trim()).filter((s) => s.length > 0);
+	pushSegment();
+	return segments;
+}
+
+function isSafeOrFallback(seg: BashCommandSegment): boolean {
+	return seg.separatorBefore === "||" && (seg.segment === "true" || seg.segment === ":");
 }
 
 /**
@@ -201,9 +239,9 @@ function registerCiReadOnlyGuards(pi: ExtensionAPI): void {
 			if (segments.length === 0) {
 				return { block: true, reason: buildBashBlockReason("") };
 			}
-			for (const seg of segments) {
-				const firstWord = seg.split(/\s+/)[0] ?? "";
-				if (!BASH_ALLOW_LIST.test(seg)) {
+			for (const seg of splitCommandChainWithSeparators(cmd)) {
+				const firstWord = seg.segment.split(/\s+/)[0] ?? "";
+				if (!BASH_ALLOW_LIST.test(seg.segment) && !isSafeOrFallback(seg)) {
 					return {
 						block: true,
 						reason: buildBashBlockReason(firstWord),

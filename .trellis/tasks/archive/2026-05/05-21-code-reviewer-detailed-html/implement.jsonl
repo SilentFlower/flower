@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "flower-code-reviewer 包入口层规范索引,用于理解 CLI、prompt、extension 等文档事实边界。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/directory-structure.md", "reason": "列出 code-reviewer 源码目录职责,支撑 S4 模块剖析和路径溯源。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/component-guidelines.md", "reason": "说明入口模块契约、JSDoc、退出码和 CLI 可读性约束,支撑文档中的模块职责描述。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "包含 prompt 硬约束、退出码语义、注册顺序等已沉淀事实,支撑 S5-S7。"}
+{"file": ".trellis/spec/guides/index.md", "reason": "提供跨层模式索引,支撑 fail-open、review trace 和 common-up 等 feature 背景。"}

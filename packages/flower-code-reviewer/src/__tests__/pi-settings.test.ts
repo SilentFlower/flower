@@ -12,7 +12,7 @@ import type { ReviewRuntimeConfig } from "../runtime-config.js";
 function makeConfig(overrides: Partial<ReviewRuntimeConfig> = {}): ReviewRuntimeConfig {
 	return {
 		reviewTimeoutMs: 1080000,
-		llmRequestTimeoutMs: 120000,
+		llmRequestTimeoutMs: 60000,
 		llmProviderMaxRetries: 1,
 		llmAgentMaxRetries: 3,
 		contextReadBatchSize: 5,
@@ -64,7 +64,7 @@ describe("preparePiSettings", () => {
 		expect(settings.retry?.maxRetries).toBe(3);
 		expect(settings.retry?.baseDelayMs).toBe(2000);
 		expect(settings.retry?.provider).toEqual({
-			timeoutMs: 120000,
+			timeoutMs: 60000,
 			maxRetries: 1,
 			maxRetryDelayMs: 15000,
 		});

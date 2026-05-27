@@ -261,3 +261,80 @@ infra MR 158 把 .flower-code-review 默认 FLOWER_IMAGE_TAG 改 latest + image.
 2. **`pull_policy: Always` 在 pineapple 仓被拒**(Runner allowed_pull_policies=[IfNotPresent]),按模板 escape hatch 锁 sha + override `if-not-present` 解决。
 3. **Runner Pod template `hostAliases.ip` 错填 hostname**:无法在 user 层修复,需 admin 介入(本次最终由 admin 修复)。
 
+
+
+## Session 7: 归档 code-reviewer-detailed-html · intro.html reviewer 章节事实口径修正收尾
+
+**Date**: 2026-05-27
+**Task**: 归档 code-reviewer-detailed-html · intro.html reviewer 章节事实口径修正收尾
+**Package**: flower-code-reviewer
+**Branch**: `doc/code-reviewer-detailed-html`
+
+### Summary
+
+code-reviewer-detailed-html 任务在 cccf174 完成 reviewer 章节 S1-S12 事实口径修正并推送,本次会话执行 Phase 3.5 收尾归档,task 移入 archive/2026-05/。同分支 intro-html-deep-enhance 母任务保持 in_progress,新建独立任务跟进 intro.html 样式优化 + 快捷导航。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cccf174` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 7: reviewer 稳定性:软超时、SSE 重试、上下文收敛
+
+**Date**: 2026-05-26
+**Task**: reviewer 稳定性:软超时、SSE 重试、上下文收敛
+**Package**: flower-code-reviewer
+**Branch**: `fix/reviewer-timeout-sse-context`
+
+### Summary
+
+完成 reviewer 18 分钟软超时、provider timeout/retry settings、GitLab 文件行窗读取与 prompt 上下文收敛；infra 模板 MR !191 将 code-review hard timeout 调整为 20 minutes。
+
+### Main Changes
+
+- `flower-code-reviewer` 增加 18 分钟软超时，避免卡到 GitLab CI hard timeout 才失败。
+- provider 请求支持 timeout / retry settings，并在 SSE 无内容返回等接口失败场景下重试。
+- GitLab 文件读取改为行窗读取，默认 500 行、最大 1000 行，未命中时再续读，降低无脑拉取上下文的成本。
+- reviewer prompt 上下文收敛，避免 diff 和文件内容过量进入模型。
+- infra 内层仓 `devops-infra` 已提 MR !191，把 code-review CI hard timeout 调整为 20 minutes。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5a9cfe4` | fix: stabilize code reviewer timeout and context reads |
+
+### Testing
+
+- [OK] `npm test --workspace @flower-ai/flower-code-reviewer`，143 tests
+- [OK] `npm test --workspace @flower-ai/flower-tools-gitlab`，60 tests
+- [OK] `npm run build --workspace @flower-ai/flower-code-reviewer`
+- [OK] `npm run build --workspace @flower-ai/flower-tools-gitlab`
+- [OK] `git diff --check`
+- [OK] infra YAML 自定义 GitLab loader 验证 `.flower-code-review.timeout == "20 minutes"`
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
