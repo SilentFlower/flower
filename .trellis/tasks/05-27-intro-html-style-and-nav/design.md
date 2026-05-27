@@ -908,3 +908,569 @@ sidebar 内 `padding: var(--gap-5) 0 var(--gap-4);` 顶部留 32px 给 brand,gro
 ---
 
 **Visual Spec 已写入 design.md § 8**。8 个 Spec 全部给出 Decision + CSS 草模 + Why,实施阶段可直接复用,无任何外部依赖,纯用现有 token + 单文件 inline。
+
+---
+
+## 9 · Visual Spec v2(sidebar 重做 · by frontend-design)
+
+### v2 美学方向(从 v1 调整)
+
+v1 走的是 **brutalist editorial**(密集铺陈 + `§` 学术符号 + mono 技术清单 + dashed 连线)。用户反馈:零碎、机械、滚动条丑、TOC 太长。
+
+v2 重定位为 **refined editorial · Library of America colophon × Paris Review 目录页**:
+- *Library of America* 文集扉页 — 大字 italic serif 书名 + uppercase mono caption + 一道琥珀细线
+- *Paris Review* 目录 — 罗马数字(I. II. III.)替代阿拉伯,serif italic 灰
+- *Pelican Books 1960s* 装帧 — 留白主导,字号差不靠粗细而靠 family + letter-spacing
+- *18 世纪学报手稿* — 一级标题上下用极细 ink-3 横线 + em-dash 收尾(章节书写笔触)
+
+关键准则升级:
+1. **垂直线退场** — 没有 dashed,没有 solid 长左条。层级靠 `padding-left` 阶梯 + prefix 编号。
+2. **active 是红铅笔批注** — 一个 14px 高 × 2px 宽朱砂短条贴在文字旁,而不是占满行高的"左 rail"。这是 editor 真实笔触。
+3. **prefix 是主角** — 罗马数字 / 章节号 / "S1" 单字符 用 serif italic 灰,把数字提升为视觉锚,章节名做注解。
+4. **折叠是必需,不是奢侈** — 二级 B1/B2/B3 default close,scrollspy 自动展开当前阅读所在节,移出自动收起(限同时只一个 auto-opened)。用户手动 open 锁定保留。
+5. **滚动条不可见,直到 hover** — paper-on-paper 透明,hover sidebar 才浮现极细灰 thumb。
+
+### Spec A · 可折叠层级(同时只展开当前所在主节点)
+
+**Decision**:用语义 `<details>` 不行(summary 内嵌 `<a>` 会和 toggle 冲突),改 **div + JS 控制 + CSS max-height 过渡** 方案。
+
+```html
+<nav class="side-nav-toc">
+
+  <!-- Part A · 6 节,平铺无折叠(只有 6 项,不必收) -->
+  <section class="nav-group">
+    <h6>Part A · 愿景</h6>
+    <ol class="nav-list">
+      <li class="nav-item">
+        <div class="nav-line">
+          <a class="nav-link" href="#sec-arch" data-target="sec-arch">
+            <span class="prefix"><em>I</em></span>
+            <span class="chapter">架构 · 一座洋葱</span>
+          </a>
+        </div>
+      </li>
+      <li class="nav-item">
+        <div class="nav-line">
+          <a class="nav-link" href="#sec-pi" data-target="sec-pi">
+            <span class="prefix"><em>II</em></span>
+            <span class="chapter">pi 是什么</span>
+          </a>
+        </div>
+      </li>
+      <!-- III · IV · V · VI 同 -->
+    </ol>
+  </section>
+
+  <!-- Part B · 主节点可折叠 -->
+  <section class="nav-group">
+    <h6>Part B · 工程手册</h6>
+    <ol class="nav-list">
+
+      <!-- B0 引子:无子节,纯 link -->
+      <li class="nav-item">
+        <div class="nav-line">
+          <a class="nav-link" href="#b0-intro" data-target="b0-intro">
+            <span class="prefix"><em>B0</em></span>
+            <span class="chapter">引子</span>
+          </a>
+        </div>
+      </li>
+
+      <!-- B1:可折叠主节点,默认 close -->
+      <li class="nav-item has-children" data-state="closed">
+        <div class="nav-line">
+          <a class="nav-link" href="#b1-pi" data-target="b1-pi">
+            <span class="prefix"><em>B1</em></span>
+            <span class="chapter">pi 框架深度分析</span>
+          </a>
+          <button type="button" class="nav-caret" aria-label="展开 B1" aria-expanded="false">›</button>
+        </div>
+        <ol class="nav-sub" aria-hidden="true">
+          <li><a class="nav-link" href="#b1-1" data-target="b1-1">
+            <span class="prefix">§ 1.1</span><span class="chapter">API 表面</span></a></li>
+          <li><a class="nav-link" href="#b1-2" data-target="b1-2">
+            <span class="prefix">§ 1.2</span><span class="chapter">内部运作机制</span></a></li>
+          <li><a class="nav-link" href="#b1-3" data-target="b1-3">
+            <span class="prefix">§ 1.3</span><span class="chapter">flower 怎么用 pi</span></a></li>
+          <li><a class="nav-link" href="#b1-4" data-target="b1-4">
+            <span class="prefix">§ 1.4</span><span class="chapter">设计哲学 · 同类对比</span></a></li>
+        </ol>
+      </li>
+
+      <!-- B2:可折叠 + 内嵌 B2.1 二级折叠 -->
+      <li class="nav-item has-children" data-state="closed">
+        <div class="nav-line">
+          <a class="nav-link" href="#b2-packages" data-target="b2-packages">
+            <span class="prefix"><em>B2</em></span>
+            <span class="chapter">7 个 package</span>
+          </a>
+          <button type="button" class="nav-caret" aria-expanded="false">›</button>
+        </div>
+        <ol class="nav-sub" aria-hidden="true">
+
+          <!-- B2.1:再嵌一层 details(S1-S12) -->
+          <li class="nav-item nav-item-inner has-children" data-state="closed">
+            <div class="nav-line">
+              <a class="nav-link" href="#b2-1" data-target="b2-1">
+                <span class="prefix">§ 2.1</span>
+                <span class="chapter">flower-code-reviewer <span class="star">★</span></span>
+              </a>
+              <button type="button" class="nav-caret" aria-expanded="false">›</button>
+            </div>
+            <ol class="nav-sub nav-sub-inner" aria-hidden="true">
+              <li><a class="nav-link" href="#b2-1-s1" data-target="b2-1-s1">
+                <span class="prefix"><em>S1</em></span><span class="chapter">一句话定位</span></a></li>
+              <li><a class="nav-link" href="#b2-1-s2" data-target="b2-1-s2">
+                <span class="prefix"><em>S2</em></span><span class="chapter">触发链路图</span></a></li>
+              <!-- S3 ~ S12 同 -->
+            </ol>
+          </li>
+
+          <!-- B2.2 ~ B2.7:平 link -->
+          <li class="nav-item">
+            <div class="nav-line">
+              <a class="nav-link" href="#b2-2" data-target="b2-2">
+                <span class="prefix">§ 2.2</span><span class="chapter">flower-providers</span></a>
+            </div>
+          </li>
+          <!-- 2.3 ~ 2.7 同 -->
+        </ol>
+      </li>
+
+      <!-- B3:可折叠主节点 -->
+      <li class="nav-item has-children" data-state="closed">
+        <div class="nav-line">
+          <a class="nav-link" href="#b3-dataflow" data-target="b3-dataflow">
+            <span class="prefix"><em>B3</em></span>
+            <span class="chapter">跨包数据流</span>
+          </a>
+          <button type="button" class="nav-caret" aria-expanded="false">›</button>
+        </div>
+        <ol class="nav-sub" aria-hidden="true">
+          <li><a class="nav-link" href="#b3-1" data-target="b3-1">
+            <span class="prefix">§ 3.1</span><span class="chapter">LLM 调用链</span></a></li>
+          <!-- 3.2 ~ 3.4 同 -->
+        </ol>
+      </li>
+
+    </ol>
+  </section>
+</nav>
+```
+
+```css
+/* nav-item / nav-line / nav-caret 基础 */
+.side-nav .nav-list { list-style: none; padding: 0; margin: 0; }
+.side-nav .nav-item { margin: 0; }
+.side-nav .nav-line {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  position: relative;
+}
+.side-nav .nav-link {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 12px 5px 24px;
+  color: var(--ink-2);
+  text-decoration: none;
+  border: none;
+  transition: color 0.15s ease;
+  position: relative;
+  line-height: 1.45;
+}
+.side-nav .nav-link:hover { color: var(--ink); background: transparent; }
+
+/* caret 按钮(只在 has-children 时显示) */
+.side-nav .nav-caret {
+  flex: 0 0 auto;
+  width: 28px;
+  background: none;
+  border: none;
+  padding: 0 8px 0 0;
+  cursor: pointer;
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--accent-3);            /* 琥珀,与 Part B 卡片化 chevron 同语 */
+  line-height: 1;
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), color 0.15s ease;
+  display: none;                      /* 默认隐藏,只在 has-children 显形 */
+  align-items: center;
+  justify-content: center;
+}
+.side-nav .nav-item.has-children > .nav-line > .nav-caret { display: inline-flex; }
+.side-nav .nav-caret:hover { color: var(--accent-2); }
+.side-nav .nav-item[data-state="open"] > .nav-line > .nav-caret { transform: rotate(90deg); }
+
+/* sub-list 折叠 / 展开 */
+.side-nav .nav-sub {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.side-nav .nav-item[data-state="open"] > .nav-sub { max-height: 800px; }
+
+/* 二级缩进 / 三级缩进 / 四级缩进 — 完全靠 padding,无 vertical line */
+.side-nav .nav-sub > .nav-item > .nav-line > .nav-link {
+  padding-left: 36px;
+}
+.side-nav .nav-sub-inner > .nav-item > .nav-line > .nav-link {
+  padding-left: 52px;
+}
+```
+
+**Why**:
+- 不用 `<details>` 是因为 `<summary>` 内放 `<a>` 在多数浏览器会和 toggle 冲突(点 link 会同时 toggle details),需要 JS preventDefault — 与其打补丁,不如直接用 div + JS 控制干净。
+- max-height transition 是 CSS-only 折叠动画的标配,800px 留余量;真实 max 仅 ~480px(B2 含 7 子节)。
+- caret 用 Part B 内卡片化 chevron 的同款 `›` 琥珀 serif 字符,**两处视觉 echo**:sidebar 折叠的 caret 与正文 details 的 chevron 同源 — 读者会下意识知道"哪里能展开"。
+
+### Spec B · 滚动条(默认透明,hover 浮现)
+
+**Decision**:overlay 透明 + sidebar hover 时显形,Webkit thumb 6px 灰、Firefox thin 系统 fallback。永远不影响 layout(`overflow-y: scroll` 占位 6px,但 thumb 透明时看不见)。
+
+```css
+.side-nav {
+  overflow-y: auto;
+  /* Firefox:细 + 默认透明 */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.2s ease;
+}
+.side-nav:hover {
+  scrollbar-color: var(--line) transparent;
+}
+
+/* Webkit/Blink:更精细控制 */
+.side-nav::-webkit-scrollbar {
+  width: 6px;
+  background: transparent;
+}
+.side-nav::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 0;
+  transition: background 0.2s ease;
+}
+.side-nav:hover::-webkit-scrollbar-thumb {
+  background: var(--line);
+}
+.side-nav:hover::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
+}
+.side-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+```
+
+**Why**:editorial 学术手稿的纸面上不该有"机器化的灰条"。透明默认 = 不打扰阅读;hover 显形 = 必要时找得到。Webkit 的 thumb 6px 配 `--line` 米色调,从 paper 上"浮起"但不抢戏。
+
+### Spec C · 去 dashed,改罗马数字 + 章节号 prefix
+
+**Decision**:**留白阶梯 + serif italic prefix**(Paris Review 目录手法)。Part A 用罗马数字 I-VI;Part B 主节点用 mono "B0/B1/B2/B3";三级用 `§ 1.1` 等 mono;四级 S1-S12 用 serif italic。**完全不用 vertical line**。
+
+```css
+/* prefix 通用:左对齐 min-width,baseline 与 chapter 对齐 */
+.side-nav .prefix {
+  flex: 0 0 auto;
+  min-width: 24px;
+  display: inline-block;
+  text-align: right;
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0;
+}
+.side-nav .prefix em {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  font-size: 12px;            /* serif italic 数字稍大一点更优雅 */
+}
+.side-nav .nav-sub .prefix {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+}
+.side-nav .nav-sub-inner .prefix em {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+/* chapter 文字 */
+.side-nav .chapter {
+  flex: 1;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.side-nav .nav-sub .chapter {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.side-nav .nav-sub-inner .chapter {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+.side-nav .star {
+  color: var(--accent-2);
+  font-size: 0.85em;
+  vertical-align: 0.05em;
+  margin-left: 2px;
+}
+```
+
+**Why**:
+- Roman numerals(I-VI)serif italic 是 17~18 世纪学报章节经典手法,比阿拉伯数字更"古典文献感",和"洋葱 / pi / 同根不同枝"这类思想章节内容相匹配。
+- mono 仅出现在 prefix(B0/B1/§ 1.1 等),不是 chapter 文字 — **prefix = 编号 = 技术坐标,用 mono;chapter = 章节名 = 散文,用 sans**。语义对齐让 mono 不再"console 感"。
+- 阶梯靠 `padding-left: 24 / 36 / 52` 三档,无 vertical line。读者眼睛沿 padding 自然下移,不被横竖线分散。
+
+### Spec D · 四级 S1-S12 — serif italic 数字 + sans 章节
+
+**Decision**:候选 C — serif italic "S1"/"S2"... 数字 + sans 11.5px 章节文字(详见 Spec C 中 `.nav-sub-inner` CSS)。
+
+**Why**:S 子节是"reviewer 操作手册"的具体小节,既要"按编号查找"(用 italic serif 古典数字标号)又要"扫读章节名"(sans 易扫描)。这两个目标分给 prefix 和 chapter 两个 span 各司其职,比 v1 全 mono 的"console 行"优雅得多。
+
+### Spec E · active marker · 红铅笔批注
+
+**Decision**:**朱砂字色 + 600 + 左侧 ::before 红铅笔短条**(14px 高 × 2px 宽,贴在 prefix 左边)。无 bg、无整行左 rail。
+
+```css
+.side-nav .nav-link.active {
+  color: var(--accent-2);
+  font-weight: 500;
+}
+.side-nav .nav-link.active .prefix,
+.side-nav .nav-link.active .prefix em,
+.side-nav .nav-link.active .chapter {
+  color: var(--accent-2);
+}
+.side-nav .nav-link.active::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 14px;
+  background: var(--accent-2);
+  border-radius: 0;
+  /* 略微倾斜,像红铅笔斜划一道(可选) */
+  /* transform: translateY(-50%) skewX(-6deg); */
+}
+
+/* 二级 nav-sub 的 active marker 位置微调(对齐到 prefix 起点左侧) */
+.side-nav .nav-sub .nav-link.active::before { left: 24px; }
+.side-nav .nav-sub-inner .nav-link.active::before { left: 40px; }
+```
+
+**Why**:整行 2px 左条是 SaaS "selected button" 美学;14px 短条是真实编辑用红铅笔在书页旁做的"我读到这里" 批注。短条紧贴 prefix 左侧空白处,与文字基线对齐,克制且 editorial。可选的 `skewX(-6deg)` 让短条略斜,模拟笔触的"运笔感"— 取决于实施时实际视觉。
+
+### Spec F · brand 区(扉页 colophon)
+
+**Decision**:**italic serif 28px "Flower" + uppercase mono 9.5px caption 0.28em + 极细琥珀 1px hr 收尾**。
+
+```html
+<header class="side-nav-head">
+  <a href="#top" class="side-nav-brand">Flower</a>
+  <div class="side-nav-caption">Architecture · Decisions · Vision</div>
+  <div class="side-nav-meta">v0.1.0 — 2026·05</div>
+  <button class="side-nav-close" aria-label="关闭导航">×</button>
+</header>
+```
+
+```css
+.side-nav-head {
+  padding: 36px 24px 26px;
+  position: relative;
+}
+.side-nav-head::after {
+  content: "";
+  position: absolute;
+  left: 24px; right: 24px; bottom: 0;
+  height: 1px;
+  background: var(--accent-3);
+  opacity: 0.55;
+}
+.side-nav-brand {
+  display: block;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  border: none;
+  margin-bottom: 12px;
+  transition: color 0.15s ease;
+}
+.side-nav-brand:hover { color: var(--accent-2); }
+.side-nav-caption {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.side-nav-meta {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+  opacity: 0.7;
+}
+.side-nav-close {
+  display: none;          /* 桌面隐藏,移动端 @media 显示 */
+  position: absolute;
+  top: 32px; right: 18px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--ink-3);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.side-nav-close:hover { color: var(--accent-2); }
+```
+
+**Why**:Library of America 文集扉页就是这个版式 — 大字 italic serif 书名(Flower)+ 下方 UPPERCASE LATIN 字距 0.28em 子标题(Architecture · Decisions · Vision)+ 一道琥珀细线收尾。把 v1 那个 16px serif + 10px small 的"小气 brand"升级为"扉页 colophon",sidebar 顶部有了视觉锚,眼睛进入就有"我打开了一本书"的暗示。
+
+### Spec G · § 朱砂前缀去掉,改 em-dash 收尾
+
+**Decision**:**完全删除 h6::before 的 § 朱砂前缀**。一级 group label 改为:**上方 1px ink-3 横线 + mono uppercase 0.22em + 后置 serif italic em-dash 收尾**。
+
+```css
+.side-nav h6 {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 28px 24px 14px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);     /* 上方细线(取代 § 前缀的引导) */
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.side-nav h6::after {
+  content: "—";
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--ink-3);
+  letter-spacing: 0;
+  opacity: 0.6;
+  flex: 1;
+  text-align: left;
+}
+```
+
+**Why**:`§` 在 v1 是想"学术手稿装饰",但它在每个 h6 前面重复出现就像"商店挂的招牌"重了。删掉后,group label 上方一条极细 ink-3 横线代替 § 担任"引导视线" 的功能,后面 em-dash 像"章节书写完后的笔触收尾"(17 世纪手稿常见)— 比固定的 § 符号更有手作感。
+
+### Spec H · 实施变更清单(相对 v1)
+
+**CSS · 需要删除**(v1 中的):
+1. `.side-nav h6::before { content: "§ "; ... }` — § 朱砂前缀
+2. `.side-nav h6 { border-bottom: 1px solid var(--line); }` — 改为 border-top
+3. `.side-nav .nav-sub { border-left: 1px dashed var(--line); }` — 删 dashed 连线
+4. `.side-nav .nav-sub-2 { border-left: 1px dashed rgba(216,209,194,0.55); }` — 同上
+5. `.side-nav a.active { background: var(--bg-2); border-left-color: var(--accent-2); }` — active bg 与 border-left 全删
+6. `.side-nav .nav-sub-2 > li > a { font-family: var(--mono); ... }` — 四级 mono 字
+7. v1 brand 区 16px serif "Flower" + small mono — 全替换
+
+**CSS · 需要新增**:
+1. `.side-nav-head` + `.side-nav-brand` + `.side-nav-caption` + `.side-nav-meta` + `.side-nav-head::after`(扉页 colophon)
+2. `.side-nav .nav-item / .nav-line / .nav-link / .nav-caret`(替代旧 `a` 通用)
+3. `.side-nav .nav-sub { overflow: hidden; max-height: 0; transition: max-height ... }` + `[data-state="open"]` 切换
+4. `.side-nav .nav-link.active::before { width: 2px; height: 14px; ... }`(红铅笔短条)
+5. `.side-nav .prefix` + `.chapter` + `.prefix em`(prefix 系统)
+6. `.side-nav { scrollbar-width: thin; scrollbar-color: transparent transparent; }` + hover 显形 + Webkit
+7. `.side-nav h6 { border-top + ::after em-dash }`(取代 § 前缀)
+
+**HTML · 需要重构 sidebar 内**(line 1015-1100 区间):
+1. brand 区:从 `<a class="brand"><small>...` 改为 `.side-nav-head` 三行结构(brand / caption / meta)
+2. 每个 `<li><a href="...">...</a></li>` 改为 `<li class="nav-item"><div class="nav-line"><a class="nav-link" href="..." data-target="..."><span class="prefix">...</span><span class="chapter">...</span></a></div></li>`
+3. Part A 6 节 prefix:`<em>I</em>` ~ `<em>VI</em>`(罗马数字 italic serif)
+4. Part B 主节点:加 `class="nav-item has-children" data-state="closed"` + 后接 `<button class="nav-caret">›</button>` + 包 `<ol class="nav-sub" aria-hidden="true">`
+5. B0 引子:`<em>B0</em>` 作为 prefix
+6. B1/B2/B3:`<em>B1</em>` 等
+7. B1 子节 1.1~1.4 prefix:`§ 1.1` ~ `§ 1.4`(无 em,纯 mono)
+8. B2.1 嵌套:`class="nav-item nav-item-inner has-children"`,内部 `<ol class="nav-sub nav-sub-inner">`,prefix:`<em>S1</em>` ~ `<em>S12</em>`
+9. B2.2~B2.7 prefix:`§ 2.2` ~ `§ 2.7`
+10. B3 子节 prefix:`§ 3.1` ~ `§ 3.4`
+
+**JS · 需要新增**(在 v1 scrollspy + hamburger 之外):
+1. caret click handler:toggle `data-state="open"|"closed"` + `aria-expanded` + `aria-hidden`
+2. scrollspy active 联动 auto-open:
+   - 当 active 切到一个 nav-link 时,找它最近的 `.nav-item.has-children` 祖先(若有),`data-state="open"`,标记 `data-auto="true"`
+   - 同时收起其它 `data-auto="true"` 的兄弟主节点(限同时只一个 auto-opened)
+   - 用户手动点 caret 后,移除 `data-auto`,改为 `data-manual="true"`,scrollspy 不再 auto-close 它
+3. **保留** v1 的 IntersectionObserver / hamburger / scrim / Escape / 链接点击关抽屉 逻辑
+
+**JS 控制逻辑**(伪代码):
+```js
+// caret click
+nav.querySelectorAll('.nav-caret').forEach(caret => {
+  caret.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const item = caret.closest('.nav-item');
+    const open = item.dataset.state === 'open';
+    item.dataset.state = open ? 'closed' : 'open';
+    caret.setAttribute('aria-expanded', String(!open));
+    item.querySelector(':scope > .nav-sub')?.setAttribute('aria-hidden', String(open));
+    item.dataset.manual = 'true';  // 锁定用户态
+    delete item.dataset.auto;
+  });
+});
+
+// scrollspy 中,activate(id) 改造:
+function activate(id) {
+  // ... 原逻辑切换 .active class ...
+  const link = document.querySelector('.side-nav [data-target="' + id + '"]');
+  if (!link) return;
+  link.classList.add('active');
+
+  // auto-open 当前 nav-link 的 has-children 祖先
+  const item = link.closest('.nav-item.has-children');
+  // 先 close 其它 data-auto 但非 manual 的兄弟主节点
+  document.querySelectorAll('.nav-item.has-children[data-auto="true"]').forEach(el => {
+    if (el !== item && !el.dataset.manual) {
+      el.dataset.state = 'closed';
+      delete el.dataset.auto;
+      el.querySelector(':scope > .nav-line > .nav-caret')?.setAttribute('aria-expanded', 'false');
+    }
+  });
+  if (item && item.dataset.state !== 'open') {
+    item.dataset.state = 'open';
+    item.dataset.auto = 'true';
+    item.querySelector(':scope > .nav-line > .nav-caret')?.setAttribute('aria-expanded', 'true');
+  }
+}
+```
+
+**响应式 @media**:
+- 移动端 (< 768px) `.side-nav-close { display: inline-block; }`(brand 区右侧 ×)
+- 平板 (768~1180) sidebar 宽 200px 时,`.nav-link { padding-left: 18px; }` 缩进减小
+
+---
+
+**sidebar v2 Visual Spec 已写入 design.md § 9**。核心改动:删 dashed + 删 § 前缀 + 删 active bg → 加扉页 colophon + 罗马数字 prefix + 红铅笔批注 + 折叠 nav-sub + 透明滚动条。视觉转向 *Library of America × Paris Review* 杂志 left rail,从 v1 的"密集 docs reference"撤退到"克制 editorial 目录"。
