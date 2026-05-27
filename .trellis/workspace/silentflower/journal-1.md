@@ -261,3 +261,37 @@ infra MR 158 把 .flower-code-review 默认 FLOWER_IMAGE_TAG 改 latest + image.
 2. **`pull_policy: Always` 在 pineapple 仓被拒**(Runner allowed_pull_policies=[IfNotPresent]),按模板 escape hatch 锁 sha + override `if-not-present` 解决。
 3. **Runner Pod template `hostAliases.ip` 错填 hostname**:无法在 user 层修复,需 admin 介入(本次最终由 admin 修复)。
 
+
+
+## Session 7: 归档 code-reviewer-detailed-html · intro.html reviewer 章节事实口径修正收尾
+
+**Date**: 2026-05-27
+**Task**: 归档 code-reviewer-detailed-html · intro.html reviewer 章节事实口径修正收尾
+**Package**: flower-code-reviewer
+**Branch**: `doc/code-reviewer-detailed-html`
+
+### Summary
+
+code-reviewer-detailed-html 任务在 cccf174 完成 reviewer 章节 S1-S12 事实口径修正并推送,本次会话执行 Phase 3.5 收尾归档,task 移入 archive/2026-05/。同分支 intro-html-deep-enhance 母任务保持 in_progress,新建独立任务跟进 intro.html 样式优化 + 快捷导航。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cccf174` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
