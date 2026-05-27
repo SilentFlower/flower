@@ -137,6 +137,13 @@ ${skillContent}
   - MR diff → \`gitlab_get_mr_diff\`
   - 文件行窗 → \`gitlab_get_file_content(path, ref, startLine, endLine)\`
   - 历史评论 → \`gitlab_get_previous_review\`
+- **跨项目上下文(按需)**:
+  - 当前 MR 项目只作为代码事实来源;业务 / 需求事实优先查配置的 harness 仓库
+  - 当前 MR 项目的 \`doc/\`、\`*.md\`、\`*.csv\` 默认只作历史线索,**不能**作为权威业务依据
+  - 当 diff 涉及字段含义、权限规则、导入导出模板、业务状态机、跨端约定、版本需求时,才准备 harness;普通代码风格问题不要拉跨项目仓库
+  - 工具顺序:\`gitlab_list_group_projects\`(必要时发现项目) → \`gitlab_list_project_branches\`(确认 ref) → \`gitlab_prepare_project_workspace\`(返回本地路径) → 用 bash + \`rg\` 搜索该路径
+  - 跨项目搜索统一走 prepare workspace 后的本地 \`rg\`,**不使用** \`gitlab_search_project_blobs\`
+  - 如果依据来自 harness,评论中简短说明依据文件路径和 ref / commit;如果 prepare 失败,不要用当前项目旧 \`doc/\` 代替权威文档下结论
 - **bash 用法**:
   - ✅ 可用:\`git\` 系列(log / show / diff / blame / branch …)
   - ✅ 可用:搜索(\`grep\` / \`rg\` — 推荐 \`rg\`,更快 + 自动跳 \`.gitignore\`)

@@ -269,6 +269,39 @@ done
 
 后续可把 §10.2 抽成 `scripts/reviewer-e2e-reset.sh <project> <mr_iid>`,封装 backup + delete + retry,减少 e2e 复测的重复操作。**当前未实现,sopt only**。
 
+### 11. 跨项目上下文 prompt 约定(2026-05-27)
+
+当业务事实可能不在当前 MR 项目内时,prompt 必须引导 reviewer 使用 `@flower-ai/flower-tools-gitlab` 的跨项目工具按需读取权威文档,而不是依赖当前项目里可能失修的 `doc/`。
+
+#### 11.1 触发条件
+
+- 需要查字段含义、权限规则、导入导出模板、业务状态机、跨端约定、版本需求时,才进入跨项目上下文流程。
+- 普通代码风格、命名、局部 bug、单文件实现问题,不要准备跨项目仓库,避免不必要的 GitLab API 和 clone 成本。
+
+#### 11.2 工具顺序
+
+1. `gitlab_list_group_projects`:必要时发现同 group 下的 harness / UI / 服务仓库。
+2. `gitlab_list_project_branches`:确认 harness 等仓库的目标 branch / tag / commit 是否存在。
+3. `gitlab_prepare_project_workspace`:按需 shallow fetch 指定 ref 到本地临时目录。
+4. `bash` + `rg`:只对返回的本地路径做文本搜索。
+
+`gitlab_search_project_blobs` 不属于当前设计:跨项目搜索统一走 prepare workspace 后的本地 `rg`,这样能复用 `rg` 的速度、过滤能力和多文件上下文,也避免在工具层维护一套受限搜索语义。
+
+#### 11.3 事实优先级
+
+- 当前 MR 项目是代码事实来源。
+- 业务 / 需求事实优先查配置的 harness 仓库。
+- 当前 MR 项目的 `doc/`、`*.md`、`*.csv` 默认只作历史线索,不能作为权威业务依据。
+- 如果依据来自 harness,评论中简短说明依据文件路径和 ref / commit。
+- 如果 prepare 失败,不要退回当前项目旧 `doc/` 强行下业务结论;应放弃该依据或降低为不确定观察。
+
+#### 11.4 prompt 强约束写法
+
+- 必须写明「跨项目上下文(按需)」,不能让 LLM 每个 MR 都 clone harness。
+- 必须写明工具顺序和 `bash + rg` 的后续搜索方式。
+- 必须显式写「不使用 `gitlab_search_project_blobs`」,避免 LLM 猜测存在轻量 blob 搜索工具。
+- 必须写明当前项目旧文档降权规则,否则 reviewer 容易把失修文档当权威依据。
+
 ---
 
 **语言**:本目录文档用中文,代码示例 / 文件路径 / 工具名保持英文。

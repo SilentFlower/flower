@@ -113,6 +113,19 @@ describe("buildPrompt · 7 条硬约束", () => {
 		expect(prompt).toContain("curl");
 		expect(prompt).toContain("网络外发");
 	});
+
+	it("跨项目上下文引导:包含 3 个工具名、本地 rg 和旧 doc 降权规则", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("跨项目上下文");
+		expect(prompt).toContain("gitlab_list_group_projects");
+		expect(prompt).toContain("gitlab_list_project_branches");
+		expect(prompt).toContain("gitlab_prepare_project_workspace");
+		expect(prompt).toContain("业务 / 需求事实优先查配置的 harness 仓库");
+		expect(prompt).toContain("当前 MR 项目的 `doc/`、`*.md`、`*.csv` 默认只作历史线索");
+		expect(prompt).toContain("bash + `rg`");
+		expect(prompt).toContain("gitlab_search_project_blobs");
+		expect(prompt).toContain("**不使用** `gitlab_search_project_blobs`");
+	});
 });
 
 describe("buildPrompt · §6.6 alert 块动态切换", () => {

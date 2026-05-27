@@ -338,6 +338,72 @@ describe("GitlabClient · getFileContent(N1)", () => {
 		// `/` 编码为 %2F
 		expect(String(calledUrl)).toContain("?ref=feature%2Fx");
 	});
+
+	it("listGroupProjects 调 GitLab group projects API 并映射摘要", async () => {
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse([
+				{
+					id: 63,
+					path_with_namespace: "digital-biz-projects/iqs/iqs-harness",
+					default_branch: "master",
+					web_url: "http://gitlab/digital-biz-projects/iqs/iqs-harness",
+				},
+			]),
+		);
+
+		const result = await gitlabClient().listGroupProjects("digital-biz-projects/iqs", {
+			includeSubgroups: true,
+			search: "harness",
+		});
+
+		expect(result).toEqual([
+			{
+				id: 63,
+				path_with_namespace: "digital-biz-projects/iqs/iqs-harness",
+				default_branch: "master",
+				web_url: "http://gitlab/digital-biz-projects/iqs/iqs-harness",
+			},
+		]);
+		const [calledUrl] = fetchMock.mock.calls[0] ?? [];
+		expect(String(calledUrl)).toContain("/api/v4/groups/digital-biz-projects%2Fiqs/projects?");
+		expect(String(calledUrl)).toContain("include_subgroups=true");
+		expect(String(calledUrl)).toContain("search=harness");
+	});
+
+	it("listProjectBranches 调 GitLab branches API 并映射摘要", async () => {
+		fetchMock.mockResolvedValueOnce(
+			jsonResponse([
+				{
+					name: "v1.4",
+					default: false,
+					protected: false,
+					commit: {
+						short_id: "79507fe7",
+						committed_date: "2026-05-24T13:21:51.000+08:00",
+						title: "chore(task): archive",
+					},
+				},
+			]),
+		);
+
+		const result = await gitlabClient().listProjectBranches("digital-biz-projects/iqs/iqs-harness", {
+			search: "v1.4",
+		});
+
+		expect(result).toEqual([
+			{
+				name: "v1.4",
+				default: false,
+				protected: false,
+				commit_short_id: "79507fe7",
+				committed_date: "2026-05-24T13:21:51.000+08:00",
+				title: "chore(task): archive",
+			},
+		]);
+		const [calledUrl] = fetchMock.mock.calls[0] ?? [];
+		expect(String(calledUrl)).toContain("/api/v4/projects/digital-biz-projects%2Fiqs%2Fiqs-harness/repository/branches?");
+		expect(String(calledUrl)).toContain("search=v1.4");
+	});
 });
 
 describe("countDiffChurn · diff +/- 行数解析(E2 cap 用)", () => {
