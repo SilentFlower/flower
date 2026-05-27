@@ -6,11 +6,12 @@
 
 ## Overview
 
-本目录(`backend/`)关心 **`src/client.ts` 的实现**:
+本目录(`backend/`)关心 **`src/client.ts` / `src/workspace.ts` 的实现**:
 
-- 已接入真实 GitLab REST API(**6 个 endpoint**:getMrDiff / getMrFiles / postMrComment / postMrLineComment / getBotComments / **getFileContent**)
+- 已接入真实 GitLab REST API(**8 个 endpoint**:getMrDiff / getMrFiles / postMrComment / postMrLineComment / getBotComments / **getFileContent** / **listGroupProjects** / **listProjectBranches**)
 - stub 阶段的 `[Stub]` console.log 已全部清除
 - `safe-read.ts` 工具层 wrapper(默认 500 行行窗 + 单次最大 1000 行 + 单文件 50KB cap + 18 类二进制后缀跳过)封装 `gitlab_get_file_content` execute,LLM 默认拿不到超大整文件或二进制原始内容
+- `workspace.ts` 负责跨项目本地上下文准备:只允许白名单 namespace 下的项目,按需 shallow fetch 到固定临时目录,供 reviewer 后续用本地 `rg` 搜索
 
 ---
 
@@ -55,3 +56,87 @@
    - **N1 `getFileContent` 错误分类**(`gitlabFetch({ classifyError: true })`):401/403 → `AuthError`(整个评审 abort)/ 404 → `FileNotFoundError`(LLM 可选拉别的 ref)/ 5xx → `RetryableError`(重试 1 次仍失败抛);其他 5 endpoint 保持原行为(`classifyError: false`),向后兼容
 9. **超时 10 秒**:`AbortSignal.timeout(10_000)`
 10. **失败 fail-loud**:GitLab API 错时 throw,让上层(工具 execute / pi 框架)知道
+
+## 场景: 跨项目上下文工具(2026-05-27)
+
+### 1. 范围 / 触发
+
+- 触发:新增 `gitlab_list_group_projects` / `gitlab_list_project_branches` / `gitlab_prepare_project_workspace` 三个工具,让 reviewer 按需读取同 namespace 内 harness 等权威业务文档。
+- 这是 infra integration + 工具签名变更,必须记录 env、白名单、安全边界和返回契约。
+
+### 2. 签名
+
+- 客户端:
+  - `listGroupProjects(group, { includeSubgroups?, search? }): Promise<GitlabProjectSummary[]>`
+  - `listProjectBranches(project, { search? }): Promise<GitlabBranchSummary[]>`
+  - `prepareProjectWorkspace(input: PrepareProjectWorkspaceInput): Promise<PreparedProjectWorkspace>`
+- 工具:
+  - `gitlab_list_group_projects({ group, includeSubgroups?, search? })`
+  - `gitlab_list_project_branches({ project, search? })`
+  - `gitlab_prepare_project_workspace({ project, ref, alias, depth? })`
+- workspace helper:
+  - `prepareProjectWorkspace(host, token, input)`
+  - `resolveAllowedProjectPrefixes()`
+  - `assertAllowedProject(project, allowedPrefixes?)`
+  - `assertAllowedGroup(group, allowedPrefixes?)`
+
+### 3. 契约
+
+- `FLOWER_GITLAB_CONTEXT_PROJECT_PREFIXES`:可选,逗号分隔的允许 namespace 前缀;优先级最高。
+- `CI_PROJECT_NAMESPACE`:未显式配置 prefix 时作为默认白名单。
+- `CI_PROJECT_PATH`:没有 `CI_PROJECT_NAMESPACE` 时取去掉最后一段项目名后的 namespace。
+- `FLOWER_GITLAB_CONTEXT_ROOT`:可选,默认 `/tmp/review-context/repos`。
+- `project`:必须是 `namespace/project` 路径,不能是 URL;允许 `.git` 后缀输入,内部会去掉。
+- `group`:必须是 GitLab namespace/path,不能是 URL 或 `.git` 仓库地址。
+- `alias`:只允许 `[A-Za-z0-9._-]+`,最终路径必须落在 context root 下。
+- `ref`:branch / tag / commit sha;不能为空、不能以 `-` 开头、不能包含空白、控制字符、反斜杠或 `..`。
+- `depth`:默认 1,必须是 1..100 的整数。
+- Git 认证:通过 `GIT_CONFIG_KEY_0=http.extraHeader` + `GIT_CONFIG_VALUE_0=PRIVATE-TOKEN: <token>` 传给 `git`,不要把 token 写入 URL、remote 或工具返回值。
+- `gitlab_prepare_project_workspace` 返回文本必须包含 `path/project/ref/commit/reused`;`details` 返回同结构对象。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 结果 |
+|------|------|
+| 未配置任何白名单来源 | throw `未配置跨项目上下文白名单...` |
+| `project` / `group` 不在允许 namespace 内 | throw `不在跨项目上下文白名单内...` |
+| 输入 URL、路径穿越、反斜杠 | throw `不能是 URL 或包含路径穿越` |
+| `alias` 含路径分隔符或为 `.` / `..` | throw `alias 只能包含...` |
+| `ref` 为空、以 `-` 开头或含空白 / `..` | throw `ref 不能为空或包含可疑路径片段` |
+| `depth` 非整数或超出 1..100 | throw `depth 必须是 1 到 100 之间的整数` |
+| 目标目录存在但不是 Git 仓库 | throw `目标目录已存在但不是 Git 仓库...` |
+| `git` 执行失败 | throw `git 命令执行失败...`,错误信息必须 redact token |
+
+### 5. 正常 / 基线 / 错误用例
+
+- 正常:当前 MR 在 `digital-biz-projects/iqs/xhgj-iqs-boot`,先 `gitlab_list_group_projects({group:"digital-biz-projects/iqs",search:"harness"})`,再 `gitlab_list_project_branches({project:"digital-biz-projects/iqs/iqs-harness",search:"v1.4"})`,最后 prepare 到 `/tmp/review-context/repos/iqs-harness` 并用 `rg` 搜文档。
+- 基线:已存在同 alias Git 仓库时允许复用,但必须 `remote set-url origin <repoUrl>`、`fetch` 指定 ref、`checkout --detach --force FETCH_HEAD`、`clean -fdx`。
+- 错误:传 `http://gitlab.xhgjdev.com/group/repo.git`、`../../repo`、`alias="../repo"`、`ref="--upload-pack=sh"` 都必须拒绝。
+
+### 6. 必需测试
+
+- `workspace.test.ts`:覆盖白名单来源优先级、project/group 归一化、alias/ref/depth 安全校验、repo URL 不含 token。
+- `cross-project-tools.test.ts`:覆盖 3 个工具注册、TSV 文本返回、非白名单拒绝、prepare 返回不含 token。
+- `client.test.ts`:覆盖 `listGroupProjects` / `listProjectBranches` 请求路径 encode、query 参数和响应映射。
+- 真实验证可选但推荐:用本地 PAT 对企业 GitLab 跑一次 `prepareProjectWorkspace("digital-biz-projects/iqs/iqs-harness","v1.4")`,确认能 checkout 到具体 commit。
+
+### 7. 错误与正确示例
+
+#### 错误
+
+```typescript
+await execFile("git", ["clone", `http://oauth2:${token}@gitlab/repo.git`, "/tmp/repo"]);
+```
+
+#### 正确
+
+```typescript
+await execFile("git", ["-C", target, "fetch", "--depth", "1", "origin", ref], {
+	env: {
+		...process.env,
+		GIT_CONFIG_COUNT: "1",
+		GIT_CONFIG_KEY_0: "http.extraHeader",
+		GIT_CONFIG_VALUE_0: `PRIVATE-TOKEN: ${token}`,
+	},
+});
+```

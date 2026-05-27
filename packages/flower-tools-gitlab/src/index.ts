@@ -15,9 +15,19 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { sanitizeQuickActions } from "@flower-ai/flower-tools-common";
 import { gitlabClient } from "./client.js";
 import { safeReadFile } from "./safe-read.js";
+import { assertAllowedGroup, assertAllowedProject, normalizeGroupPath, normalizeProjectPath } from "./workspace.js";
 
-export type { BotComment, GitlabClient, LineCommentInput, MrFileChange, Severity } from "./client.js";
+export type {
+	BotComment,
+	GitlabBranchSummary,
+	GitlabClient,
+	GitlabProjectSummary,
+	LineCommentInput,
+	MrFileChange,
+	Severity,
+} from "./client.js";
 export { AuthError, FileNotFoundError, gitlabClient, RetryableError } from "./client.js";
+export type { PreparedProjectWorkspace, PrepareProjectWorkspaceInput } from "./workspace.js";
 
 /**
  * 严重程度(对齐 render / prompts.ts 词表;LLM tool 入参 schema)
@@ -236,6 +246,119 @@ export const gitlabGetFileContentTool = defineTool({
 });
 
 /**
+ * 列出允许范围内的 GitLab group 项目。
+ *
+ * 用于 reviewer 在需要跨项目业务上下文时发现同组 harness / UI / 服务仓库。
+ * 工具只读 GitLab API,不会 clone 仓库。
+ */
+export const gitlabListGroupProjectsTool = defineTool({
+	name: "gitlab_list_group_projects",
+	label: "列出 GitLab group 项目",
+	description:
+		"列出允许 namespace 下 GitLab group 的项目摘要。用于需要跨项目上下文时发现 harness/UI/服务仓库。只读 API,不会 clone 仓库;项目必须在 FLOWER_GITLAB_CONTEXT_PROJECT_PREFIXES 或当前 CI namespace 允许范围内。",
+	parameters: Type.Object({
+		group: Type.String({ description: "GitLab group 路径,例如 `digital-biz-projects/iqs`" }),
+		includeSubgroups: Type.Optional(Type.Boolean({ description: "是否包含子 group 项目,默认 true" })),
+		search: Type.Optional(Type.String({ description: "可选项目名搜索词,例如 `harness`" })),
+	}),
+	async execute(_id, params) {
+		const group = normalizeGroupPath(params.group);
+		assertAllowedGroup(group);
+		const projects = await gitlabClient().listGroupProjects(group, {
+			includeSubgroups: params.includeSubgroups,
+			search: params.search,
+		});
+		const text =
+			projects.length === 0
+				? "未找到项目"
+				: projects
+						.map(
+							(project) =>
+								`${project.id}\t${project.path_with_namespace}\t${project.default_branch ?? "(no default branch)"}\t${project.web_url ?? ""}`,
+						)
+						.join("\n");
+		return {
+			content: [{ type: "text", text }],
+			details: { count: projects.length, group },
+		};
+	},
+});
+
+/**
+ * 列出允许范围内项目的分支。
+ *
+ * 用于 reviewer 在准备 harness 工作区前确认版本分支是否存在。
+ */
+export const gitlabListProjectBranchesTool = defineTool({
+	name: "gitlab_list_project_branches",
+	label: "列出 GitLab 项目分支",
+	description:
+		"列出允许项目的分支摘要。用于准备跨项目文档工作区前确认 ref,例如 harness 是否存在 `v1.4` 分支。只读 API,不会 clone 仓库。",
+	parameters: Type.Object({
+		project: Type.String({ description: "GitLab 项目路径,例如 `digital-biz-projects/iqs/iqs-harness`" }),
+		search: Type.Optional(Type.String({ description: "可选分支搜索词,例如 `v1.4`" })),
+	}),
+	async execute(_id, params) {
+		const project = normalizeProjectPath(params.project);
+		assertAllowedProject(project);
+		const branches = await gitlabClient().listProjectBranches(project, { search: params.search });
+		const text =
+			branches.length === 0
+				? "未找到分支"
+				: branches
+						.map(
+							(branch) =>
+								`${branch.name}\tdefault=${branch.default}\tprotected=${branch.protected}\tcommit=${branch.commit_short_id ?? ""}\t${branch.committed_date ?? ""}\t${branch.title ?? ""}`,
+						)
+						.join("\n");
+		return {
+			content: [{ type: "text", text }],
+			details: { count: branches.length, project },
+		};
+	},
+});
+
+/**
+ * 按需准备允许项目的本地只读工作区。
+ *
+ * 工具会 shallow fetch 指定 ref 到固定临时目录,返回路径后 reviewer 应继续用 `bash` + `rg`
+ * 搜索该路径。token 只在工具内部传递给 git,不会出现在返回值中。
+ */
+export const gitlabPrepareProjectWorkspaceTool = defineTool({
+	name: "gitlab_prepare_project_workspace",
+	label: "准备跨项目本地工作区",
+	description:
+		"按需把允许项目的指定 ref shallow fetch 到固定本地目录,返回可用 `rg` 搜索的路径和实际 commit。用于读取 harness 等权威业务文档;不会在 job 启动时无条件 clone,也不会返回 token。",
+	parameters: Type.Object({
+		project: Type.String({ description: "GitLab 项目路径,例如 `digital-biz-projects/iqs/iqs-harness`" }),
+		ref: Type.String({ description: "branch / tag / commit sha,例如 `master` 或 `v1.4`" }),
+		alias: Type.String({ description: "本地目录别名,例如 `iqs-harness`;只能包含安全字符" }),
+		depth: Type.Optional(Type.Number({ description: "shallow fetch depth,默认 1,最大 100" })),
+	}),
+	async execute(_id, params) {
+		const project = normalizeProjectPath(params.project);
+		assertAllowedProject(project);
+		const workspace = await gitlabClient().prepareProjectWorkspace({
+			project,
+			ref: params.ref,
+			alias: params.alias,
+			depth: params.depth,
+		});
+		const text = [
+			`path: ${workspace.path}`,
+			`project: ${workspace.project}`,
+			`ref: ${workspace.ref}`,
+			`commit: ${workspace.commit}`,
+			`reused: ${workspace.reused}`,
+		].join("\n");
+		return {
+			content: [{ type: "text", text }],
+			details: workspace,
+		};
+	},
+});
+
+/**
  * 归一化 LLM 传入的 ref 参数
  *
  * **背景**:LLM 受 git CLI 习惯影响常传 `"HEAD"`,GitLab REST API 不识别该别名,
@@ -300,4 +423,7 @@ export function registerGitlabTools(pi: { registerTool: (def: any) => void }): v
 	pi.registerTool(gitlabPostLineCommentTool);
 	pi.registerTool(gitlabGetPreviousReviewTool);
 	pi.registerTool(gitlabGetFileContentTool);
+	pi.registerTool(gitlabListGroupProjectsTool);
+	pi.registerTool(gitlabListProjectBranchesTool);
+	pi.registerTool(gitlabPrepareProjectWorkspaceTool);
 }
