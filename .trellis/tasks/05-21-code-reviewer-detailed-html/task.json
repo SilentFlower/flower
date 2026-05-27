@@ -22,5 +22,23 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {},
+  "last_push_snapshot": {
+    "snapshot_at": "2026-05-27T15:00:39+08:00",
+    "branch": "doc/code-reviewer-detailed-html",
+    "pushed_commits": {
+      "flower": "cccf174"
+    },
+    "completed_steps": [
+      "前置校验与源码事实读取",
+      "docs/intro.html 载体确认",
+      "B2.1 S1-S12 事实口径校对",
+      "静态 HTML 与结构验证",
+      "相关包 build/test 验证",
+      "提交并推送文档修正"
+    ],
+    "partial_step": "Phase 3.5: 已 push,等待 finish-work 归档",
+    "next_step": "运行 finish-work:归档任务并记录 journal",
+    "notes": "已推送 cccf174 [DOC] 修正 intro.html reviewer 章节事实口径;PR 链接:https://github.com/SilentFlower/flower/pull/new/doc/code-reviewer-detailed-html"
+  }
 }
