@@ -64,7 +64,7 @@ export function resolveReviewTimeoutMs(): number {
  * @returns provider timeout 毫秒数
  */
 export function resolveLlmRequestTimeoutMs(): number {
-	return resolvePositiveIntegerEnv("FLOWER_LLM_REQUEST_TIMEOUT_MS", 120000);
+	return resolvePositiveIntegerEnv("FLOWER_LLM_REQUEST_TIMEOUT_MS", 60000);
 }
 
 /**

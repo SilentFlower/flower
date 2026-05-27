@@ -25,7 +25,7 @@ describe("runtime-config · 默认值", () => {
 
 	it("默认值与 infra hard timeout / 行窗策略一致", () => {
 		expect(resolveReviewTimeoutMs()).toBe(1080000);
-		expect(resolveLlmRequestTimeoutMs()).toBe(120000);
+		expect(resolveLlmRequestTimeoutMs()).toBe(60000);
 		expect(resolveLlmProviderMaxRetries()).toBe(1);
 		expect(resolveLlmAgentMaxRetries()).toBe(3);
 		expect(resolveContextReadBatchSize()).toBe(5);
@@ -36,7 +36,7 @@ describe("runtime-config · 默认值", () => {
 	it("resolveReviewRuntimeConfig 聚合所有配置", () => {
 		expect(resolveReviewRuntimeConfig()).toEqual({
 			reviewTimeoutMs: 1080000,
-			llmRequestTimeoutMs: 120000,
+			llmRequestTimeoutMs: 60000,
 			llmProviderMaxRetries: 1,
 			llmAgentMaxRetries: 3,
 			contextReadBatchSize: 5,
@@ -87,7 +87,7 @@ describe("runtime-config · env 覆盖", () => {
 		vi.stubEnv("FLOWER_CONTEXT_READ_DEFAULT_LINES", "0");
 
 		expect(resolveReviewTimeoutMs()).toBe(1080000);
-		expect(resolveLlmRequestTimeoutMs()).toBe(120000);
+		expect(resolveLlmRequestTimeoutMs()).toBe(60000);
 		expect(resolveLlmProviderMaxRetries()).toBe(1);
 		expect(resolveContextReadDefaultLines()).toBe(500);
 	});
