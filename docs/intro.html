@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <!--
 ================================================================
-本文档反映 flower commit __COMMIT__(2026-05-22)的状态快照。
+本文档反映当前分支工作区(2026-05-27)的状态快照。
 最新源码以 GitHub 主分支为准。
 源码 ↔ 文档漂移采取「接受 + 声明」策略,不强制同步。
 如发现文档与源码不一致:
@@ -875,7 +875,7 @@
 					<li><div class="n">2</div><div class="content"><code>docker run</code> 启动评审容器,带入 <code>$CI_MERGE_REQUEST_IID</code></div></li>
 					<li><div class="n">3</div><div class="content">容器内 clone 项目并切到目标 commit</div></li>
 					<li><div class="n">4</div><div class="content"><code>pi -p "..."</code> 启动 print 模式,LLM 自主用 read / grep 读代码</div></li>
-					<li><div class="n">5</div><div class="content">通过 <code>gitlab_post_comment</code> / <code>post_line_comment</code> 上墙</div></li>
+					<li><div class="n">5</div><div class="content">通过 <code>gitlab_post_comment</code> / <code>gitlab_post_line_comment</code> 上墙</div></li>
 					<li><div class="n">6</div><div class="content">有 <code>severity === "blocker"</code> 评论则 exit 1,pipeline fail</div></li>
 				</ol>
 			</div>
@@ -1600,7 +1600,7 @@
 			两种文体共处一处。读者可以从上面的 Part B 目录直跳 B1 / B2 / B3,把 Part A 当背景;也可以读完 Part A 再下来,带着「为什么这样设计」的疑问验证 Part B 的实现。
 		</p>
 		<p style="color: var(--ink-3); font-style: italic; font-size: 14px; margin-top: 24px;">
-			本部分快照截至 <code>__COMMIT__</code>(2026-05-22)。源码 ↔ 文档漂移采取「接受 + 声明」:每个 dump 源码内容的节末尾会有源码路径,reader 以 GitHub 最新为准。
+			本部分快照截至当前分支工作区(2026-05-27)。源码 ↔ 文档漂移采取「接受 + 声明」:每个 dump 源码内容的节末尾会有源码路径,reader 以 GitHub 最新为准。
 		</p>
 	</div>
 </section>
@@ -1961,7 +1961,7 @@ user sends another prompt ◄─────────────────
 			<dl class="package-card">
 				<dt>① providers</dt><dd><code>registerHavefunProviders</code> 必须第一个调。没有 provider,pi 在解析 CLI argv <code>--provider havefun-anthropic --model claude-opus-4-7</code> 时会找不到模型,直接抛错——后面的注册都白搭。</dd>
 				<dt>② compliance</dt><dd><code>registerCompliance</code> 次之。它通过 <code>pi.on("tool_call", ...)</code> 注册了「门禁拦截器」。pi 触发 tool_call 事件时按 handler <strong>注册顺序</strong>逐个 await,所以 compliance 必须比业务工具的 trace listener 先注册,确保「先拦截、再观察」。</dd>
-				<dt>③ 业务工具</dt><dd>三行业务工具调用(<code>registerCommonTools</code> / <code>registerGitlabTools</code> / <code>registerReviewerSelfTools</code>),给 LLM 真正能用的能力:5 个 GitLab REST 工具 + 通用 stub(禅道 / 钉钉文档搜索)+ reviewer 自审工具(<code>reviewer_list_my_blockers</code> 等)。注册先后顺序在这里无强制要求,只是惯例上「跨产品共享」放最前、「特定产品」放最后。</dd>
+				<dt>③ 业务工具</dt><dd>三行业务工具调用(<code>registerCommonTools</code> / <code>registerGitlabTools</code> / <code>registerReviewerSelfTools</code>),给 LLM 真正能用的能力:6 个 GitLab REST 工具 + 通用 stub(禅道 / 钉钉文档搜索)+ reviewer 自审工具(<code>reviewer_list_my_blockers</code> 等)。注册先后顺序在这里无强制要求,只是惯例上「跨产品共享」放最前、「特定产品」放最后。</dd>
 				<dt>④ trace</dt><dd><code>registerReviewTrace</code> 倒数第二个。它和 compliance 一样监听 <code>tool_call</code>,但只<strong>观察</strong>(不返回 <code>{ block: true }</code>)。这两者共用 tool_call 事件链,顺序决定语义:compliance 先看,可能拦截;trace 后看,只看「通过的工具调用」。</dd>
 				<dt>⑤ observability</dt><dd><code>registerObservability</code> 最后调,它监听 turn / message / tool 一堆 event,做 stdout 流式打印——属于「打印旁路」,不参与决策,因此放最后没有副作用。</dd>
 			</dl>
@@ -2011,7 +2011,7 @@ user sends another prompt ◄─────────────────
         }
     });</pre>
 			<p>
-				完整文件还包含 <code>turn_start</code> / <code>turn_end</code> / <code>agent_end</code> 三段 listener,以及 <code>truncate(value, max)</code> 工具函数(把 tool input / result 截断到 400 字符,防止 GitLab CI 日志被单条长 diff 刷屏)。还有 <code>isOff()</code> 用 <code>FLOWER_VERBOSE</code> env 控制是否完全关闭日志旁路(默认开,只有 <code>FLOWER_VERBOSE=0|false|off|no</code> 才关)。
+				完整文件还包含 <code>turn_start</code> / <code>turn_end</code> / <code>agent_end</code> 三段 listener,以及 <code>truncate(value, max)</code> 工具函数(把 tool input / result 截断到 400 字符,防止 GitLab CI 日志被单条长 diff 刷屏)。还有 <code>isOff()</code> 用 <code>FLOWER_VERBOSE</code> env 控制是否完全关闭日志旁路(默认开,只有 <code>FLOWER_VERBOSE=0|false|off|no</code> 或空字符串才关)。
 			</p>
 
 			<h4 style="margin-top: 24px;">flower-providers 注册 4 个 havefun-* provider + flush 机制</h4>
@@ -2026,7 +2026,7 @@ user sends another prompt ◄─────────────────
 			</p>
 
 			<aside class="caveat">
-				Caveat:本节所有源码 dump 均为 2026-05-22 commit <code>__COMMIT__</code> 状态快照。reviewer 在演进过程中可能调整注册顺序或新增 listener,reader 视角以 <code>packages/flower-code-reviewer/src/extension.ts</code> 主分支 HEAD 为准。
+				Caveat:本节所有源码 dump 均按当前分支工作区(2026-05-27)校对。reviewer 在演进过程中可能调整注册顺序或新增 listener,reader 视角以 <code>packages/flower-code-reviewer/src/extension.ts</code> 主分支 HEAD 为准。
 			</aside>
 
 			<footer class="source-ref">
@@ -2143,12 +2143,12 @@ user sends another prompt ◄─────────────────
 
 			<h4 style="margin-top: 24px;">flower 选 pi 的实际 trade-off</h4>
 			<p>
-				flower 的场景非常具体:跑在 GitLab CI 上(没有 IDE GUI、没有交互终端、目标 ≤2 分钟内输出报告)、不依赖任何 IDE、中文友好、能在 TypeScript extension 里就地拼装 5 个 GitLab tool + compliance 拦截 + observability 旁路、走公司 LLM 网关而非直连 Anthropic / OpenAI。下表是「需求 ↔ pi 提供 ↔ 我们自己造」的对照:
+				flower 的场景非常具体:跑在 GitLab CI 上(没有 IDE GUI、没有交互终端、目标 ≤2 分钟内输出报告)、不依赖任何 IDE、中文友好、能在 TypeScript extension 里就地拼装 6 个 GitLab tool + compliance 拦截 + observability 旁路、走公司 LLM 网关而非直连 Anthropic / OpenAI。下表是「需求 ↔ pi 提供 ↔ 我们自己造」的对照:
 			</p>
 			<dl class="package-card">
 				<dt>CI headless 跑</dt><dd>pi 提供 <code>--print</code> / <code>--mode json</code> / <code>--mode rpc</code> / SDK <code>createAgentSession()</code> 四种非交互入口</dd>
 				<dt>TypeScript 写 extension</dt><dd>pi 提供 <code>export default function (pi: ExtensionAPI) {...}</code> factory + <code>pi.registerTool()</code> / <code>pi.registerProvider()</code> / <code>pi.on()</code></dd>
-				<dt>注册自定义 tool</dt><dd>pi 提供 <code>pi.registerTool({ name, description, parameters, execute })</code>;flower 自己实现 5 个 GitLab REST tool + 通用 stub + reviewer 自审工具</dd>
+				<dt>注册自定义 tool</dt><dd>pi 提供 <code>pi.registerTool({ name, description, parameters, execute })</code>;flower 自己实现 6 个 GitLab REST tool + 通用 stub + reviewer 自审工具</dd>
 				<dt>注册自定义 provider</dt><dd>pi 提供 <code>pi.registerProvider(name, config)</code>;flower-providers 自己写 4 个 <code>havefun-*</code> provider 接公司网关</dd>
 				<dt>ToolUse 前置拦截</dt><dd>pi 提供 <code>pi.on("tool_call", h)</code> + <code>{ block: true }</code> 返回值;flower-compliance 自己实现 ci-readonly / bash 白名单 / SIEM 审计</dd>
 				<dt>exit code 五级判定</dt><dd>pi 只负责 turn loop 退出码;flower-code-reviewer 自己写 <code>isLlmFailure</code> + <code>scanForBlockers</code> 决策树(<code>run.ts</code>)</dd>
@@ -2204,7 +2204,7 @@ user sends another prompt ◄─────────────────
 			<summary>B2.1 flower-code-reviewer ★(展开 · S1-S12 完整 inline)</summary>
 
 			<p style="font-size: 14px; color: var(--ink-3); margin-top: 0;">
-				<em>本节是 flower-code-reviewer 的完整操作手册,共 S1-S12 十二个子节。S1/S2/S3/S6/S7/S8/S9/S11 默认展开(reader 经常找),S4(10 源文件)/ S5(prompts 工作流字符级 dump)/ S10(容器运维)/ S12(6 个 few-shot 字符级 dump)默认折叠,需要时再点开。</em>
+				<em>本节是 flower-code-reviewer 的完整操作手册,共 S1-S12 十二个子节。S1/S2/S3/S6/S7/S8/S9/S11 默认展开(reader 经常找),S4(9 个顶层源文件 + comments 子目录)/ S5(prompts 工作流字符级 dump)/ S10(容器运维)/ S12(6 个 few-shot 字符级 dump)默认折叠,需要时再点开。</em>
 			</p>
 
 			<!-- ============================================================
@@ -2234,7 +2234,7 @@ user sends another prompt ◄─────────────────
 					<dd><code>0</code> 评审完成无 blocker · <code>1</code> 发现 ≥1 blocker(让 pipeline fail · 设计预期)· <code>2</code> 顶层 catch-all(配置错 / GitLab API 错 / 真实 bug)</dd>
 
 					<dt>核心代码量</dt>
-					<dd><code>packages/flower-code-reviewer/src/</code> 共 10 个源文件 + 3 个 <code>comments/</code> 子文件 + 4 个 skill markdown,合计 ~2300 行</dd>
+					<dd><code>packages/flower-code-reviewer/src/</code> 共 9 个顶层源文件 + 3 个 <code>comments/</code> 子文件 + 4 个 skill markdown,合计 ~2300 行</dd>
 
 					<dt>关键依赖</dt>
 					<dd><code>@earendil-works/pi-coding-agent</code>(上游 agent 框架)+ 5 个兄弟包(见 S3)</dd>
@@ -2370,7 +2370,7 @@ user sends another prompt ◄─────────────────
 						</tr>
 						<tr style="border-bottom: 1px solid var(--line);">
 							<td style="padding: 8px 12px;"><code>@flower-ai/flower-tools-gitlab</code></td>
-							<td style="padding: 8px 12px;">5 个 GitLab REST 工具:<code>gitlab_get_mr_files</code> / <code>gitlab_get_mr_diff</code> / <code>gitlab_get_file_content</code> / <code>gitlab_get_previous_review</code> / <code>gitlab_post_comment</code> / <code>gitlab_post_line_comment</code>;client 单例 <code>gitlabClient()</code> 给 run.ts 直接调</td>
+							<td style="padding: 8px 12px;">6 个 GitLab REST 工具:<code>gitlab_get_mr_files</code> / <code>gitlab_get_mr_diff</code> / <code>gitlab_get_file_content</code> / <code>gitlab_get_previous_review</code> / <code>gitlab_post_comment</code> / <code>gitlab_post_line_comment</code>;client 单例 <code>gitlabClient()</code> 给 run.ts 直接调</td>
 							<td style="padding: 8px 12px;"><code>extension.ts</code><br/><code>registerGitlabTools</code></td>
 						</tr>
 						<tr style="border-bottom: 1px solid var(--line);">
@@ -2390,12 +2390,12 @@ user sends another prompt ◄─────────────────
 			</details>
 
 			<!-- ============================================================
-			     S4 · 10 个源文件剖析
+			     S4 · 9 个顶层源文件剖析
 			     ============================================================ -->
 			<details id="b2-1-s4">
-				<summary>S4 · 10 个源文件剖析(每个文件再独立 details)</summary>
+				<summary>S4 · 9 个顶层源文件剖析(每个文件再独立 details)</summary>
 
-				<p>reviewer 包内 <code>src/</code> 共 10 个源文件:7 个顶层 ts + 3 个 <code>comments/</code> 子目录(<code>index.ts</code> / <code>render.ts</code> / <code>gitlab-version.ts</code>)。每个文件一个 details 卡片:做什么 · 关键设计 · 何时被调。</p>
+				<p>reviewer 包内 <code>src/</code> 共 9 个顶层源文件 + 3 个 <code>comments/</code> 子文件(<code>index.ts</code> / <code>render.ts</code> / <code>gitlab-version.ts</code>)。每个文件一个 details 卡片:做什么 · 关键设计 · 何时被调。</p>
 
 				<details>
 					<summary><code>cli.ts</code> · 进程入口 + ESM guard + exit code 转发</summary>
@@ -2573,7 +2573,7 @@ ${skillContent}</pre>
 1. 先调用 `gitlab_get_previous_review` 看自己之前在本 MR 发过哪些评论,**不要重复**。
 2. 调用 `gitlab_get_mr_files` 看修改了哪些文件。
 3. 调用 `gitlab_get_mr_diff` 看完整 diff。
-4. **每个变更文件**:必须调用 `gitlab_get_file_content` 拉完整内容。
+4. **每个变更文件**:必须调用 `gitlab_get_file_content` 拉当前可读取窗口。
    - **看 MR source 版本**(评审主路径):`ref` 参数**必须传** `"${input.sourceBranch ?? "&lt;MR source branch — env CI_MERGE_REQUEST_SOURCE_BRANCH_NAME&gt;"}"`(本 MR 当前 source branch),不要省略也不要传 `"HEAD"`
    - **看 target 版本 / 历史 commit**:显式传 branch 名 / commit sha
    - 工具对 `"HEAD"` / 空字符串 / 缺省会兜底到 source branch 并 warn 教育,**主动正确传值**避免噪音
@@ -2660,7 +2660,7 @@ ${skillContent}</pre>
 
 7. **真实代码上下文约束**(Phase 2 N1):对 MR 改动的**每个变更文件**,必须先调用
    `gitlab_get_file_content`(`ref` 显式传 `"${input.sourceBranch ?? "&lt;MR source branch&gt;"}"`,
-   **严禁**传 `"HEAD"` / 空字符串 / 省略)拉完整内容再发出评论。
+   **严禁**传 `"HEAD"` / 空字符串 / 省略)拉当前可读取窗口再发出评论。
    鼓励主动拉**相关上下文**(被改函数实现 / 被改类定义 / 调用方),用 `gitlab_get_file_content`
    传任意 ref 和路径即可。
    **未拉文件直接发该文件的行内评论 → 视为「无依据评论」 → `scanForBlockers` 会拦截为 blocker
@@ -2702,7 +2702,7 @@ ${truncationHint}</pre>
 					<div style="border: 1px solid var(--accent); border-radius: 4px; padding: 14px 16px; background: var(--paper);">
 						<div style="font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; color: var(--accent); margin-bottom: 4px;">N1 · 真实代码上下文</div>
 						<div style="font-family: var(--serif); font-size: 18px; font-weight: 600; margin-bottom: 8px;">每变更文件必读</div>
-						<p style="margin: 0; font-size: 13px;">LLM 对每个 MR 变更文件必须先调 <code>gitlab_get_file_content</code> 拉完整内容(<code>ref</code> 显式传 source branch)再评论。未读直发 → review-trace 标"无依据评论" → <code>scanForBlockers</code> 拦截为 blocker(自我阻塞)。落地路径:<code>extension.ts</code> + <code>review-trace.ts</code> + <code>run.ts: findUnsupportedComments</code>。</p>
+						<p style="margin: 0; font-size: 13px;">LLM 对每个 MR 变更文件必须先调 <code>gitlab_get_file_content</code> 拉当前可读取窗口(<code>ref</code> 显式传 source branch)再评论。未读直发 → review-trace 标"无依据评论" → <code>scanForBlockers</code> 拦截为 blocker(自我阻塞)。落地路径:<code>extension.ts</code> + <code>review-trace.ts</code> + <code>run.ts: findUnsupportedComments</code>。</p>
 					</div>
 
 					<div style="border: 1px solid var(--accent); border-radius: 4px; padding: 14px 16px; background: var(--paper);">
@@ -3395,7 +3395,7 @@ LLM 实际通过 `gitlab_post_line_comment` 发了 **4 条 blocker**,但写 walk
 			<footer class="source-ref">源码:<code>packages/flower-providers/src/</code></footer>
 		</details>
 		<details id="b2-3">
-			<summary>B2.3 flower-tools-gitlab · 5 个 GitLab REST tool</summary>
+			<summary>B2.3 flower-tools-gitlab · 6 个 GitLab REST tool</summary>
 			<dl class="package-card">
 				<dt>一句话定位</dt>
 				<dd>GitLab REST API 的 6 个工具集合 + 一个轻量 client(自实现,不引 <code>@gitbeaker/rest</code>),<strong>仅供 code-reviewer 使用</strong>,ops-bot 故意不应有写 GitLab 能力(职责隔离)。</dd>
@@ -3832,9 +3832,9 @@ event = { type:"tool_call", toolCallId, toolName, input }
 pi 包成 tool_result    pi 调 ToolDefinition.execute(toolCallId, input)
 (isError=true)            ↓
 塞回 LLM 上下文        packages/flower-tools-gitlab/src/index.ts:6 个工具
-LLM 看 reason 改路径    (gitlab_get_mr_diff / _get_mr_files / _post_comment /
-                        _post_line_comment / _get_previous_review /
-                        _get_file_content)
+LLM 看 reason 改路径    (gitlab_get_mr_diff / gitlab_get_mr_files /
+                        gitlab_post_comment / gitlab_post_line_comment /
+                        gitlab_get_previous_review / gitlab_get_file_content)
                           ↓
                        packages/flower-tools-gitlab/src/client.ts
                        gitlabClient().&lt;verb&gt;(...) + safeReadFile()
