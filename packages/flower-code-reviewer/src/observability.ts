@@ -19,13 +19,25 @@ const VERBOSE_OFF = new Set(["0", "false", "off", "no", ""]);
 
 interface TurnTiming {
 	startMs: number;
-	firstLlmEventMs?: number;
-	firstToolCallMs?: number;
+	firstAgentMessageEventMs?: number;
+	firstToolCallReadyEventMs?: number;
+	firstProviderRequestMs?: number;
+	providerLastRequestStartMs?: number;
+	providerLastResponseMs?: number;
+	providerLastStatus?: number;
+	providerRequestCount: number;
+	providerResponseCount: number;
 	toolCount: number;
 	toolTotalMs: number;
 }
 
 interface ToolTiming {
+	startMs: number;
+	turnKey?: string;
+}
+
+interface ProviderTiming {
+	sequence: number;
 	startMs: number;
 	turnKey?: string;
 }
@@ -79,6 +91,11 @@ function makeTurnKey(agentAttempt: number, turnIndex: number): string {
 	return `${agentAttempt}:${turnIndex}`;
 }
 
+function getTurnIndex(turnKey: string | undefined): string {
+	if (turnKey === undefined) return "n/a";
+	return turnKey.split(":")[1] ?? "n/a";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -108,9 +125,9 @@ function formatUsage(usage: unknown): string {
  * 监听事件:
  * - `agent_start` / `agent_end`:每次 agent attempt 边界与最终 stopReason
  * - `turn_start` / `turn_end`:每轮 LLM 调用边界
- * - `message_update`:LLM 流式输出(thinking / text / toolcall)
+ * - `before_provider_request` / `after_provider_response`:provider HTTP 请求发出与响应头返回
+ * - `message_update`:pi agent 可观察到的流式输出事件(thinking / text / toolcall)
  * - `tool_execution_start` / `tool_execution_end`:工具实际执行耗时与结果
- * - `after_provider_response`:LLM 网关 HTTP 状态(异常时提示)
  *
  * @param pi pi-coding-agent ExtensionAPI
  */
@@ -122,6 +139,8 @@ export function registerObservability(pi: ExtensionAPI): void {
 	let agentAttempt = 0;
 	let agentStartMs: number | undefined;
 	let activeTurnKey: string | undefined;
+	let providerSequence = 0;
+	let activeProvider: ProviderTiming | undefined;
 	const turnTimings = new Map<string, TurnTiming>();
 	const toolTimings = new Map<string, ToolTiming>();
 
@@ -133,11 +152,11 @@ export function registerObservability(pi: ExtensionAPI): void {
 		return agentAttempt;
 	};
 
-	const markFirstLlmEvent = (): void => {
+	const markFirstAgentMessageEvent = (): void => {
 		if (activeTurnKey === undefined) return;
 		const timing = turnTimings.get(activeTurnKey);
-		if (timing !== undefined && timing.firstLlmEventMs === undefined) {
-			timing.firstLlmEventMs = nowMs();
+		if (timing !== undefined && timing.firstAgentMessageEventMs === undefined) {
+			timing.firstAgentMessageEventMs = nowMs();
 		}
 	};
 
@@ -145,6 +164,7 @@ export function registerObservability(pi: ExtensionAPI): void {
 		agentAttempt += 1;
 		agentStartMs = nowMs();
 		activeTurnKey = undefined;
+		activeProvider = undefined;
 		turnTimings.clear();
 		toolTimings.clear();
 		console.log(`\n>>> 🤖 [agent] session start · attempt=${agentAttempt}`);
@@ -156,14 +176,58 @@ export function registerObservability(pi: ExtensionAPI): void {
 		activeTurnKey = turnKey;
 		turnTimings.set(turnKey, {
 			startMs: event.timestamp,
+			providerRequestCount: 0,
+			providerResponseCount: 0,
 			toolCount: 0,
 			toolTotalMs: 0,
 		});
 		console.log(`\n>>> 🤖 [turn ${event.turnIndex}] start · agent_attempt=${attempt}`);
 	});
 
+	pi.on("before_provider_request", async () => {
+		const attempt = ensureAgentAttempt();
+		providerSequence += 1;
+		activeProvider = {
+			sequence: providerSequence,
+			startMs: nowMs(),
+			...(activeTurnKey !== undefined ? { turnKey: activeTurnKey } : {}),
+		};
+		if (activeTurnKey !== undefined) {
+			const timing = turnTimings.get(activeTurnKey);
+			if (timing !== undefined) {
+				timing.providerRequestCount += 1;
+				timing.providerLastRequestStartMs = activeProvider.startMs;
+				if (timing.firstProviderRequestMs === undefined) {
+					timing.firstProviderRequestMs = activeProvider.startMs;
+				}
+			}
+		}
+		console.log(
+			`>>> 🌐 [provider] request start · agent_attempt=${attempt} · turn=${getTurnIndex(activeProvider.turnKey)} · request=${activeProvider.sequence}`,
+		);
+	});
+
+	pi.on("after_provider_response", async (event) => {
+		const attempt = ensureAgentAttempt();
+		const provider = activeProvider;
+		const responseMs = nowMs();
+		const responseHeadersMs = provider !== undefined ? responseMs - provider.startMs : undefined;
+		if (provider?.turnKey !== undefined) {
+			const timing = turnTimings.get(provider.turnKey);
+			if (timing !== undefined) {
+				timing.providerResponseCount += 1;
+				timing.providerLastResponseMs = responseMs;
+				timing.providerLastStatus = event.status;
+			}
+		}
+		console.log(
+			`>>> 🌐 [provider] response headers · agent_attempt=${attempt} · turn=${getTurnIndex(provider?.turnKey)} · request=${provider?.sequence ?? "n/a"} · status=${event.status} · response_headers_ms=${formatMs(responseHeadersMs)}`,
+		);
+		activeProvider = undefined;
+	});
+
 	pi.on("message_update", async (event) => {
-		markFirstLlmEvent();
+		markFirstAgentMessageEvent();
 		const ev = event.assistantMessageEvent;
 		switch (ev.type) {
 			case "thinking_start":
@@ -187,8 +251,8 @@ export function registerObservability(pi: ExtensionAPI): void {
 			case "toolcall_end":
 				if (activeTurnKey !== undefined) {
 					const timing = turnTimings.get(activeTurnKey);
-					if (timing !== undefined && timing.firstToolCallMs === undefined) {
-						timing.firstToolCallMs = nowMs();
+					if (timing !== undefined && timing.firstToolCallReadyEventMs === undefined) {
+						timing.firstToolCallReadyEventMs = nowMs();
 					}
 				}
 				console.log(`\n🔧 [tool →] ${ev.toolCall.name}  args=${truncate(ev.toolCall.arguments)}`);
@@ -221,27 +285,45 @@ export function registerObservability(pi: ExtensionAPI): void {
 		console.log(`${tag} ${event.toolName} · duration_ms=${formatMs(durationMs)}  result=${truncate(event.result, 300)}`);
 	});
 
-	pi.on("after_provider_response", async (event) => {
-		if (event.status >= 400) {
-			console.log(`⚠️ [llm provider] status=${event.status}`);
-		}
-	});
-
 	pi.on("turn_end", async (event) => {
 		const attempt = ensureAgentAttempt();
 		const turnKey = makeTurnKey(attempt, event.turnIndex);
 		const timing = turnTimings.get(turnKey);
-		const durationMs = timing !== undefined ? elapsedFrom(timing.startMs) : undefined;
-		const firstLlmEventMs =
-			timing?.firstLlmEventMs !== undefined && timing !== undefined ? timing.firstLlmEventMs - timing.startMs : undefined;
-		const firstToolCallMs =
-			timing?.firstToolCallMs !== undefined && timing !== undefined ? timing.firstToolCallMs - timing.startMs : undefined;
+		const endMs = nowMs();
+		const durationMs = timing !== undefined ? endMs - timing.startMs : undefined;
+		const firstAgentMessageEventMs =
+			timing?.firstAgentMessageEventMs !== undefined && timing !== undefined
+				? timing.firstAgentMessageEventMs - timing.startMs
+				: undefined;
+		const firstToolCallReadyEventMs =
+			timing?.firstToolCallReadyEventMs !== undefined && timing !== undefined
+				? timing.firstToolCallReadyEventMs - timing.startMs
+				: undefined;
+		const firstProviderRequestMs =
+			timing?.firstProviderRequestMs !== undefined && timing !== undefined
+				? timing.firstProviderRequestMs - timing.startMs
+				: undefined;
+		const providerResponseHeadersMs =
+			timing?.providerLastRequestStartMs !== undefined && timing.providerLastResponseMs !== undefined
+				? timing.providerLastResponseMs - timing.providerLastRequestStartMs
+				: undefined;
+		const firstAgentMessageAfterProviderMs =
+			timing?.providerLastResponseMs !== undefined && timing.firstAgentMessageEventMs !== undefined
+				? timing.firstAgentMessageEventMs - timing.providerLastResponseMs
+				: undefined;
+		const providerPendingMs =
+			timing?.providerLastRequestStartMs !== undefined && timing.providerLastResponseMs === undefined
+				? endMs - timing.providerLastRequestStartMs
+				: undefined;
 		console.log(
-			`>>> 🤖 [turn ${event.turnIndex}] end · agent_attempt=${attempt} · duration_ms=${formatMs(durationMs)} · first_llm_event_ms=${formatMs(firstLlmEventMs)} · first_tool_call_ms=${formatMs(firstToolCallMs)} · toolResults=${event.toolResults.length} · tools=${timing?.toolCount ?? 0} · tool_total_ms=${formatMs(timing?.toolTotalMs)}\n`,
+			`>>> 🤖 [turn ${event.turnIndex}] end · agent_attempt=${attempt} · duration_ms=${formatMs(durationMs)} · first_provider_request_ms=${formatMs(firstProviderRequestMs)} · provider_requests=${timing?.providerRequestCount ?? 0} · provider_responses=${timing?.providerResponseCount ?? 0} · provider_status=${timing?.providerLastStatus ?? "n/a"} · provider_response_headers_ms=${formatMs(providerResponseHeadersMs)} · provider_pending_ms=${formatMs(providerPendingMs)} · first_agent_message_event_ms=${formatMs(firstAgentMessageEventMs)} · first_agent_message_after_provider_ms=${formatMs(firstAgentMessageAfterProviderMs)} · first_tool_call_ready_event_ms=${formatMs(firstToolCallReadyEventMs)} · toolResults=${event.toolResults.length} · tools=${timing?.toolCount ?? 0} · tool_total_ms=${formatMs(timing?.toolTotalMs)}\n`,
 		);
 		turnTimings.delete(turnKey);
 		if (activeTurnKey === turnKey) {
 			activeTurnKey = undefined;
+		}
+		if (activeProvider?.turnKey === turnKey) {
+			activeProvider = undefined;
 		}
 	});
 
