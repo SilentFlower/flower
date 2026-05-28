@@ -79,6 +79,16 @@ describe("registerObservability · 耗时诊断日志", () => {
 			type: "message_update",
 			assistantMessageEvent: { type: "thinking_start" },
 		});
+		now = 1030;
+		await emit(handlers, "message_update", {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: "" },
+		});
+		now = 1040;
+		await emit(handlers, "message_update", {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: "首" },
+		});
 		now = 1100;
 		await emit(handlers, "message_update", {
 			type: "message_update",
@@ -119,21 +129,25 @@ describe("registerObservability · 耗时诊断日志", () => {
 		});
 
 		const logText = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-		expect(logText).toContain("duration_ms=1000");
-		expect(logText).toContain("provider_response_headers_ms=10");
-		expect(logText).toContain("first_provider_request_ms=10");
-		expect(logText).toContain("first_agent_message_event_ms=25");
-		expect(logText).toContain("first_agent_message_after_provider_ms=5");
-		expect(logText).toContain("first_tool_call_ready_event_ms=100");
-		expect(logText).toContain("tools=1");
-		expect(logText).toContain("tool_total_ms=550");
+		expect(logText).toContain("本轮总耗时(duration_ms)=1000");
+		expect(logText).toContain("provider响应头(provider_response_headers_ms)=10");
+		expect(logText).toContain("provider请求开始(first_provider_request_ms)=10");
+		expect(logText).toContain("首个流式事件(first_agent_message_event_ms)=25");
+		expect(logText).toContain("响应头到首个流式事件(first_agent_message_after_provider_ms)=5");
+		expect(logText).toContain("首字(first_text_delta_ms)=40");
+		expect(logText).toContain("响应头到首字(first_text_delta_after_provider_ms)=20");
+		expect(logText).toContain("首个工具调用就绪(first_tool_call_ready_event_ms)=100");
+		expect(logText).toContain("工具执行数(tools)=1");
+		expect(logText).toContain("工具总耗时(tool_total_ms)=550");
 		expect(logText).toContain("stop_reason=error");
 		expect(logText).toContain("usage_input=11");
 		expect(logText).toContain("error=Request timeout");
 		expect(writeSpy).toHaveBeenCalledWith("\n💭 thinking: ");
+		expect(writeSpy).toHaveBeenCalledWith("");
+		expect(writeSpy).toHaveBeenCalledWith("首");
 	});
 
-	it("provider 无响应时打印 pending 耗时", async () => {
+	it("provider 无响应且没有文本输出时打印 pending 耗时,首字字段为 n/a", async () => {
 		const logSpy = vi.mocked(console.log);
 		const { pi, handlers } = createMockPi();
 		registerObservability(pi);
@@ -151,9 +165,11 @@ describe("registerObservability · 耗时诊断日志", () => {
 		});
 
 		const logText = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-		expect(logText).toContain("provider_responses=0");
-		expect(logText).toContain("provider_response_headers_ms=n/a");
-		expect(logText).toContain("provider_pending_ms=5000");
+		expect(logText).toContain("provider响应数(provider_responses)=0");
+		expect(logText).toContain("provider响应头(provider_response_headers_ms)=n/a");
+		expect(logText).toContain("provider未返回等待(provider_pending_ms)=5000");
+		expect(logText).toContain("首字(first_text_delta_ms)=n/a");
+		expect(logText).toContain("响应头到首字(first_text_delta_after_provider_ms)=n/a");
 	});
 
 	it("FLOWER_VERBOSE=0 时不注册任何监听器", () => {

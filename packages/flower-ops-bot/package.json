@@ -42,8 +42,8 @@
 		"start": "node dist/server.js"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^0.75.0",
-		"@earendil-works/pi-ai": "^0.75.0",
+		"@earendil-works/pi-agent-core": "^0.76.0",
+		"@earendil-works/pi-ai": "^0.76.0",
 		"@flower-ai/flower-providers": "*",
 		"@flower-ai/flower-tools-arms": "*",
 		"@flower-ai/flower-tools-common": "*",
