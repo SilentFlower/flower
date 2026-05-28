@@ -49,6 +49,8 @@ export function registerCompliance(pi: ExtensionAPI, options: { mode: Compliance
  * - 纯只读(不改文件 / 系统状态)
  * - 无副作用(不发起网络请求 / 不执行命令链 / 不安装包)
  * - 不泄漏未 masked secret(尤其排除 `env` / `printenv`)
+ * - `python3` 例外放行:reviewer 需要用镜像内置的 openpyxl / python-docx 等库读取
+ *   Excel / Word 模板。该能力会执行脚本,风险由 CI 容器只读作业边界和审计兜底承接。
  *
  * 不放行的高危命令归类(参见 `SUGGESTION_BY_CMD`):
  * - 泄漏 secret:`env` / `printenv`(即便 GitLab 会 mask,仍 defense-in-depth 拦截)
@@ -61,7 +63,7 @@ export function registerCompliance(pi: ExtensionAPI, options: { mode: Compliance
  * Modern unix(`rg`)需要在 reviewer Dockerfile `apk add ripgrep` 才能跑通。
  */
 const BASH_ALLOW_LIST =
-	/^(git|grep|rg|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|uniq|tr|column|diff|comm|printf|echo|basename|dirname|realpath|pwd|date|which|type|command)\b/;
+	/^(git|grep|rg|find|ls|cat|head|tail|nl|wc|file|sed|awk|sort|uniq|tr|column|diff|comm|printf|echo|basename|dirname|realpath|pwd|date|which|type|command|python3)\b/;
 
 type BashChainSeparator = ";" | "&&" | "&" | "||" | "|";
 

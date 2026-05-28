@@ -123,6 +123,17 @@ describe("registerCompliance · ci-readonly 模式", () => {
 		expect(res.reason).toContain("curl");
 	});
 
+	it("bash 命令首词 python3 → 放行,用于读取 Excel / Word 模板结构", async () => {
+		const { pi, handlers } = mockPi();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		const res = await triggerInterceptor(handlers, {
+			toolName: "bash",
+			input: { command: "python3 - <<'PY'\nprint('x')\nPY" },
+		});
+		expect(res).toBeUndefined();
+	});
+
 	// AC2.2 · env / printenv 仍拦截(defense-in-depth)+ reason 含「可能泄漏 secret」
 	it("AC2.2 · env 仍拦截,reason 含 '可能泄漏 secret' 替代建议", async () => {
 		const { pi, handlers } = mockPi();

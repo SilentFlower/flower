@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/05-28-reviewer-tool-errors/prd.md", "reason": "按需求验收检查"}
+{"file": ".trellis/tasks/05-28-reviewer-tool-errors/design.md", "reason": "按设计边界检查"}
+{"file": ".trellis/tasks/05-28-reviewer-tool-errors/implement.md", "reason": "按实施计划检查"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/index.md", "reason": "GitLab 工具实现规范检查"}
+{"file": ".trellis/spec/flower-tools-common/backend/index.md", "reason": "通用工具规范检查"}
+{"file": ".trellis/spec/flower-compliance/backend/index.md", "reason": "合规拦截规范检查"}

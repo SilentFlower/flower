@@ -23,10 +23,11 @@ export type {
 	GitlabClient,
 	GitlabProjectSummary,
 	LineCommentInput,
+	LineCommentResult,
 	MrFileChange,
 	Severity,
 } from "./client.js";
-export { AuthError, FileNotFoundError, gitlabClient, RetryableError } from "./client.js";
+export { AuthError, collectCommentableNewLines, FileNotFoundError, gitlabClient, RetryableError } from "./client.js";
 export type { PreparedProjectWorkspace, PrepareProjectWorkspaceInput } from "./workspace.js";
 
 /**
@@ -118,10 +119,34 @@ export const gitlabPostLineCommentTool = defineTool({
 	async execute(_id, params) {
 		const { projectId, mrIid } = readEnv();
 		const safeBody = sanitizeQuickActions(params.body);
-		await gitlabClient().postMrLineComment(projectId, mrIid, { ...params, body: safeBody });
+		const result = await gitlabClient().postMrLineComment(projectId, mrIid, { ...params, body: safeBody });
+		const details: {
+			severity: typeof params.severity;
+			file: string;
+			line: number;
+			posted: typeof result.posted;
+			reason: string | undefined;
+		} = {
+			severity: params.severity,
+			file: params.file,
+			line: params.line,
+			posted: result.posted,
+			reason: result.reason,
+		};
+		if (result.posted === "note_fallback") {
+			return {
+				content: [
+					{
+						type: "text",
+						text: `目标行不可行内评论,已降级发表整体评论: ${params.file}:${params.line}`,
+					},
+				],
+				details,
+			};
+		}
 		return {
 			content: [{ type: "text", text: `行内评论已发表: ${params.file}:${params.line}` }],
-			details: { severity: params.severity, file: params.file, line: params.line },
+			details,
 		};
 	},
 });
