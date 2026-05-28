@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	_resetClientForTests,
 	AuthError,
+	collectCommentableNewLines,
 	countDiffChurn,
 	FileNotFoundError,
 	gitlabClient,
@@ -29,7 +30,7 @@ function mockChangesBody(): unknown {
 				old_path: "src/auth/login.ts",
 				new_file: false,
 				deleted_file: false,
-				diff: "@@ -1 +1 @@\n-old\n+new\n",
+				diff: "@@ -1,5 +1,5 @@\n-old\n+new\n context\n+more\n tail\n",
 			},
 			{
 				new_path: "src/removed.ts",
@@ -86,7 +87,7 @@ describe("GitlabClient · happy path", () => {
 		expect(diff).toContain("--- a/src/auth/login.ts");
 		expect(diff).toContain("+++ b/src/auth/login.ts");
 		expect(diff).toContain("--- a/src/removed.ts");
-		expect(diff).toContain("@@ -1 +1 @@");
+		expect(diff).toContain("@@ -1,5 +1,5 @@");
 	});
 
 	it("getMrFiles 返回 new_path,deleted_file 取 old_path", async () => {
@@ -124,7 +125,7 @@ describe("GitlabClient · happy path", () => {
 		});
 	});
 
-	it("postMrLineComment 自动拉 diff_refs 并构造 position 5 字段", async () => {
+	it("postMrLineComment 目标行可评论时自动拉 diff_refs 并构造 position 5 字段", async () => {
 		// 第 1 次 fetch:GET changes 拿 diff_refs
 		fetchMock.mockResolvedValueOnce(jsonResponse(mockChangesBody()));
 		// 第 2 次 fetch:POST discussions
@@ -132,7 +133,7 @@ describe("GitlabClient · happy path", () => {
 
 		await gitlabClient().postMrLineComment("g/r", 1, {
 			file: "src/auth/login.ts",
-			line: 5,
+			line: 1,
 			body: "硬编码 secret",
 			severity: "blocker",
 		});
@@ -147,7 +148,7 @@ describe("GitlabClient · happy path", () => {
 			start_sha: "START_SHA_BBB",
 			head_sha: "HEAD_SHA_CCC",
 			new_path: "src/auth/login.ts",
-			new_line: 5,
+			new_line: 1,
 		});
 	});
 
@@ -158,13 +159,49 @@ describe("GitlabClient · happy path", () => {
 			.mockResolvedValueOnce(jsonResponse({}, 201)); // 第 2 次 POST(无 GET)
 
 		const client = gitlabClient();
-		await client.postMrLineComment("g/r", 9, { file: "a.ts", line: 1, body: "x", severity: "minor" });
-		await client.postMrLineComment("g/r", 9, { file: "a.ts", line: 2, body: "y", severity: "minor" });
+		await client.postMrLineComment("g/r", 9, {
+			file: "src/auth/login.ts",
+			line: 1,
+			body: "x",
+			severity: "minor",
+		});
+		await client.postMrLineComment("g/r", 9, {
+			file: "src/auth/login.ts",
+			line: 2,
+			body: "y",
+			severity: "minor",
+		});
 
 		expect(fetchMock).toHaveBeenCalledTimes(3);
 		const urls = fetchMock.mock.calls.map((c) => String(c[0]));
 		expect(urls.filter((u) => u.includes("/changes")).length).toBe(1);
 		expect(urls.filter((u) => u.includes("/discussions")).length).toBe(2);
+	});
+
+	it("postMrLineComment 目标行不可评论时降级发整体评论,不 POST discussions", async () => {
+		fetchMock
+			.mockResolvedValueOnce(jsonResponse(mockChangesBody())) // GET changes
+			.mockResolvedValueOnce(jsonResponse({}, 201)); // POST notes fallback
+
+		const result = await gitlabClient().postMrLineComment("g/r", 1, {
+			file: "src/auth/login.ts",
+			line: 91,
+			body: "这里需要调整",
+			severity: "major",
+		});
+
+		expect(result).toEqual({
+			posted: "note_fallback",
+			reason: "目标行不在 MR diff 的可评论 new_line 中:src/auth/login.ts:91",
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		const [calledUrl, init] = fetchMock.mock.calls[1] ?? [];
+		expect(String(calledUrl)).toContain("/notes");
+		expect(String(calledUrl)).not.toContain("/discussions");
+		const body = JSON.parse(String((init as RequestInit | undefined)?.body)) as { body: string };
+		expect(body.body).toContain("原计划行内评论位置不可用");
+		expect(body.body).toContain("src/auth/login.ts:91");
+		expect(body.body).toContain("这里需要调整");
 	});
 
 	it("getBotComments 用 /api/v4/user 自查 username 并过滤", async () => {
@@ -439,6 +476,17 @@ describe("countDiffChurn · diff +/- 行数解析(E2 cap 用)", () => {
 	it("纯删除(整文件删除)→ additions=0", () => {
 		const diff = "@@ -1,3 +0,0 @@\n-a\n-b\n-c\n";
 		expect(countDiffChurn(diff)).toEqual({ additions: 0, deletions: 3 });
+	});
+});
+
+describe("collectCommentableNewLines · GitLab diff 可评论行解析", () => {
+	it("收集新增行和上下文行,排除删除行", () => {
+		const diff = "@@ -10,4 +20,5 @@\n old context\n-removed\n+added\n same\n+added2\n";
+		expect([...collectCommentableNewLines(diff)]).toEqual([20, 21, 22, 23]);
+	});
+
+	it("空 diff 返回空集合", () => {
+		expect([...collectCommentableNewLines("")]).toEqual([]);
 	});
 });
 

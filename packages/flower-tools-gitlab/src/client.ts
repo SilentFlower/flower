@@ -13,7 +13,7 @@
  * - **severity marker**:仅 blocker 自动写入 `<!-- severity: blocker -->` HTML 注释,用户视图不显示
  * - **severity 词表**`blocker | major | minor`(对齐 prompts.ts 模板 + render 函数;
  *   Phase 2 起统一,旧的 `info | warning` 已下线)
- * - **diff_refs 内部缓存** per-MR(行内评论需 base_sha/start_sha/head_sha,避免每次发评论都拉 changes)
+ * - **changes 内部缓存** per-MR(复用 diff_refs 与变更文件 diff,避免每次发评论都拉 changes)
  * - **bot username 自查**:通过 `GET /api/v4/user` 一次 + 缓存,避免硬编码 env
  * - **gitlab_get_file_content**(N1):拉任意 ref 的文件原始内容,供 LLM 拿真实代码上下文
  */
@@ -41,6 +41,16 @@ export interface LineCommentInput {
 	line: number;
 	body: string;
 	severity: Severity;
+}
+
+/**
+ * 行内评论发表结果。
+ */
+export interface LineCommentResult {
+	/** 实际发表位置:`line` 表示行内评论,`note_fallback` 表示降级为整体评论 */
+	posted: "line" | "note_fallback";
+	/** 降级原因,仅 `posted === "note_fallback"` 时存在 */
+	reason?: string | undefined;
 }
 
 /**
@@ -96,11 +106,11 @@ export interface GitlabClient {
 	/**
 	 * 列出 MR 变更文件 + 每个文件的 churn(+/- 行数,用于 E2 cap 排序)
 	 *
-	 * 不需要重新请求 `/changes`,内部复用 diff_refs 缓存机制(同 MR 多次调用走缓存)。
+	 * 不需要重新请求 `/changes`,内部复用 changes 缓存机制(同 MR 多次调用走缓存)。
 	 */
 	getMrFileChanges(projectId: string, mrIid: number): Promise<MrFileChange[]>;
 	postMrComment(projectId: string, mrIid: number, body: string, severity: Severity): Promise<void>;
-	postMrLineComment(projectId: string, mrIid: number, input: LineCommentInput): Promise<void>;
+	postMrLineComment(projectId: string, mrIid: number, input: LineCommentInput): Promise<LineCommentResult>;
 	getBotComments(projectId: string, mrIid: number): Promise<BotComment[]>;
 	/**
 	 * 列出指定 group 下的项目摘要。
@@ -381,6 +391,39 @@ export function countDiffChurn(diff: string): { additions: number; deletions: nu
 }
 
 /**
+ * 解析 GitLab unified diff 中可用于 `new_line` 行内评论的位置。
+ *
+ * GitLab 只接受 diff hunk 内的新增行和上下文行作为 `new_line`;纯删除行没有
+ * new_line,不应尝试发变更后行内评论。解析失败时返回空集合,调用方可降级整体评论。
+ *
+ * @param diff GitLab `/changes` 返回的单文件 diff
+ * @returns 可评论的变更后行号集合
+ */
+export function collectCommentableNewLines(diff: string): Set<number> {
+	const lines = new Set<number>();
+	let newLine: number | undefined;
+	for (const rawLine of diff.split("\n")) {
+		const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(rawLine);
+		if (hunk) {
+			const parsed = Number.parseInt(hunk[1] ?? "", 10);
+			newLine = Number.isNaN(parsed) ? undefined : parsed;
+			continue;
+		}
+		if (newLine === undefined || rawLine.startsWith("\\") || rawLine.length === 0) {
+			continue;
+		}
+		if (rawLine.startsWith("-")) {
+			continue;
+		}
+		if (rawLine.startsWith("+") || rawLine.startsWith(" ")) {
+			lines.add(newLine);
+			newLine += 1;
+		}
+	}
+	return lines;
+}
+
+/**
  * 创建真实 GitLab REST 客户端
  *
  * 内部封装:`/changes` 拉 diff + diff_refs,缓存避免重复请求;bot username 自查 + 缓存。
@@ -388,24 +431,20 @@ export function countDiffChurn(diff: string): { additions: number; deletions: nu
  * @internal
  */
 function createRealClient(host: string, token: string): GitlabClient {
-	// per-MR diff_refs 缓存,key = `${projectId}:${mrIid}`
-	const diffRefsCache = new Map<string, DiffRefs>();
+	// per-MR changes 缓存,key = `${projectId}:${mrIid}`
+	const changesCache = new Map<string, ChangesResponse>();
 	// bot 自身 username 缓存(每个 client 实例独立)
 	let cachedBotUsername: string | undefined;
 
 	async function getChanges(projectId: string, mrIid: number): Promise<ChangesResponse> {
+		const key = `${projectId}:${mrIid}`;
+		const cached = changesCache.get(key);
+		if (cached) return cached;
 		const path = `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests/${mrIid}/changes`;
 		const resp = await gitlabFetch(host, token, path);
 		const body = (await resp.json()) as ChangesResponse;
-		diffRefsCache.set(`${projectId}:${mrIid}`, body.diff_refs);
+		changesCache.set(key, body);
 		return body;
-	}
-
-	async function getDiffRefs(projectId: string, mrIid: number): Promise<DiffRefs> {
-		const cached = diffRefsCache.get(`${projectId}:${mrIid}`);
-		if (cached) return cached;
-		const { diff_refs } = await getChanges(projectId, mrIid);
-		return diff_refs;
 	}
 
 	async function getBotUsername(): Promise<string> {
@@ -417,6 +456,23 @@ function createRealClient(host: string, token: string): GitlabClient {
 		}
 		cachedBotUsername = body.username;
 		return cachedBotUsername;
+	}
+
+	async function postMrCommentInternal(
+		projectId: string,
+		mrIid: number,
+		body: string,
+		severity: Severity,
+	): Promise<void> {
+		const path = `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests/${mrIid}/notes`;
+		// 仅 blocker 写 HTML 注释 marker,供 run.ts:scanForBlockers regex 识别;
+		// 用 <!-- severity: blocker --> 而非 [severity:blocker] 字面前缀,GitLab markdown 渲染时
+		// HTML 注释不显示,用户视图完全干净;severity 等级由模板内 emoji + 加粗标签表达
+		const wrapped = severity === "blocker" ? `<!-- severity: blocker -->\n${body}` : body;
+		await gitlabFetch(host, token, path, {
+			method: "POST",
+			body: JSON.stringify({ body: wrapped }),
+		});
 	}
 
 	return {
@@ -446,21 +502,25 @@ function createRealClient(host: string, token: string): GitlabClient {
 		},
 
 		async postMrComment(projectId, mrIid, body, severity) {
-			const path = `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests/${mrIid}/notes`;
-			// 仅 blocker 写 HTML 注释 marker,供 run.ts:scanForBlockers regex 识别;
-			// 用 <!-- severity: blocker --> 而非 [severity:blocker] 字面前缀,GitLab markdown 渲染时
-			// HTML 注释不显示,用户视图完全干净;severity 等级由模板内 emoji + 加粗标签表达
-			const wrapped = severity === "blocker" ? `<!-- severity: blocker -->\n${body}` : body;
-			await gitlabFetch(host, token, path, {
-				method: "POST",
-				body: JSON.stringify({ body: wrapped }),
-			});
+			await postMrCommentInternal(projectId, mrIid, body, severity);
 		},
 
 		async postMrLineComment(projectId, mrIid, input) {
-			const refs = await getDiffRefs(projectId, mrIid);
+			const changesBody = await getChanges(projectId, mrIid);
+			const refs = changesBody.diff_refs;
+			const changedFile = changesBody.changes.find((change) => !change.deleted_file && change.new_path === input.file);
+			const isCommentable =
+				Number.isInteger(input.line) &&
+				changedFile !== undefined &&
+				collectCommentableNewLines(changedFile.diff).has(input.line);
 			const path = `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests/${mrIid}/discussions`;
 			const wrapped = input.severity === "blocker" ? `<!-- severity: blocker -->\n${input.body}` : input.body;
+			if (!isCommentable) {
+				const reason = `目标行不在 MR diff 的可评论 new_line 中:${input.file}:${input.line}`;
+				const fallbackBody = [`原计划行内评论位置不可用: \`${input.file}:${input.line}\`。`, "", input.body].join("\n");
+				await postMrCommentInternal(projectId, mrIid, fallbackBody, input.severity);
+				return { posted: "note_fallback", reason };
+			}
 			await gitlabFetch(host, token, path, {
 				method: "POST",
 				body: JSON.stringify({
@@ -475,6 +535,7 @@ function createRealClient(host: string, token: string): GitlabClient {
 					},
 				}),
 			});
+			return { posted: "line" };
 		},
 
 		async getBotComments(projectId, mrIid) {

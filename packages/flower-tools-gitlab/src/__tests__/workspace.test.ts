@@ -8,11 +8,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	assertAllowedGroup,
 	assertAllowedProject,
+	buildGitAuthHeader,
 	buildRepositoryUrl,
 	normalizeGroupPath,
 	normalizeProjectPath,
 	normalizeWorkspaceAlias,
 	normalizeWorkspaceRef,
+	redactGitAuth,
 	resolveAllowedProjectPrefixes,
 } from "../workspace.js";
 
@@ -87,5 +89,23 @@ describe("workspace · 本地路径和仓库 URL", () => {
 		const url = buildRepositoryUrl("http://gitlab.xhgjdev.com/", "digital-biz-projects/iqs/iqs-harness");
 		expect(url).toBe("http://gitlab.xhgjdev.com/digital-biz-projects/iqs/iqs-harness.git");
 		expect(url).not.toContain("token");
+	});
+
+	it("buildGitAuthHeader 使用 Git smart HTTP 可用的 oauth2 Basic header", () => {
+		const header = buildGitAuthHeader("secret-token");
+		expect(header.startsWith("Authorization: Basic ")).toBe(true);
+		const encoded = header.slice("Authorization: Basic ".length);
+		expect(Buffer.from(encoded, "base64").toString("utf8")).toBe("oauth2:secret-token");
+		expect(header).not.toContain("secret-token");
+	});
+
+	it("redactGitAuth 同时脱敏明文 token 和 Basic header", () => {
+		const header = buildGitAuthHeader("secret-token");
+		const encoded = header.slice("Authorization: Basic ".length);
+		const message = `boom token=secret-token header=${header} basic=${encoded}`;
+		const redacted = redactGitAuth(message, "secret-token");
+		expect(redacted).not.toContain("secret-token");
+		expect(redacted).not.toContain(encoded);
+		expect(redacted).toContain("[redacted]");
 	});
 });

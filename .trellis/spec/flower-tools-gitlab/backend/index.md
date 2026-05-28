@@ -39,7 +39,7 @@
    - **`GET /api/v4/projects/{projectId}/repository/files/{encodedPath}/raw?ref={encodedRef}`** → 任意 ref 的文件原始内容(N1 LLM 拉真实代码上下文用;`path` / `ref` 必须 URL-encode;200 OK 返回文本 body 非 JSON;**工具层 `safe-read.ts` wrapper 兜底**:未传行号默认返回 1..500 行,显式 `startLine` / `endLine` 单次最多 1000 行并提示续读;文件窗口 size > `FLOWER_MAX_FILE_SIZE`(默认 50KB)截断 + 标注;按后缀跳过 `.png/.jpg/.jpeg/.gif/.pdf/.zip/.tar/.gz/.7z/.ico/.woff/.woff2/.ttf/.otf/.so/.dll/.exe/.bin/.lock` 18 类二进制)
 3. **token 鉴权**:`PRIVATE-TOKEN` header(GitLab 推荐,client.ts 用此)
 4. **`projectId` 必须 `encodeURIComponent`**:GitLab project path 含 `/`(如 `digital-independent-projects/srm-esign`),URL 拼接时必须 encode 成 `digital-independent-projects%2Fsrm-esign`,否则 404
-5. **行内评论 position**:必须传 `position_type: "text"` + `base_sha` / `start_sha` / `head_sha` / `new_path` / `new_line`。三个 sha 从同一个 `/changes` 接口的 `diff_refs` 拿,**client 内部缓存 per-MR**(`Map<"<projectId>:<mrIid>", DiffRefs>`)避免每次发评论都重拉 changes
+5. **行内评论 position**:必须传 `position_type: "text"` + `base_sha` / `start_sha` / `head_sha` / `new_path` / `new_line`。三个 sha 从同一个 `/changes` 接口的 `diff_refs` 拿,**client 内部缓存 per-MR changes**(`Map<"<projectId>:<mrIid>", ChangesResponse>`)避免每次发评论都重拉 changes,也用于判断目标 `new_line` 是否在 diff 可评论行内
 6. **severity 词表 + 评论 body marker 注入策略**(2026-05-20 二次迭代):
    - **词表统一**:`severitySchema = z.enum(["blocker", "major", "minor"])`(原 `info | warning | blocker` 已弃用);对齐 `flower-code-reviewer/src/comments/render.ts` 与 `prompts.ts` few-shot 模板
    - **仅 blocker 注入 HTML 注释 marker**(2026-05-20 升级,替代旧字面 `[severity:blocker]` 前缀):
@@ -91,7 +91,7 @@
 - `alias`:只允许 `[A-Za-z0-9._-]+`,最终路径必须落在 context root 下。
 - `ref`:branch / tag / commit sha;不能为空、不能以 `-` 开头、不能包含空白、控制字符、反斜杠或 `..`。
 - `depth`:默认 1,必须是 1..100 的整数。
-- Git 认证:通过 `GIT_CONFIG_KEY_0=http.extraHeader` + `GIT_CONFIG_VALUE_0=PRIVATE-TOKEN: <token>` 传给 `git`,不要把 token 写入 URL、remote 或工具返回值。
+- Git 认证:Git smart HTTP 使用 Basic header,通过 `GIT_CONFIG_KEY_0=http.extraHeader` + `GIT_CONFIG_VALUE_0=Authorization: Basic <base64("oauth2:<token>")>` 传给 `git`;REST API 仍使用 `PRIVATE-TOKEN`。不要把 token 写入 URL、remote、日志、工具返回值或未脱敏异常。
 - `gitlab_prepare_project_workspace` 返回文本必须包含 `path/project/ref/commit/reused`;`details` 返回同结构对象。
 
 ### 4. 校验与错误矩阵
@@ -116,6 +116,7 @@
 ### 6. 必需测试
 
 - `workspace.test.ts`:覆盖白名单来源优先级、project/group 归一化、alias/ref/depth 安全校验、repo URL 不含 token。
+- `workspace.test.ts`:覆盖 git Basic auth header 构造与错误信息脱敏,包括明文 token 和 base64 header。
 - `cross-project-tools.test.ts`:覆盖 3 个工具注册、TSV 文本返回、非白名单拒绝、prepare 返回不含 token。
 - `client.test.ts`:覆盖 `listGroupProjects` / `listProjectBranches` 请求路径 encode、query 参数和响应映射。
 - 真实验证可选但推荐:用本地 PAT 对企业 GitLab 跑一次 `prepareProjectWorkspace("digital-biz-projects/iqs/iqs-harness","v1.4")`,确认能 checkout 到具体 commit。
@@ -136,7 +137,7 @@ await execFile("git", ["-C", target, "fetch", "--depth", "1", "origin", ref], {
 		...process.env,
 		GIT_CONFIG_COUNT: "1",
 		GIT_CONFIG_KEY_0: "http.extraHeader",
-		GIT_CONFIG_VALUE_0: `PRIVATE-TOKEN: ${token}`,
+		GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`oauth2:${token}`).toString("base64")}`,
 	},
 });
 ```
