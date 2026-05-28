@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-05-27
+- **Total Sessions**: 8
+- **Last Active**: 2026-05-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~297 | Active |
+| `journal-1.md` | ~375 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-05-28 | 处理 CI reviewer 工具错误 | `d874fea`, `d76525b` | `fix/reviewer-tool-errors` |
 | 7 | 2026-05-26 | reviewer 稳定性:软超时、SSE 重试、上下文收敛 | `5a9cfe4` | `fix/reviewer-timeout-sse-context` |
 | 7 | 2026-05-27 | 归档 code-reviewer-detailed-html · intro.html reviewer 章节事实口径修正收尾 | `cccf174` | `doc/code-reviewer-detailed-html` |
 | 6 | 2026-05-21 | flower-providers env 缺省 fallback + 内网 GitLab CI 全链路打通 | `db4668c` | `main` |

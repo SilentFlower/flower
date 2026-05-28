@@ -20,20 +20,22 @@
 
 ## Error Handling Patterns
 
-### 审计失败:仅 warn
+### 审计失败:默认静默,调试时 warn
 
 ```typescript
 try {
   await fetch(url, { ..., signal: AbortSignal.timeout(2000) });
 } catch (err) {
-  console.warn("[audit] 上报失败:", err);
+  if (process.env.DEBUG_AUDIT === "1") {
+    console.warn(`[audit] 上报失败: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 ```
 
 **约定**:
 
 1. **try/catch 必须包住 fetch**(网络抖动 / 超时 / DNS 解析失败都要兜住)
-2. **失败仅 `console.warn`**,不向上传播,不抛 Error
+2. **默认静默,`DEBUG_AUDIT=1` 时才 `console.warn`**,不向上传播,不抛 Error
 3. **不重试**(失败就丢,主流程不能被审计拖慢)
 
 ### 拦截失败:`return { block, reason }`,不要 `throw`
@@ -76,5 +78,5 @@ LLM 偶尔会传非字符串,断言 `as string` 会运行期崩。
 - ❌ `await sendAudit(...)` 阻塞主流程(SIEM 抖动会让所有工具调用变慢)
 - ❌ 拦截规则失败 `throw new Error("禁止 X")`(应 `return { block: true, reason }`)
 - ❌ 给 `fetch` 不配 `AbortSignal.timeout`(网络挂时进程会一直 hang)
-- ❌ `console.error` 用于审计失败(`warn` 即可,这不是 error)
+- ❌ 默认情况下打印审计失败日志(SIEM 抖动不应刷屏 CI;需要 `DEBUG_AUDIT=1` 才 warn)
 - ❌ 把 `err instanceof Error` 当兜底逻辑(`console.warn("...", err)` 直接传 err 即可,Node 会自动 stringify)

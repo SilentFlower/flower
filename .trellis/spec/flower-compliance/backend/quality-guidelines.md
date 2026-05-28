@@ -30,6 +30,18 @@ body: JSON.stringify({
 
 让 SIEM 端能追溯到具体容器 / 用户身份,无需依赖 caller。
 
+### ✅ CI bash 白名单边界
+
+`ci-readonly` 模式只放行明确列入白名单的命令。`python3` 允许用于 reviewer 读取 Excel / Word 模板结构,但这不是放开其它执行器或网络命令的理由。
+
+必须继续拦截:
+
+- 写工具:`write` / `edit`
+- 网络外发:`curl` / `wget` / `nc`
+- 包管理:`npm` / `pip` / `apt` / `yum`
+- 写文件和权限类:`tee` / `mv` / `rm` / `cp` / `mkdir` / `touch` / `chmod` / `chown`
+- 嵌套 shell / 任意代码字符串:`bash` / `sh` / `eval` / `source`
+
 ---
 
 ## Forbidden Patterns
@@ -37,6 +49,7 @@ body: JSON.stringify({
 - ❌ 在 `audit.ts` 里 `console.error("...", err); throw err;`(应只 `console.warn`,不传播)
 - ❌ 给 `sendAudit` 增加返回值(调用方应 `void sendAudit(...)`,有返回值会鼓励 `await`)
 - ❌ 在 `audit.ts` 里读外部模块的全局变量(`audit.ts` 应是纯函数 + 一个 helper 模块,无 import 项目其他文件)
+- ❌ 因为放行 `python3` 就顺手放行 `node` / `curl` / `pip` / `npm` 等命令
 
 ---
 

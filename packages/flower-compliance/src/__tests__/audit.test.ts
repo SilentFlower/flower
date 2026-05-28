@@ -2,7 +2,7 @@
  * `audit.ts` 单元测试:`sendAudit` 上报行为
  *
  * 关键约束(spec error-handling.md):
- * - 审计是辅助通道,**绝不阻塞主流程**:fetch 失败仅 `console.warn`,不抛
+ * - 审计是辅助通道,**绝不阻塞主流程**:fetch 失败默认静默,`DEBUG_AUDIT=1` 才 warn
  * - `SIEM_INGEST_URL` 不配 → 什么都不做(允许);`DEBUG_AUDIT=1` 时打到 stdout
  * - `AbortSignal.timeout(2000)` 必须设置(防 SIEM 抖动 hang)
  */
@@ -87,17 +87,24 @@ describe("sendAudit · SIEM_INGEST_URL 已配置", () => {
 		expect((init as RequestInit | undefined)?.signal).toBeInstanceOf(AbortSignal);
 	});
 
-	it("fetch 抛错 → console.warn 一次,sendAudit 不抛(绝不阻塞主流程)", async () => {
+	it("fetch 抛错 → 默认静默,sendAudit 不抛(绝不阻塞主流程)", async () => {
+		fetchMock.mockRejectedValueOnce(new Error("network down"));
+		await expect(sendAudit(FAKE_RECORD)).resolves.toBeUndefined();
+		expect(warnMock).not.toHaveBeenCalled();
+	});
+
+	it("DEBUG_AUDIT=1 时 fetch 抛错 → console.warn 一次,sendAudit 不抛", async () => {
+		vi.stubEnv("DEBUG_AUDIT", "1");
 		fetchMock.mockRejectedValueOnce(new Error("network down"));
 		await expect(sendAudit(FAKE_RECORD)).resolves.toBeUndefined();
 		expect(warnMock).toHaveBeenCalledTimes(1);
-		expect(warnMock.mock.calls[0]?.[0]).toBe("[audit] 上报失败:");
+		expect(warnMock.mock.calls[0]?.[0]).toContain("[audit] 上报失败:");
 	});
 
-	it("fetch 超时(AbortError)→ console.warn,不抛", async () => {
+	it("fetch 超时(AbortError)→ 默认静默,不抛", async () => {
 		const abortErr = new DOMException("aborted", "AbortError");
 		fetchMock.mockRejectedValueOnce(abortErr);
 		await expect(sendAudit(FAKE_RECORD)).resolves.toBeUndefined();
-		expect(warnMock).toHaveBeenCalledTimes(1);
+		expect(warnMock).not.toHaveBeenCalled();
 	});
 });

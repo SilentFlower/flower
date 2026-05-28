@@ -182,6 +182,36 @@ export function buildRepositoryUrl(host: string, project: string): string {
 }
 
 /**
+ * 构造 Git smart HTTP 可用的鉴权 header。
+ *
+ * GitLab REST API 支持 `PRIVATE-TOKEN`,但 `git fetch` 走 smart HTTP 时不会把该 header
+ * 当作用户名密码,会退回交互式询问用户名。Basic `oauth2:<token>` 是 GitLab HTTP
+ * 仓库访问的非交互鉴权路径,且不会把 token 写入 remote URL。
+ *
+ * @param token GitLab token
+ * @returns 可传给 `http.extraHeader` 的 Authorization header
+ */
+export function buildGitAuthHeader(token: string): string {
+	return `Authorization: Basic ${Buffer.from(`oauth2:${token}`, "utf8").toString("base64")}`;
+}
+
+/**
+ * 对 git 错误信息做凭证脱敏。
+ *
+ * @param message 原始错误信息
+ * @param token GitLab token
+ * @returns 脱敏后的错误信息
+ */
+export function redactGitAuth(message: string, token: string): string {
+	const basicHeader = buildGitAuthHeader(token);
+	const basicValue = basicHeader.slice("Authorization: Basic ".length);
+	return message
+		.replaceAll(token, "[redacted]")
+		.replaceAll(basicHeader, "[redacted]")
+		.replaceAll(basicValue, "[redacted]");
+}
+
+/**
  * 准备跨项目本地工作区。
  *
  * @param host GitLab host
@@ -287,13 +317,14 @@ async function isGitRepository(path: string): Promise<boolean> {
 }
 
 async function runGit(token: string, args: string[]): Promise<string> {
+	const authHeader = buildGitAuthHeader(token);
 	try {
 		const { stdout } = await execFileAsync("git", args, {
 			env: {
 				...process.env,
 				GIT_CONFIG_COUNT: "1",
 				GIT_CONFIG_KEY_0: "http.extraHeader",
-				GIT_CONFIG_VALUE_0: `PRIVATE-TOKEN: ${token}`,
+				GIT_CONFIG_VALUE_0: authHeader,
 			},
 			encoding: "utf8",
 			maxBuffer: 1024 * 1024,
@@ -301,6 +332,6 @@ async function runGit(token: string, args: string[]): Promise<string> {
 		return stdout;
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		throw new Error(`git 命令执行失败:${message.replaceAll(token, "[redacted]")}`);
+		throw new Error(`git 命令执行失败:${redactGitAuth(message, token)}`);
 	}
 }

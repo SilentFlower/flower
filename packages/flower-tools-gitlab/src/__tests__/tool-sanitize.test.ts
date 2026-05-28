@@ -134,7 +134,15 @@ describe("gitlabPostLineCommentTool · sanitize 集成", () => {
 				start_sha: "START",
 				head_sha: "HEAD",
 			},
-			changes: [],
+			changes: [
+				{
+					new_path: "src/auth/login.ts",
+					old_path: "src/auth/login.ts",
+					new_file: false,
+					deleted_file: false,
+					diff: "@@ -40,4 +40,4 @@\n context\n+added\n context2\n",
+				},
+			],
 		};
 	}
 
