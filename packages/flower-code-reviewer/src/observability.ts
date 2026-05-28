@@ -20,6 +20,7 @@ const VERBOSE_OFF = new Set(["0", "false", "off", "no", ""]);
 interface TurnTiming {
 	startMs: number;
 	firstAgentMessageEventMs?: number;
+	firstTextDeltaMs?: number;
 	firstToolCallReadyEventMs?: number;
 	firstProviderRequestMs?: number;
 	providerLastRequestStartMs?: number;
@@ -160,6 +161,14 @@ export function registerObservability(pi: ExtensionAPI): void {
 		}
 	};
 
+	const markFirstTextDelta = (delta: string): void => {
+		if (delta.length === 0 || activeTurnKey === undefined) return;
+		const timing = turnTimings.get(activeTurnKey);
+		if (timing !== undefined && timing.firstTextDeltaMs === undefined) {
+			timing.firstTextDeltaMs = nowMs();
+		}
+	};
+
 	pi.on("agent_start", async () => {
 		agentAttempt += 1;
 		agentStartMs = nowMs();
@@ -243,6 +252,7 @@ export function registerObservability(pi: ExtensionAPI): void {
 				process.stdout.write("\n💬 assistant: ");
 				break;
 			case "text_delta":
+				markFirstTextDelta(ev.delta);
 				process.stdout.write(ev.delta);
 				break;
 			case "text_end":
@@ -295,6 +305,10 @@ export function registerObservability(pi: ExtensionAPI): void {
 			timing?.firstAgentMessageEventMs !== undefined && timing !== undefined
 				? timing.firstAgentMessageEventMs - timing.startMs
 				: undefined;
+		const firstTextDeltaMs =
+			timing?.firstTextDeltaMs !== undefined && timing !== undefined
+				? timing.firstTextDeltaMs - timing.startMs
+				: undefined;
 		const firstToolCallReadyEventMs =
 			timing?.firstToolCallReadyEventMs !== undefined && timing !== undefined
 				? timing.firstToolCallReadyEventMs - timing.startMs
@@ -311,12 +325,16 @@ export function registerObservability(pi: ExtensionAPI): void {
 			timing?.providerLastResponseMs !== undefined && timing.firstAgentMessageEventMs !== undefined
 				? timing.firstAgentMessageEventMs - timing.providerLastResponseMs
 				: undefined;
+		const firstTextDeltaAfterProviderMs =
+			timing?.providerLastResponseMs !== undefined && timing.firstTextDeltaMs !== undefined
+				? timing.firstTextDeltaMs - timing.providerLastResponseMs
+				: undefined;
 		const providerPendingMs =
 			timing?.providerLastRequestStartMs !== undefined && timing.providerLastResponseMs === undefined
 				? endMs - timing.providerLastRequestStartMs
 				: undefined;
 		console.log(
-			`>>> 🤖 [turn ${event.turnIndex}] end · agent_attempt=${attempt} · duration_ms=${formatMs(durationMs)} · first_provider_request_ms=${formatMs(firstProviderRequestMs)} · provider_requests=${timing?.providerRequestCount ?? 0} · provider_responses=${timing?.providerResponseCount ?? 0} · provider_status=${timing?.providerLastStatus ?? "n/a"} · provider_response_headers_ms=${formatMs(providerResponseHeadersMs)} · provider_pending_ms=${formatMs(providerPendingMs)} · first_agent_message_event_ms=${formatMs(firstAgentMessageEventMs)} · first_agent_message_after_provider_ms=${formatMs(firstAgentMessageAfterProviderMs)} · first_tool_call_ready_event_ms=${formatMs(firstToolCallReadyEventMs)} · toolResults=${event.toolResults.length} · tools=${timing?.toolCount ?? 0} · tool_total_ms=${formatMs(timing?.toolTotalMs)}\n`,
+			`>>> 🤖 [turn ${event.turnIndex}] end · agent_attempt=${attempt} · 本轮总耗时(duration_ms)=${formatMs(durationMs)} · provider请求开始(first_provider_request_ms)=${formatMs(firstProviderRequestMs)} · provider请求数(provider_requests)=${timing?.providerRequestCount ?? 0} · provider响应数(provider_responses)=${timing?.providerResponseCount ?? 0} · provider状态(provider_status)=${timing?.providerLastStatus ?? "n/a"} · provider响应头(provider_response_headers_ms)=${formatMs(providerResponseHeadersMs)} · provider未返回等待(provider_pending_ms)=${formatMs(providerPendingMs)} · 首个流式事件(first_agent_message_event_ms)=${formatMs(firstAgentMessageEventMs)} · 响应头到首个流式事件(first_agent_message_after_provider_ms)=${formatMs(firstAgentMessageAfterProviderMs)} · 首字(first_text_delta_ms)=${formatMs(firstTextDeltaMs)} · 响应头到首字(first_text_delta_after_provider_ms)=${formatMs(firstTextDeltaAfterProviderMs)} · 首个工具调用就绪(first_tool_call_ready_event_ms)=${formatMs(firstToolCallReadyEventMs)} · 工具结果数(toolResults)=${event.toolResults.length} · 工具执行数(tools)=${timing?.toolCount ?? 0} · 工具总耗时(tool_total_ms)=${formatMs(timing?.toolTotalMs)}\n`,
 		);
 		turnTimings.delete(turnKey);
 		if (activeTurnKey === turnKey) {

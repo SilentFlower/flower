@@ -105,6 +105,12 @@
 - 输出格式:`>>> 🤖 [turn N] start/end` / `💭 thinking: ...` / `💬 assistant: ...` / `🔧 [tool →] <name> args=...` / `🔧 [tool ←] <name> result=...` / `🔧 [tool ✗ error]`(compliance 拦截等)/ `>>> 🤖 [agent] session end`
 - tool input / result 截断 400 / 300 字符,防 GitLab CI 日志爆 + 敏感内容泄漏(image 内 safeReadFile 已在工具层 size cap,observability 再加一层 echo 截断)
 - 监听事件:`turn_start` / `turn_end` / `message_update`(assistantMessageEvent.type ∈ {`thinking_*` / `text_*` / `toolcall_end`})/ `tool_execution_end` / `after_provider_response`(仅 HTTP ≥ 400 提示)/ `agent_end`
+- turn end 摘要必须保留“中文说明(机器字段)=值”的混合格式,方便 CI 人读和日志平台 grep。首字相关字段语义:
+  - `first_agent_message_event_ms`:从 `turn_start.timestamp` 到首个 `message_update` 的耗时;可能是 thinking / text / toolcall,**不是**首字。
+  - `first_text_delta_ms`:从 `turn_start.timestamp` 到首个非空 `message_update.assistantMessageEvent.type === "text_delta"` 的耗时;空字符串 delta 不能记录。
+  - `first_text_delta_after_provider_ms`:从最近一次 `after_provider_response` 响应头时间到首个非空 `text_delta` 的耗时。
+  - 没有文本输出、只有 thinking / toolcall、或 provider 没有响应头时,对应首字字段输出 `n/a`,禁止把 thinking / toolcall 误记成首字。
+- 新增或调整观测字段时必须同步更新 `observability.test.ts`,至少覆盖:非空 `text_delta` 首次记录、空 `text_delta` 不记录、无文本输出输出 `n/a`、中文说明与机器字段同时存在。
 
 ### 7. audit 默认静默(`flower-compliance/audit.ts`,2026-05-20 加)
 

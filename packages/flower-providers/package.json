@@ -40,8 +40,8 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.75.0",
-		"@earendil-works/pi-coding-agent": "^0.75.0"
+		"@earendil-works/pi-ai": "^0.76.0",
+		"@earendil-works/pi-coding-agent": "^0.76.0"
 	},
 	"devDependencies": {
 		"vitest": "^3.2.4"

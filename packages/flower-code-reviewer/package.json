@@ -42,8 +42,8 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.75.0",
-		"@earendil-works/pi-coding-agent": "^0.75.0",
+		"@earendil-works/pi-ai": "^0.76.0",
+		"@earendil-works/pi-coding-agent": "^0.76.0",
 		"@flower-ai/flower-compliance": "*",
 		"@flower-ai/flower-providers": "*",
 		"@flower-ai/flower-tools-common": "*",
