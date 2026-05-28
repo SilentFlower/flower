@@ -130,8 +130,17 @@ flower 仓 Dockerfile 优化(`packages/flower-code-reviewer/Dockerfile`)产出 i
 | `839236d` | observability extension 集成 | — |
 | `54641cb` | audit 失败改单行 warn | — |
 | `7e847ea` | audit 默认静默 + 中文等级 + HTML 注释 marker | — |
+| 2026-05-28 pi 0.76 后续 | pi shrinkwrap 重复依赖去重 + runtime 只复制 dist/package.json/skills + `.dockerignore` 控制 build context | 216.61 → 80.1 MB(`CONTENT SIZE`) |
 
 累计减重:Harbor compressed 149.3 → 82.8 MiB(**−45%**);本地 727 → 434 MB(**−40%**)。
+
+pi 0.76.0 后的 Dockerfile 约束:
+- `@earendil-works/pi-coding-agent` 发布包带 `npm-shrinkwrap.json`,npm workspaces 会在多个 `packages/*/node_modules` 下重复安装私有 pi 依赖。reviewer runtime 镜像必须只保留一份根级 `node_modules/@earendil-works/pi-coding-agent` / `pi-ai`,并删除 workspace 内重复副本。
+- `@earendil-works/pi-ai` 运行 Bedrock provider 时需要 `@aws-sdk/client-bedrock-runtime`;若把 `pi-ai` 从 workspace 私有目录提升到根级,必须同时确保根级有这份依赖。
+- runtime 层只复制各 workspace 的 `package.json` + `dist`;`flower-code-reviewer` 还需要复制 `skills`。禁止把 `src`、测试、`tsconfig.tsbuildinfo`、README 等开发文件带入 runtime。
+- Docker builder 使用 `tsc --build --force`;否则 `.dockerignore` 排除本地 `dist` 后,增量构建可能误判为最新并导致容器内缺少 `dist/cli.js`。
+- 清理 npm 发布包时只删明确非运行时文件(`*.map`、`*.d.ts`、Markdown、tests/docs/examples 目录)。不要使用过宽的 `CHANGELOG*` 规则:pi-coding-agent 存在运行期 import 的 `dist/utils/changelog.js`,误删会导致 CLI 启动失败。
+- 根 `.dockerignore` 应排除本地 `node_modules`、workspace `node_modules`、`dist`、`*.tsbuildinfo`、`.git`、`.trellis/workspace` 等内容,避免 build context 被本地依赖放大。
 
 业务方接入侧 image tag 管理:
 - 默认 `latest`(浮动跟 flower 仓 main HEAD)
