@@ -129,16 +129,14 @@ describe("registerObservability · 耗时诊断日志", () => {
 		});
 
 		const logText = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-		expect(logText).toContain("本轮总耗时(duration_ms)=1000");
-		expect(logText).toContain("provider响应头(provider_response_headers_ms)=10");
-		expect(logText).toContain("provider请求开始(first_provider_request_ms)=10");
-		expect(logText).toContain("首个流式事件(first_agent_message_event_ms)=25");
-		expect(logText).toContain("响应头到首个流式事件(first_agent_message_after_provider_ms)=5");
-		expect(logText).toContain("首字(first_text_delta_ms)=40");
-		expect(logText).toContain("响应头到首字(first_text_delta_after_provider_ms)=20");
-		expect(logText).toContain("首个工具调用就绪(first_tool_call_ready_event_ms)=100");
-		expect(logText).toContain("工具执行数(tools)=1");
-		expect(logText).toContain("工具总耗时(tool_total_ms)=550");
+		expect(logText).toContain(">>> 🤖 第 0 轮结束 · 第 1 次尝试");
+		expect(logText).toContain("总览: 本轮 1000ms · 模型请求 1 次 · 模型响应 1 次 · 工具 1 次 · 工具结果 1 个");
+		expect(logText).toContain("模型接口: 请求开始 10ms · 响应头 10ms · 未返回等待 n/a · 状态 200");
+		expect(logText).toContain("流式输出: 首个事件 25ms · 响应头到首个事件 5ms");
+		expect(logText).toContain("文本输出: 本轮首字 40ms · 响应头到本轮首字 20ms");
+		expect(logText).toContain("工具调用: 首个工具就绪 100ms · 工具总耗时 550ms");
+		expect(logText).not.toContain("first_text_delta_ms");
+		expect(logText).not.toContain("first_agent_message_event_ms");
 		expect(logText).toContain("stop_reason=error");
 		expect(logText).toContain("usage_input=11");
 		expect(logText).toContain("error=Request timeout");
@@ -165,11 +163,11 @@ describe("registerObservability · 耗时诊断日志", () => {
 		});
 
 		const logText = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-		expect(logText).toContain("provider响应数(provider_responses)=0");
-		expect(logText).toContain("provider响应头(provider_response_headers_ms)=n/a");
-		expect(logText).toContain("provider未返回等待(provider_pending_ms)=5000");
-		expect(logText).toContain("首字(first_text_delta_ms)=n/a");
-		expect(logText).toContain("响应头到首字(first_text_delta_after_provider_ms)=n/a");
+		expect(logText).toContain("总览: 本轮 5100ms · 模型请求 1 次 · 模型响应 0 次 · 工具 0 次 · 工具结果 0 个");
+		expect(logText).toContain("模型接口: 请求开始 100ms · 响应头 n/a · 未返回等待 5000ms · 状态 n/a");
+		expect(logText).toContain("文本输出: 本轮首字 n/a · 响应头到本轮首字 n/a");
+		expect(logText).not.toContain("first_text_delta_ms");
+		expect(logText).not.toContain("provider_pending_ms");
 	});
 
 	it("FLOWER_VERBOSE=0 时不注册任何监听器", () => {

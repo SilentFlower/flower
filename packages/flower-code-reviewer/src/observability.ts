@@ -84,6 +84,12 @@ function formatMs(value: number | undefined): string {
 	return String(Math.max(0, Math.round(value)));
 }
 
+function formatDuration(value: number | undefined): string {
+	const ms = formatMs(value);
+	if (ms === "n/a") return ms;
+	return `${ms}ms`;
+}
+
 function elapsedFrom(startMs: number): number {
 	return Math.max(0, Math.round(nowMs() - startMs));
 }
@@ -334,7 +340,15 @@ export function registerObservability(pi: ExtensionAPI): void {
 				? endMs - timing.providerLastRequestStartMs
 				: undefined;
 		console.log(
-			`>>> 🤖 [turn ${event.turnIndex}] end · agent_attempt=${attempt} · 本轮总耗时(duration_ms)=${formatMs(durationMs)} · provider请求开始(first_provider_request_ms)=${formatMs(firstProviderRequestMs)} · provider请求数(provider_requests)=${timing?.providerRequestCount ?? 0} · provider响应数(provider_responses)=${timing?.providerResponseCount ?? 0} · provider状态(provider_status)=${timing?.providerLastStatus ?? "n/a"} · provider响应头(provider_response_headers_ms)=${formatMs(providerResponseHeadersMs)} · provider未返回等待(provider_pending_ms)=${formatMs(providerPendingMs)} · 首个流式事件(first_agent_message_event_ms)=${formatMs(firstAgentMessageEventMs)} · 响应头到首个流式事件(first_agent_message_after_provider_ms)=${formatMs(firstAgentMessageAfterProviderMs)} · 首字(first_text_delta_ms)=${formatMs(firstTextDeltaMs)} · 响应头到首字(first_text_delta_after_provider_ms)=${formatMs(firstTextDeltaAfterProviderMs)} · 首个工具调用就绪(first_tool_call_ready_event_ms)=${formatMs(firstToolCallReadyEventMs)} · 工具结果数(toolResults)=${event.toolResults.length} · 工具执行数(tools)=${timing?.toolCount ?? 0} · 工具总耗时(tool_total_ms)=${formatMs(timing?.toolTotalMs)}\n`,
+			[
+				`>>> 🤖 第 ${event.turnIndex} 轮结束 · 第 ${attempt} 次尝试`,
+				`    总览: 本轮 ${formatDuration(durationMs)} · 模型请求 ${timing?.providerRequestCount ?? 0} 次 · 模型响应 ${timing?.providerResponseCount ?? 0} 次 · 工具 ${timing?.toolCount ?? 0} 次 · 工具结果 ${event.toolResults.length} 个`,
+				`    模型接口: 请求开始 ${formatDuration(firstProviderRequestMs)} · 响应头 ${formatDuration(providerResponseHeadersMs)} · 未返回等待 ${formatDuration(providerPendingMs)} · 状态 ${timing?.providerLastStatus ?? "n/a"}`,
+				`    流式输出: 首个事件 ${formatDuration(firstAgentMessageEventMs)} · 响应头到首个事件 ${formatDuration(firstAgentMessageAfterProviderMs)}`,
+				`    文本输出: 本轮首字 ${formatDuration(firstTextDeltaMs)} · 响应头到本轮首字 ${formatDuration(firstTextDeltaAfterProviderMs)}`,
+				`    工具调用: 首个工具就绪 ${formatDuration(firstToolCallReadyEventMs)} · 工具总耗时 ${formatDuration(timing?.toolTotalMs)}`,
+				"",
+			].join("\n"),
 		);
 		turnTimings.delete(turnKey);
 		if (activeTurnKey === turnKey) {
