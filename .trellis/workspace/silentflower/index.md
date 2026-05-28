@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-05-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~375 | Active |
+| `journal-1.md` | ~411 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-05-28 | pi 0.76 升级与 reviewer 镜像压缩 | `3f0b837`, `078bf3c`, `9b3cea8` | `main` |
 | 8 | 2026-05-28 | 处理 CI reviewer 工具错误 | `d874fea`, `d76525b` | `fix/reviewer-tool-errors` |
 | 7 | 2026-05-26 | reviewer 稳定性:软超时、SSE 重试、上下文收敛 | `5a9cfe4` | `fix/reviewer-timeout-sse-context` |
 | 7 | 2026-05-27 | 归档 code-reviewer-detailed-html · intro.html reviewer 章节事实口径修正收尾 | `cccf174` | `doc/code-reviewer-detailed-html` |
