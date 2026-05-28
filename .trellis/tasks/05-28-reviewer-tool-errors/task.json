@@ -22,5 +22,25 @@
 	"parent": null,
 	"relatedFiles": [],
 	"notes": "",
+	"last_push_snapshot": {
+		"snapshot_at": "2026-05-28T14:24:11+08:00",
+		"branch": "fix/reviewer-tool-errors",
+		"pushed_commits": {
+			"flower": "d874fea"
+		},
+		"completed_steps": [
+			"读取相关 spec",
+			"跨项目 workspace Git Basic Auth 鉴权",
+			"CI bash 白名单放行 python3",
+			"保留只读边界和高危命令拦截",
+			"行内评论不可评论行降级整体评论",
+			"更新 Trellis 任务和 spec 文档",
+			"trellis-check 通过",
+			"commit 并 push 到 company/fix/reviewer-tool-errors"
+		],
+		"partial_step": "Phase 3.4 已推送,用户选择跳过自动合并",
+		"next_step": "用户自行创建/处理 MR 后执行 /trellis:finish-work",
+		"notes": "MR 创建链接已由 GitLab push 输出给出;本轮不合并目标分支。"
+	},
 	"meta": {}
 }
