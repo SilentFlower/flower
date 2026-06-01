@@ -143,6 +143,60 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <X.Y>  # detailed 
 
 ## Phase Index
 
+### HIGHEST PRIORITY: skill-garden overrides
+
+<!-- BEGIN skill-garden overrides v0.6 -->
+
+> Central high-priority override hub for Trellis 0.6 workflow behavior. Source: github.com/SilentFlower/skill-garden.
+
+**Priority**: This hub overrides any conflicting Trellis workflow, skill, or command text for the scoped behaviors below.
+
+**Scope**: Phase 2.1 / 2.2 / 3.1 dispatch routing, Phase 3.5 finish-work bookkeeping, and push-progress recovery / snapshot reminders. State blocks should keep only one short skill-garden sentinel per state; long-form rules live here.
+
+**Mechanical rule**: use this hub as the source of truth. Do not add separate top-level skill-garden override sections or multiple skill-garden sentinels inside the same `workflow-state:*` block.
+
+#### Routing Gate
+
+Before any implement/check agent or check skill runs from the main session, the immediately preceding routing decision must come from `trellis-route` or from the same numbered fallback choices shown in normal chat when the helper is unavailable.
+
+`trellis-route` returns 4 modes for `target=check` (check-all/check x inline/subagent) and 2 for `target=implement`. Step 1.7's recommendation is generated inside the skill and surfaced via Step 2's `AskUserQuestion`; that is the only prompt point.
+
+If the platform cannot call `AskUserQuestion` / `request_user_input`, ask the same numbered choices in normal chat and wait for the user's reply. Tool unavailability is not permission to record inline/subagent or to dispatch a sub-agent directly.
+
+Before invoking the skill, never:
+- write pre-questions ("ready to start? / shall I proceed?")
+- state "I lean towards X" or preview the inline/subagent options
+- surface Step 1.7 rationale ahead of time
+
+At phase boundaries, do not ask meta continuation questions such as "continue?", "what's next?", or "X or Y?" when the answer determines the next workflow phase. Invoke `trellis-route(implement|check)` first, or ask the same numbered route choices if the helper is unavailable.
+
+Check routing has no 4h preference file. Before `trellis-check`, `trellis-check-all`, or either check sub-agent, route every time so the user can choose check-all vs lightweight and inline vs subagent.
+
+#### Finish-work Bookkeeping Guard
+
+`session_auto_commit` only controls script-managed bookkeeping commits for Trellis task archives and workspace journals. It does not disable Phase 3.4 code-work commits that the user explicitly confirms.
+
+If `.trellis/config.yaml` contains `session_auto_commit: false`, finish-work must treat archive and journal writes as disk-only bookkeeping:
+
+- Running `python3 ./.trellis/scripts/task.py archive <task>` may move task files, but must not be described as producing a `chore(task): archive ...` commit.
+- Running `python3 ./.trellis/scripts/add_session.py ...` may write workspace journal/index files, but must not be described as producing a `chore: record journal` commit.
+- Do not run a compensating `git add` / `git commit` for `.trellis/tasks/**` or `.trellis/workspace/**` just because those scripts skipped auto-commit.
+- Report the resulting `.trellis/tasks/**` and `.trellis/workspace/**` dirty paths to the user as bookkeeping changes for manual review.
+
+Phase 3.4 code-work commits are unchanged. If code files from the task are dirty, the agent may still present the normal one-shot commit plan and commit only after the user confirms.
+
+This guard only prevents archive/journal bookkeeping commits from being forced when `session_auto_commit: false`.
+
+#### Push Progress Recovery / Snapshot
+
+`trellis-push` may write `last_push_snapshot` into an active task's `task.json` with this schema: `snapshot_at`, `branch`, `pushed_commits`, `completed_steps`, `partial_step`, `next_step`, and `notes`.
+
+When there is no active task, scan `.trellis/tasks/*/task.json` for `status="in_progress"` entries that carry `last_push_snapshot`. If any exist and this session has not already relayed recovery, surface the paused state to the user and suggest rebinding the active-task pointer before resuming.
+
+When an active in-progress task carries `last_push_snapshot`, briefly relay `partial_step` and `next_step` before starting new work. Skip the reminder if it was already relayed in this session or the field is absent.
+
+<!-- END skill-garden overrides v0.6 -->
+
 ```
 Phase 1: Plan    → classify, get task-creation consent, then write planning artifacts
 Phase 2: Execute → implement only after task status is in_progress
@@ -166,31 +220,16 @@ Phase 3: Finish  → verify, update spec, commit, and wrap up
 <!-- Per-turn breadcrumb: shown when there is no active task (before Phase 1) -->
 
 [workflow-state:no_task]
+<!-- BEGIN skill-garden workflow-state no_task v0.6 -->
+HIGHEST PRIORITY SKILL-GARDEN STATE GUARD (no_task):
+Creating/resuming a task is not implementation permission.
+After PRD ready and task started, next implementation action = `trellis-route(implement)`.
+If no active task exists, scan `.trellis/tasks/*/task.json` once per session for in-progress tasks with `last_push_snapshot`; surface completed_steps + next_step and suggest rebinding the active task before resuming.
+<!-- END skill-garden workflow-state no_task v0.6 -->
+
 No active task. First classify the current turn and ask for task-creation consent before creating any Trellis task.
 Simple conversation / small task: ask only whether this turn should create a Trellis task. If the user says no, skip Trellis for this session.
 Complex task: ask the user if you can create a Trellis task and enter the planning phase. If the user says no, explain, clarify scope, or suggest a smaller split.
-<!-- BEGIN skill-garden workflow-state no-task-gate v0.5 -->
-FINAL NO-TASK GUARD (skill-garden):
-Creating/resuming a task ≠ permission to implement inline.
-After PRD ready and task started, next impl action = `trellis-route(implement)`.
-Don't infer opt-out from "small/urgent/unclear" — opt-out requires an explicit phrase in the current message (see C below).
-<!-- END skill-garden workflow-state no-task-gate v0.5 -->
-
-<!-- BEGIN skill-garden workflow-state push-progress-recovery v0.6 -->
-PUSH PROGRESS RECOVERY (skill-garden):
-If you haven't already relayed recovery in this session, scan
-`.trellis/tasks/*/task.json` for entries where status="in_progress" AND a
-`last_push_snapshot` field is present (schema: snapshot_at / branch /
-pushed_commits / completed_steps / partial_step / next_step / notes).
-For each match, surface to the user:
-  「发现未完成任务 <title>:上次 push 完成到 <completed_steps>,下一步 <next_step>。要继续吗?」
-If multiple match, list them with `snapshot_at` so the user can pick.
-Then suggest `python3 ./.trellis/scripts/task.py start <task_path>` to
-re-bind the active-task pointer before resuming work.
-Skip this hint if (a) you've already relayed recovery this session, or
-(b) no in_progress task carries `last_push_snapshot`.
-<!-- END skill-garden workflow-state push-progress-recovery v0.6 -->
-
 [/workflow-state:no_task]
 
 ### Phase 1: Plan
@@ -204,16 +243,16 @@ Skip this hint if (a) you've already relayed recovery this session, or
 <!-- Per-turn breadcrumb: shown throughout Phase 1 (status='planning') -->
 
 [workflow-state:planning]
+<!-- BEGIN skill-garden workflow-state planning v0.6 -->
+HIGHEST PRIORITY SKILL-GARDEN STATE GUARD (planning):
+Planning is not implementation permission.
+Complete prd.md + required context first.
+After status becomes in_progress, next action = `trellis-route(implement)`, not direct edits.
+<!-- END skill-garden workflow-state planning v0.6 -->
+
 Load `trellis-brainstorm`; stay in planning.
 Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`; ask for review before `task.py start`.
 Sub-agent mode: curate `implement.jsonl` and `check.jsonl` as spec/research manifests before start.
-<!-- BEGIN skill-garden workflow-state planning-handoff v0.5 -->
-FINAL PLANNING GUARD (skill-garden):
-Planning is not implementation permission.
-Complete prd.md + context first.
-After in_progress, next action = `trellis-route(implement)`, not direct edits.
-<!-- END skill-garden workflow-state planning-handoff v0.5 -->
-
 [/workflow-state:planning]
 
 <!-- Per-turn breadcrumb: shown throughout Phase 1 when codex.dispatch_mode=inline.
@@ -242,29 +281,17 @@ Inline mode: skip jsonl curation; Phase 2 reads artifacts/specs via `trellis-bef
 Sub-agent dispatch protocol applies to all platforms and all sub-agents, including class-2 Codex/Copilot/Gemini/Qoder and `trellis-research`: every dispatch prompt starts with `Active task: <task path from task.py current>` before role-specific instructions.
 
 [workflow-state:in_progress]
+<!-- BEGIN skill-garden workflow-state in_progress v0.6 -->
+HIGHEST PRIORITY SKILL-GARDEN STATE GUARD (in_progress):
+At Phase 2.1/2.2/3.1, invoke `trellis-route(implement|check)` first, including every check / check-all path.
+Do not spawn `trellis-implement`, `trellis-check`, or `trellis-check-all` directly unless `trellis-route` just selected subagent mode.
+If routing helper is unavailable, ask the same numbered route choices in normal chat and wait for the user's selection.
+If active task.json has `last_push_snapshot`, relay `partial_step` + `next_step` once before starting new work.
+<!-- END skill-garden workflow-state in_progress v0.6 -->
+
 Flow: `trellis-implement` -> `trellis-check` -> `trellis-update-spec` -> commit (Phase 3.4) -> `/trellis:finish-work`.
 Main-session default: dispatch implement/check sub-agents. Sub-agent self-exemption: if already running as `trellis-implement`, do NOT spawn another `trellis-implement` or `trellis-check`; if already running as `trellis-check`, do NOT spawn another `trellis-check` or `trellis-implement`. Dispatch is main session only.
 Dispatch prompt starts with `Active task: <task path from task.py current>`. Read context: jsonl entries -> `prd.md` -> `design.md if present` -> `implement.md if present`.
-<!-- BEGIN skill-garden workflow-state trellis-route v0.5 -->
-FINAL ROUTE GUARD (skill-garden):
-This guard is intentionally appended after upstream in_progress breadcrumbs and overrides earlier direct-dispatch defaults in this same <workflow-state>.
-At Phase 2.1/2.2/3.1, invoke `trellis-route(implement|check)` first.
-Do NOT spawn `trellis-implement` / `trellis-check` directly from the main session unless `trellis-route` just selected a subagent mode.
-If `trellis-route` selected inline mode, load `trellis-before-dev` / `trellis-check` / `trellis-check-all` as applicable and execute in the main session.
-ANTI-DEFER: at phase boundaries, never ask meta questions ("X or Y?", "continue?", "what's next?") — invoke `trellis-route(check)` instead.
-<!-- END skill-garden workflow-state trellis-route v0.5 -->
-
-<!-- BEGIN skill-garden workflow-state in-progress-push-snapshot v0.6 -->
-IN-PROGRESS PUSH SNAPSHOT (skill-garden):
-The active task's task.json may carry a `last_push_snapshot` field (schema:
-snapshot_at / branch / pushed_commits / completed_steps / partial_step /
-next_step / notes). Before starting new work this turn, read that field; if
-present, briefly relay `partial_step` + `next_step` so the user knows you
-recognize the paused state instead of restarting from scratch. Skip if you
-have already relayed this snapshot earlier in the session, or if the field
-is absent.
-<!-- END skill-garden workflow-state in-progress-push-snapshot v0.6 -->
-
 [/workflow-state:in_progress]
 
 <!-- Per-turn breadcrumb: shown while status='in_progress' when
@@ -273,21 +300,15 @@ is absent.
      instead of dispatching sub-agents. -->
 
 [workflow-state:in_progress-inline]
+<!-- BEGIN skill-garden workflow-state in_progress_inline v0.6 -->
+HIGHEST PRIORITY SKILL-GARDEN STATE GUARD (in_progress-inline):
+Inline mode means the main session edits directly, but check still routes before `trellis-check` / `trellis-check-all`.
+If active task.json has `last_push_snapshot`, relay `partial_step` + `next_step` once before starting new work.
+<!-- END skill-garden workflow-state in_progress_inline v0.6 -->
+
 Flow: `trellis-before-dev` -> edit -> `trellis-check` -> validation -> `trellis-update-spec` -> commit (Phase 3.4) -> `/trellis:finish-work`.
 Do not dispatch implement/check sub-agents in inline mode.
 Read context: `prd.md` -> `design.md if present` -> `implement.md if present`, plus relevant spec/research loaded by skills.
-
-<!-- BEGIN skill-garden workflow-state in-progress-push-snapshot v0.6 -->
-IN-PROGRESS PUSH SNAPSHOT (skill-garden):
-The active task's task.json may carry a `last_push_snapshot` field (schema:
-snapshot_at / branch / pushed_commits / completed_steps / partial_step /
-next_step / notes). Before starting new work this turn, read that field; if
-present, briefly relay `partial_step` + `next_step` so the user knows you
-recognize the paused state instead of restarting from scratch. Skip if you
-have already relayed this snapshot earlier in the session, or if the field
-is absent.
-<!-- END skill-garden workflow-state in-progress-push-snapshot v0.6 -->
-
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish
@@ -353,52 +374,6 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <step>
 ```
 
 ---
-
-### skill-garden Override: trellis-route routing
-
-<!-- BEGIN skill-garden enhancement v0.5 -->
-
-> Long-form rules complementing the per-turn breadcrumb. Source: github.com/SilentFlower/skill-garden.
-
-**Scope**: Phase 2.1 / 2.2 / 3.1 dispatch decisions, plus the Skill Routing + DO-NOT-skip tables. Per-turn breadcrumb covers the high-level rules; this file holds the specifics that don't fit there.
-
-#### Override A — No pre-invoke chatter
-
-`trellis-route` returns 4 modes for `target=check` (check-all/check × inline/subagent) and 2 for `target=implement`. Step 1.7's recommendation is generated INSIDE the skill and surfaced via Step 2's `AskUserQuestion` — the **only** prompt point.
-
-Before invoking the skill, **never**:
-- write pre-questions ("ready to start? / shall I proceed?")
-- state "I lean towards X" or text-preview the inline/subagent options
-- surface Step 1.7 rationale ahead of time
-
-Why: pre-invoke chatter creates double-asking, forces users to reply in prose instead of using the skill's number shortcuts (1/2/3/4), and breaks the routing path.
-
-#### Override B — Anti-defer rule (long-form details)
-
-The per-turn ANTI-DEFER summarizes; here are the three forbidden patterns in full.
-
-1. **Asking a meta continuation question instead of invoking trellis-route.** Mechanical check: if your draft response would end with an open-ended "should I X or Y?" and the answer determines the next workflow phase, replace it with `Skill({skill: "trellis-route", args: "target=..."})`.
-
-2. **Treating PRD-level PR1/PR2/PR3 multi-PR plans as Trellis phase boundaries.** PRs in the PRD are an implementation strategy for code-review readability — they are NOT `trellis-implement` → `trellis-check` boundaries. The `implement` phase ends when the WHOLE task is structurally done (or at a deliberate user-requested pause).
-
-3. **Inferring an inline override from a prior user turn.** "User said 'inline' two turns ago" is NOT a license to skip `trellis-route` on the current turn. Each turn at a phase boundary needs its own routing decision.
-
-**Worked example of a real violation** (committed by an Opus session, 2026-05-08, before this rule existed):
-
-> Context: just finished refactoring a 2k-line script (PR1 of a 3-PR plan listed in the PRD).
->
-> ❌ What the model said:
-> > "PR1 done, quality gates green, 18/18 tests pass. Want me to keep going inline with PR2, or pause for you to review first?"
->
-> ✅ What the model should have said (and done):
-> > Either:
-> > (a) Continue PR2/PR3 inline silently (since the plan was a single implement phase and the user already said "inline" for it), or
-> > (b) Invoke `Skill({skill: "trellis-route", args: "target=check"})` to surface the choice through the routing skill instead of free-form chat.
-> >
-> > In either case, NO meta question to the user.
-
-<!-- END skill-garden enhancement v0.5 -->
-
 
 ## Phase 1: Plan
 
