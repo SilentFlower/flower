@@ -45,16 +45,15 @@ describe("buildPrompt · 7 条硬约束", () => {
 		expect(prompt).toContain("续读提示");
 	});
 
-	it("评论 markdown 样式段落含 6 项原有约束 + 第 7 项新约束", () => {
+	it("评论 markdown 样式段落含原有约束 + 测试说明 + 真实上下文约束", () => {
 		const prompt = buildPrompt({ skillFilePath, dryRun: false });
-		// 6 项原有约束的关键字段
 		expect(prompt).toContain("4 段式");
 		expect(prompt).toContain("walkthrough");
-		expect(prompt).toContain("「无问题」轻量评论");
+		expect(prompt).toContain("无问题代码评审评论");
+		expect(prompt).toContain("面向测试的变更说明");
 		expect(prompt).toContain("quick action 禁令");
 		expect(prompt).toContain("GLFM 兼容");
 		expect(prompt).toContain("🔴 **阻塞**");
-		// 第 7 项
 		expect(prompt).toContain("真实代码上下文约束");
 	});
 
@@ -114,7 +113,7 @@ describe("buildPrompt · 7 条硬约束", () => {
 		expect(prompt).toContain("网络外发");
 	});
 
-	it("跨项目上下文引导:包含 3 个工具名、本地 rg 和旧 doc 降权规则", () => {
+	it("跨项目上下文引导:包含 3 个工具名、本地 rg、旧 doc 降权和开放式按需 harness 规则", () => {
 		const prompt = buildPrompt({ skillFilePath, dryRun: false });
 		expect(prompt).toContain("跨项目上下文");
 		expect(prompt).toContain("gitlab_list_group_projects");
@@ -125,6 +124,115 @@ describe("buildPrompt · 7 条硬约束", () => {
 		expect(prompt).toContain("bash + `rg`");
 		expect(prompt).toContain("gitlab_search_project_blobs");
 		expect(prompt).toContain("**不使用** `gitlab_search_project_blobs`");
+		expect(prompt).toContain("不要求每个 MR 固定准备 harness 工作区");
+		expect(prompt).toContain("不是封闭白名单");
+		expect(prompt).toContain("字段含义、权限规则、导入导出模板、业务状态机、跨端约定、版本需求等只是典型例子");
+		expect(prompt).toContain("未找到权威需求依据");
+	});
+});
+
+describe("buildPrompt · 面向测试的变更说明评论", () => {
+	function extractTestChangeExampleBlock(prompt: string): string {
+		const match = prompt.match(/### 示例 8[\s\S]*?```markdown([\s\S]*?)```/);
+		return match?.[1] ?? "";
+	}
+
+	it("AC1/AC8 · 工作流程要求 walkthrough 后再发第二条测试说明整体评论", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toMatch(/8\.\s+全部评审完后.*第一条整体评论:代码评审 walkthrough/);
+		expect(prompt).toMatch(/9\.\s+\*\*必须再\*\*调用一次 `gitlab_post_comment`/);
+		expect(prompt).toContain("发送第二条整体评论:`面向测试的变更说明`");
+		expect(prompt).toContain("不得**塞进代码评审 walkthrough");
+	});
+
+	it("AC9 · 测试说明模板固定包含 4 项 MVP 字段", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		const example = extractTestChangeExampleBlock(prompt);
+		expect(example).toContain("## 面向测试的变更说明");
+		expect(example).toContain("### 变更摘要");
+		expect(example).toContain("### 影响范围");
+		expect(example).toContain("### 测试关注点");
+		expect(example).toContain("### 需求/依据");
+	});
+
+	it("AC14 · 测试说明要求用测试人员可读的业务/行为语言,不能只写实现细节", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("测试人员易懂");
+		expect(prompt).toContain("业务 / 用户行为 / 接口表现 / 数据变化语言");
+		expect(prompt).toContain("文件名、函数名、实现细节只能作为依据补充,不能作为主体");
+		expect(prompt).toContain("不要只输出文件名、函数名、内部实现或技术摘要");
+	});
+
+	it("AC2/AC11 · 测试关注点覆盖低风险变更,允许无需专项测试或基础回归", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("低风险变更");
+		expect(prompt).toContain("也要输出完整四项");
+		expect(prompt).toContain("无需专项测试");
+		expect(prompt).toContain("建议基础回归");
+	});
+
+	it("AC3/AC4 · 需求依据要求标注 harness 路径和 ref/commit,未找到时明确降级", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		const example = extractTestChangeExampleBlock(prompt);
+		expect(prompt).toContain("harness 文档路径 + ref / commit");
+		expect(prompt).toContain("如果依据来自 harness,测试说明的`需求/依据`中简短说明依据文件路径和 ref / commit");
+		expect(example).toContain("devops-infra/docs/auth-signature.md");
+		expect(example).toContain("ref: `release/2026-06`");
+		expect(example).toContain("commit: `abc1234`");
+		expect(prompt).toContain("未找到权威需求依据");
+		expect(prompt).toContain("不作为权威业务结论");
+	});
+
+	it("AC10 · 无问题场景不能只发一条轻量结论,仍要发送第二条测试说明", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).not.toContain("只发一条整体评论");
+		expect(prompt).not.toContain("正文 ≤ 3 行");
+		expect(prompt).toContain("第一条整体评论可保持简洁,但不能作为唯一评论");
+		expect(prompt).toContain("随后仍必须发送第二条测试说明");
+	});
+
+	it("AC12 · harness 是按需开放式业务依据判断,不是固定 prepare 或封闭关键词列表", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("不要求每个 MR 固定准备 harness 工作区");
+		expect(prompt).toContain("只有当 diff 暗示需要外部业务 / 需求事实支撑时");
+		expect(prompt).toContain("不是封闭白名单");
+		expect(prompt).toContain("只要 diff 体现出需要权威业务依据");
+	});
+
+	it("AC13 · 测试说明不设硬性句数上限,改用信息聚焦规则控制噪声", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("不硬性限制句数或条目数");
+		expect(prompt).toContain("信息密度和测试可执行性");
+		expect(prompt).toContain("避免重复代码评审 walkthrough");
+		expect(prompt).toContain("复述完整 diff");
+		expect(prompt).not.toContain("1-3 句");
+		expect(prompt).not.toContain("2-3 句");
+	});
+});
+
+describe("buildPrompt · 文件变更表关注等级", () => {
+	function extractWalkthroughExampleBlock(prompt: string): string {
+		const match = prompt.match(/### 示例 1[\s\S]*?```markdown([\s\S]*?)```/);
+		return match?.[1] ?? "";
+	}
+
+	it("AC15 · 关注等级列只能使用稳定中文枚举", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("关注等级`列只能使用这四个稳定中文枚举");
+		expect(prompt).toContain("`🔴 阻塞` / `🟠 重要` / `🔵 建议` / `⚪ 仅说明`");
+		expect(prompt).toContain("禁止**使用 GitLab shortcode");
+		expect(prompt).toContain("或英文等级");
+	});
+
+	it("AC16 · 文件变更表示例不再包含 GitLab shortcode 或英文等级", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		const example = extractWalkthroughExampleBlock(prompt);
+		expect(example).toContain("| `internal/auth/sign_verify.go` | 新增签名验证主流程 | 🔴 阻塞 |");
+		expect(example).toContain("| `internal/auth/sign_verify_test.go` | 单测覆盖 happy path | 🔵 建议 |");
+		expect(example).toContain("| `cmd/server/main.go` | 注册 sign verify middleware | 🔵 建议 |");
+		expect(example).not.toContain(":large_orange_circle:");
+		expect(example).not.toContain(":white_circle:");
+		expect(example).not.toMatch(/\|\s*:[a-z_]+:\s*(?:major|minor|blocker)\s*\|/);
 	});
 });
 
@@ -244,7 +352,7 @@ describe("buildPrompt · dryRun hint", () => {
 });
 
 describe("buildPrompt · E2 truncation hint", () => {
-	it("truncation 未传 → 无截断说明段(第 8 条约束本身存在,但具体元数据 section 不存在)", () => {
+	it("truncation 未传 → 无截断说明段(第 9 条约束本身存在,但具体元数据 section 不存在)", () => {
 		const prompt = buildPrompt({ skillFilePath, dryRun: false });
 		// 没有 ### MR 文件截断说明 标题段
 		expect(prompt).not.toMatch(/### MR 文件截断说明/);
@@ -285,8 +393,8 @@ describe("buildPrompt · E2 truncation hint", () => {
 		expect(prompt).toContain("top **100**");
 	});
 
-	it("第 8 条硬约束(E2 cap)始终在 prompt(即使未触发截断)", () => {
-		// 第 8 条本身是 prompt 的一部分,不依赖 truncation
+	it("第 9 条硬约束(E2 cap)始终在 prompt(即使未触发截断)", () => {
+		// 第 9 条本身是 prompt 的一部分,不依赖 truncation
 		const prompt = buildPrompt({ skillFilePath, dryRun: false });
 		expect(prompt).toContain("MR diff size cap");
 		expect(prompt).toContain("按 churn(增量 + 删除行数)排序");

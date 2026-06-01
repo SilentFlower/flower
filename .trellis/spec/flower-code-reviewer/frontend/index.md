@@ -49,7 +49,8 @@
 3. 不在 `cli.ts` / `run.ts` 里直接 console.log 评审意见(必须走 GitLab 工具;dry-run `--dry-run` 是例外)
 4. 改 prompt 时知道必要的硬约束:
    - **severity 词表 = `blocker | major | minor`**(对齐 flower-tools-gitlab `severitySchema` 与 `comments/render.ts`,**禁止**残留旧词表 `info | warning | blocker`)
-   - 工具优先(评论必须经 GitLab 工具发出)/ 不重复评论 / 第 4 条「禁止 `^/<quick-action>` 行」/ 第 7 条「评论前必须读取相关行窗 `gitlab_get_file_content(path, ref, startLine, endLine)`」/ 第 8 条「diff 截断时必须写 N/M 截断说明」
+   - 工具优先(评论必须经 GitLab 工具发出)/ 不重复评论 / 禁止 `^/<quick-action>` 行 / 评论前必须读取相关行窗 `gitlab_get_file_content(path, ref, startLine, endLine)` / diff 截断时必须写 N/M 截断说明
+   - 评审结束后必须先发代码评审 walkthrough,再单独发第二条「面向测试的变更说明」整体评论
 
 ---
 
@@ -60,9 +61,16 @@
 - **行内评论 4 段式**:emoji + 加粗中文等级 + 标题 一行(紧凑形式)+ 解释段(讲 why)+ `<details>` 包 reasoning(可选)+ `suggestion` 块(可选)
   - 中文等级:🔴 **阻塞** / 🟠 **重要** / 🔵 **建议**(SEVERITY_META 在 `comments/render.ts`,2026-05-20 从英文 Blocker/Major/Minor 升级中文化)
   - 例:`🔴 **阻塞** · 硬编码 secret 存在凭据泄漏风险`
-- **整体评论 walkthrough**:整 body 包 `<details>` 默认折叠,内含「概要 / 文件变更表 / 行动建议」
+- **第一条整体评论 walkthrough**:整 body 包 `<details>` 默认折叠,内含「概要 / 文件变更表 / 行动建议」
+  - 「文件变更表 / 关注等级」列只能使用稳定中文枚举:`🔴 阻塞`、`🟠 重要`、`🔵 建议`、`⚪ 仅说明`
+  - 禁止在关注等级列使用 GitLab shortcode 或英文等级,例如 `:large_orange_circle: major`、`:white_circle: 已阅`
 - **`> [!caution]` alert 块版本降级**:启动期 `detectGitlabVersion` 探测一次;GitLab ≥ 17.10 用 `> [!caution]`,< 17.10 / 探测失败 降级 `> ⚠️ **Caution**` blockquote
-- **「无问题」轻量模板**:MR 干净时只发 2 行(`:white_check_mark:` 前缀)
+- **第二条整体评论:面向测试的变更说明**:必须单独发送,不能塞进 walkthrough;固定包含「变更摘要 / 影响范围 / 测试关注点 / 需求/依据」四项
+  - 受众是测试人员,优先写业务 / 行为 / 接口 / 数据变化,文件名和函数名只作为依据补充
+  - harness 按需查询,触发条件是开放式业务依据判断;字段含义、权限规则、导入导出模板、业务状态机、跨端约定、版本需求等只是典型例子,不是封闭白名单
+  - 如果依据来自 harness,在「需求/依据」中标注文件路径和 ref / commit;未找到时写「未找到权威需求依据」
+  - 不硬性限制句数或条目数,但必须避免重复 walkthrough、复述完整 diff 或堆砌无关细节
+- **无问题场景**:代码评审评论可保持简洁,但不能作为唯一评论;仍必须额外发送第二条「面向测试的变更说明」
 - **severity marker 语义**(2026-05-20 二次迭代):
   - **不在 body 写** `[severity:<level>]` 字面文本(原 v1 设计已废)
   - 仅 blocker 评论由 `flower-tools-gitlab/postMrComment` / `postMrLineComment` wrapper **自动以 HTML 注释 marker 注入**:`<!-- severity: blocker -->` 作为 body 首行;GitLab markdown 渲染时 HTML 注释不显示,用户视图完全干净

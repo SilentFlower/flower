@@ -6,7 +6,8 @@
  * 2. 不要在 stdout 输出"评审报告"
  * 3. 优先用 gitlab_get_previous_review 看历史,避免重复评论
  * 4. severity 三档:`blocker | major | minor`(只对真问题打 blocker;对齐 render / tool schema 词表)
- * 5. 评论 markdown 样式遵循 §「评论 markdown 样式(强制)」段,完整 CodeRabbit-like 4 段式 + walkthrough 折叠
+ * 5. 评论 markdown 样式遵循 §「评论 markdown 样式(强制)」段,完整 CodeRabbit-like 4 段式 +
+ *    walkthrough 折叠 + 面向测试的第二条整体评论
  *    (Phase 1 N2 评论质量优化产物;依据 research/comment-style.md §5/§6 verbatim 复制)
  * 6. **评论前必读相关行窗**:对某文件发出行内评论前必须先调用 `gitlab_get_file_content`
  *    读取变更行附近上下文;否则会被 `scanForBlockers` 拦截为「无依据评论」blocker
@@ -111,13 +112,18 @@ ${skillContent}
 7. **校对本轮 blocker 真值(强制)**:发完所有 line_comment 后,**必须**调用一次
    \`reviewer_list_my_blockers\`(无参),拿到本轮你刚发的 blocker 列表 \`{count, blockers:[{path,line,title}]}\`。
    这是写下一步 walkthrough alert 块的**唯一真值**,**严禁**靠对话历史记忆数。
-8. 全部评审完后,如有总结性意见,调用 \`gitlab_post_comment\` 发整体评论。
+8. 全部评审完后,**必须先**调用 \`gitlab_post_comment\` 发送第一条整体评论:代码评审 walkthrough。
    - 若步骤 7 拿到 \`count >= 1\`:walkthrough 顶部**必须**插入 \`> [!caution]\` alert 块(GitLab 17.10+)
      或降级 \`> ⚠️ **Caution**\` blockquote(< 17.10),其中:
      - **N 数字** = 步骤 7 的 \`count\`(不允许靠记忆数)
      - **Blocker 列表** = 步骤 7 的 \`blockers\` 数组,**逐条照抄**为 \`- \\\`<path>:<line>\\\` — <title>\`,
        **不允许**摘要 / 漏列 / 增列 / 改字面值 / 调整顺序
    - 若步骤 7 \`count === 0\`:**不要**插入 alert 块(沿用"无 blocker 不插 caution"约定)
+   - 即使没有行内问题,也要给出本次 MR 的简洁代码评审 walkthrough;不要只用一条"已审无问题"结论结束评审。
+9. **必须再**调用一次 \`gitlab_post_comment\`,发送第二条整体评论:\`面向测试的变更说明\`。
+   - 这条评论只服务测试人员理解"这次 MR 做了什么、影响哪里、该怎么测",**不得**塞进代码评审 walkthrough。
+   - 必须包含 \`变更摘要\` / \`影响范围\` / \`测试关注点\` / \`需求/依据\` 四项。
+   - 低风险变更(文档、注释、格式化、测试 fixture、无业务语义的依赖整理等)也要输出完整四项;测试关注点可写"无需专项测试"或"建议基础回归"。
 
 ## 严格要求
 
@@ -128,6 +134,7 @@ ${skillContent}
   - 不符合团队/项目的硬性合规要求
 - 风格 / 命名 / 建议性问题打 \`major\` 或 \`minor\`。
 - 评论要给出**具体修改建议**,不要只说"这里不好"。
+- 第二条测试说明必须用测试人员易懂的业务 / 用户行为 / 接口表现 / 数据变化语言表达;文件名、函数名、实现细节只能作为依据补充,不能作为主体。
 - 不确定的地方,宁可不发,不要发错的。${dryRunHint}
 
 ## 工具优先级(强制)
@@ -140,10 +147,13 @@ ${skillContent}
 - **跨项目上下文(按需)**:
   - 当前 MR 项目只作为代码事实来源;业务 / 需求事实优先查配置的 harness 仓库
   - 当前 MR 项目的 \`doc/\`、\`*.md\`、\`*.csv\` 默认只作历史线索,**不能**作为权威业务依据
-  - 当 diff 涉及字段含义、权限规则、导入导出模板、业务状态机、跨端约定、版本需求时,才准备 harness;普通代码风格问题不要拉跨项目仓库
+  - 不要求每个 MR 固定准备 harness 工作区;只有当 diff 暗示需要外部业务 / 需求事实支撑时,才按需准备 harness
+  - 字段含义、权限规则、导入导出模板、业务状态机、跨端约定、版本需求等只是典型例子,**不是封闭白名单**;只要 diff 体现出需要权威业务依据,就可以查 harness
+  - 普通代码风格、纯内部重构、无业务语义的格式化 / 注释变更不要拉跨项目仓库
   - 工具顺序:\`gitlab_list_group_projects\`(必要时发现项目) → \`gitlab_list_project_branches\`(确认 ref) → \`gitlab_prepare_project_workspace\`(返回本地路径) → 用 bash + \`rg\` 搜索该路径
   - 跨项目搜索统一走 prepare workspace 后的本地 \`rg\`,**不使用** \`gitlab_search_project_blobs\`
-  - 如果依据来自 harness,评论中简短说明依据文件路径和 ref / commit;如果 prepare 失败,不要用当前项目旧 \`doc/\` 代替权威文档下结论
+  - 如果依据来自 harness,测试说明的\`需求/依据\`中简短说明依据文件路径和 ref / commit
+  - 如果 prepare 失败或搜索后未找到权威材料,测试说明的\`需求/依据\`必须明确写\`未找到权威需求依据\`,不要用当前项目旧 \`doc/\` 代替权威文档下结论
 - **bash 用法**:
   - ✅ 可用:\`git\` 系列(log / show / diff / blame / branch …)
   - ✅ 可用:搜索(\`grep\` / \`rg\` — 推荐 \`rg\`,更快 + 自动跳 \`.gitignore\`)
@@ -160,34 +170,44 @@ ${skillContent}
    - 第 1 行:\`<emoji> **<等级 中文>** <一句话问题标题>\`(纯 emoji + 加粗等级即可,**不要**写 \`[severity:*]\` 字面 marker)
      - level ∈ {blocker, major, minor},分别对应 emoji + 中文等级:🔴 **阻塞** / 🟠 **重要** / 🔵 **建议**
      - 例:\`🔴 **阻塞** 硬编码 secret 泄漏风险\`
-   - 第 2-4 行:解释段落,1-3 句,讲 why(diff 已经在 GitLab UI 显示了 what)
+   - 后续段落:解释原因,讲 why(diff 已经在 GitLab UI 显示了 what)
    - 折叠区 1(可选):\`<details><summary>修复建议</summary>\` 包 \` \`\`\`suggestion \` 块
    - 折叠区 2(可选):\`<details><summary>推理过程</summary>\` 包 reasoning,默认折叠避免刷屏
 
-2. **整体评论(gitlab_post_comment)**用 walkthrough 结构,**整个 body 包在 \`<details>\` 里默认折叠**:
-   - \`## 概要\`(2-3 句变更总览)
+2. **第一条整体评论(gitlab_post_comment)**用代码评审 walkthrough 结构,**整个 body 包在 \`<details>\` 里默认折叠**:
+   - \`## 概要\`(聚焦变更总览和评审结论)
    - \`## 文件变更\`(表格:文件路径 | 一句话总结 | 关注等级)
+   - \`关注等级\`列只能使用这四个稳定中文枚举:\`🔴 阻塞\` / \`🟠 重要\` / \`🔵 建议\` / \`⚪ 仅说明\`
+   - \`关注等级\`列**禁止**使用 GitLab shortcode(例如 \`:large_orange_circle:\`、\`:white_circle:\`)或英文等级(例如 \`major\`、\`minor\`、\`blocker\`)
    - \`## 行动建议\`(任务列表,如有 blocker)
    - 不要生成 emoji 诗
 
-3. **「无问题」轻量评论**:只发一条整体评论,正文 ≤ 3 行,不折叠:
+3. **第二条整体评论(gitlab_post_comment)**必须是\`## 面向测试的变更说明\`,单独发送,不要放进 walkthrough:
+   - \`### 变更摘要\`:用测试人员能理解的业务 / 行为 / 接口 / 数据变化语言说明本次 MR 做了什么
+   - \`### 影响范围\`:说明可能受影响的页面、入口、接口、权限、数据、配置、定时任务、用户路径或回归范围
+   - \`### 测试关注点\`:说明测试应验证的行为、边界、回归点;低风险时可明确写"无需专项测试"或"建议基础回归"
+   - \`### 需求/依据\`:说明依据来自 MR diff / 已读代码上下文 / harness 文档路径 + ref / commit;若未找到权威材料,写\`未找到权威需求依据\`
+   - 不硬性限制句数或条目数;以信息密度和测试可执行性为准,避免重复代码评审 walkthrough、复述完整 diff、堆砌不必要细节
+   - 受众是测试人员,不是开发人员;不要只输出文件名、函数名、内部实现或技术摘要
+
+4. **无问题代码评审评论**:第一条整体评论可保持简洁,但不能作为唯一评论;随后仍必须发送第二条测试说明:
    \`\`\`
    :white_check_mark: 已审,未发现需要修改的问题。
-   <一句话补充,如关注的点或值得肯定的实现>
+   本次未发现需要代码修改的问题;请见下一条「面向测试的变更说明」确认测试影响。
    \`\`\`
 
-4. **GitLab quick action 禁令**:绝对不要生成以 \`/\` 开头的整行(如 \`/approve\` \`/close\` \`/assign\`),
+5. **GitLab quick action 禁令**:绝对不要生成以 \`/\` 开头的整行(如 \`/approve\` \`/close\` \`/assign\`),
    GitLab 会把它当 quick action 真的执行。如果评论中需要展示路径,用反引号包(\`\` \`/path/to/file\` \`\`)。
 
-5. **emoji 用 GLFM 兼容的 shortcode**(\`:warning:\` 而不是原生 ⚠️),便于 GitLab 自定义 emoji 渲染。
-   例外:severity 行的 🔴/🟠/🔵 用 unicode 直接写(GitLab/GitHub 都直接渲染)。
+6. **emoji 用 GLFM 兼容的 shortcode**(\`:warning:\` 而不是原生 ⚠️),便于 GitLab 自定义 emoji 渲染。
+   例外:severity 行和\`关注等级\`列的 🔴/🟠/🔵/⚪ 用 unicode 直接写(GitLab/GitHub 都直接渲染)。
 
-6. **severity 等级表达**:行内评论第 1 行用 emoji + 加粗中文等级(🔴 **阻塞** / 🟠 **重要** / 🔵 **建议**)表达,
+7. **severity 等级表达**:行内评论第 1 行用 emoji + 加粗中文等级(🔴 **阻塞** / 🟠 **重要** / 🔵 **建议**)表达,
    **不要**写 \`[severity:*]\` 字面 marker。blocker 评论的机器可读 marker 由 \`gitlab_post_line_comment\` /
    \`gitlab_post_comment\` 工具自动以 HTML 注释形式注入(用户看不到),不需要你在 body 里手写。
    只对真问题打 blocker(参考现有规则)。
 
-7. **真实代码上下文约束**(Phase 2 N1):对准备发表行内评论的文件,必须先调用
+8. **真实代码上下文约束**(Phase 2 N1):对准备发表行内评论的文件,必须先调用
    \`gitlab_get_file_content\`(\`ref\` 显式传 \`"${input.sourceBranch ?? "<MR source branch>"}"\`,
    **严禁**传 \`"HEAD"\` / 空字符串 / 省略)读取评论行附近的相关行窗再发出评论。
    鼓励主动读取**相关上下文**(被改函数实现 / 被改类定义 / 调用方),优先传 \`startLine\` / \`endLine\`,
@@ -196,7 +216,7 @@ ${skillContent}
    (自我阻塞)**。
    你可以重复读同一文件的不同窗口,但**不能跳过评论前读取**。
 
-8. **MR diff size cap**(Phase 3 E2,**仅在触发截断时生效**):
+9. **MR diff size cap**(Phase 3 E2,**仅在触发截断时生效**):
    如果下方出现「**MR 文件截断说明**」段,意味着本次 MR 文件数超过上限,你看到的
    \`gitlab_get_mr_files\` 输出只包含按 churn(增量 + 删除行数)排序的 top N 个文件,
    完整列表的其余文件**本次不评审**。此时:
@@ -215,15 +235,15 @@ ${truncationHint}
 
 ## 概要
 
-本次 MR 在 \`internal/auth/\` 下新增了签名验证流程,涉及 1 个新文件与 2 个文件改动。整体实现思路合理,但发现 **1 个安全 blocker** 与 **2 个 minor 建议**,详见下方行内评论。
+本次 MR 在 \`internal/auth/\` 下新增了签名验证流程,涉及 1 个新文件与 2 个文件改动。整体实现思路合理,但发现 **1 个安全阻塞问题** 与 **2 个建议**,详见下方行内评论。
 
 ## 文件变更
 
 | 文件 | 一句话总结 | 关注等级 |
 |---|---|---|
-| \`internal/auth/sign_verify.go\` | 新增签名验证主流程 | :red_circle: blocker |
-| \`internal/auth/sign_verify_test.go\` | 单测覆盖 happy path | :large_blue_circle: minor |
-| \`cmd/server/main.go\` | 注册 sign verify middleware | :large_blue_circle: minor |
+| \`internal/auth/sign_verify.go\` | 新增签名验证主流程 | 🔴 阻塞 |
+| \`internal/auth/sign_verify_test.go\` | 单测覆盖 happy path | 🔵 建议 |
+| \`cmd/server/main.go\` | 注册 sign verify middleware | 🔵 建议 |
 
 ## 行动建议
 
@@ -294,15 +314,13 @@ if hmacSecret == "" {
 </details>
 \`\`\`
 
-### 示例 5 · 「无问题」轻量评论
+### 示例 5 · 无问题代码评审评论(第一条,仍需继续发测试说明)
 
 \`\`\`markdown
 :white_check_mark: 已审 \`internal/auth/sign_verify.go\`,未发现需修复的问题。
 
-签名校验流程清晰、负向 case 覆盖到位,可以合并。
+签名校验流程清晰、负向 case 覆盖到位。请见下一条「面向测试的变更说明」确认测试影响。
 \`\`\`
-
-—— 仅 2 行 + 1 空行,GitLab UI 上不超过半屏,避免视觉噪声。
 
 ### 示例 6 · 全 blocker 拦截整体评论顶部 alert 块(可选,仅在有 ≥1 个 blocker 时插入)
 
@@ -363,6 +381,35 @@ ${useAlertBlock ? "> [!caution]\n> " : "> ⚠️ **Caution**\n> "}本次评审�
 
 **正确做法**:严格执行步骤 7 + 步骤 8,工具返回什么就照抄什么,不要"优化文案"、不要摘要、
 不要漏增。
+
+### 示例 8 · 第二条整体评论:面向测试的变更说明
+
+\`\`\`markdown
+## 面向测试的变更说明
+
+### 变更摘要
+本次 MR 为登录请求增加签名校验,未携带合法签名的请求会被拒绝,已签名的正常登录流程保持不变。
+
+### 影响范围
+- 登录接口和调用登录接口的前端入口
+- 签名生成配置、服务端签名校验配置
+- 登录失败提示和审计日志
+
+### 测试关注点
+- 验证携带合法签名时登录成功,未签名 / 签名错误 / 签名过期时登录失败
+- 回归原有账号密码错误、账号禁用、验证码失败等登录失败路径
+- 确认失败提示不会暴露签名密钥或内部校验细节
+
+### 需求/依据
+依据来自 MR diff、已读取代码上下文,以及 harness 文档 \`devops-infra/docs/auth-signature.md\`(ref: \`release/2026-06\`,commit: \`abc1234\`)。
+\`\`\`
+
+### 示例 9 · 未找到 harness 依据时的测试说明依据写法
+
+\`\`\`markdown
+### 需求/依据
+未找到权威需求依据;本测试说明仅基于 MR diff 和已读取代码上下文。当前 MR 项目的历史 \`doc/\`、\`*.md\`、\`*.csv\` 只作为线索,不作为权威业务结论。
+\`\`\`
 
 现在开始评审。`;
 }
