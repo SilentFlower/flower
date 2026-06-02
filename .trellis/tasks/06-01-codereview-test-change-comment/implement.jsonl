@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "本任务修改 code-reviewer 入口层 prompt 与评论结构，需要遵守该 package 的 prompt/CLI/入口层约束。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "实现需更新 prompt 单测并保持 package 质量门。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/type-safety.md", "reason": "若扩展 render 类型或 prompt 入参，需要遵守 TypeScript strict 与显式类型约定。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "优先复用现有 walkthrough、harness 工具链和 prompt 结构，避免新增不必要工具。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "需求涉及 flower prompt、GitLab 评论、harness 文档依据，需要检查跨层语义一致。"}
+{"file": ".trellis/tasks/06-01-codereview-test-change-comment/research/repo-context.md", "reason": "记录本任务已确认的 code-reviewer 与 harness 上下文。"}
+{"file": ".trellis/tasks/archive/2026-05/05-27-code-reviewer-cross-project-context/prd.md", "reason": "历史任务沉淀了 code-reviewer 跨项目 harness 上下文能力，需沿用按需但不封闭的查询策略。"}

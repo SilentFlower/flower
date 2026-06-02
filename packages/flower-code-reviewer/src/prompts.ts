@@ -7,7 +7,7 @@
  * 3. 优先用 gitlab_get_previous_review 看历史,避免重复评论
  * 4. severity 三档:`blocker | major | minor`(只对真问题打 blocker;对齐 render / tool schema 词表)
  * 5. 评论 markdown 样式遵循 §「评论 markdown 样式(强制)」段,完整 CodeRabbit-like 4 段式 +
- *    walkthrough 折叠 + 面向测试的第二条整体评论
+ *    walkthrough 折叠 + 面向测试的第二条整体评论默认折叠
  *    (Phase 1 N2 评论质量优化产物;依据 research/comment-style.md §5/§6 verbatim 复制)
  * 6. **评论前必读相关行窗**:对某文件发出行内评论前必须先调用 `gitlab_get_file_content`
  *    读取变更行附近上下文;否则会被 `scanForBlockers` 拦截为「无依据评论」blocker
@@ -122,6 +122,7 @@ ${skillContent}
    - 即使没有行内问题,也要给出本次 MR 的简洁代码评审 walkthrough;不要只用一条"已审无问题"结论结束评审。
 9. **必须再**调用一次 \`gitlab_post_comment\`,发送第二条整体评论:\`面向测试的变更说明\`。
    - 这条评论只服务测试人员理解"这次 MR 做了什么、影响哪里、该怎么测",**不得**塞进代码评审 walkthrough。
+   - 这条评论的整个 body 也**必须**包在 \`<details>\` 里默认折叠,不要加 \`open\` 属性;summary 固定使用 \`:test_tube: <b>面向测试的变更说明</b>\`。
    - 必须包含 \`变更摘要\` / \`影响范围\` / \`测试关注点\` / \`需求/依据\` 四项。
    - 低风险变更(文档、注释、格式化、测试 fixture、无业务语义的依赖整理等)也要输出完整四项;测试关注点可写"无需专项测试"或"建议基础回归"。
 
@@ -182,7 +183,9 @@ ${skillContent}
    - \`## 行动建议\`(任务列表,如有 blocker)
    - 不要生成 emoji 诗
 
-3. **第二条整体评论(gitlab_post_comment)**必须是\`## 面向测试的变更说明\`,单独发送,不要放进 walkthrough:
+3. **第二条整体评论(gitlab_post_comment)**必须单独发送,不要放进 walkthrough;整个 body 必须包在 \`<details>\` 里默认折叠,不要加 \`open\` 属性:
+   - summary 固定写:\`<summary>:test_tube: <b>面向测试的变更说明</b></summary>\`
+   - 折叠内容第一行必须是:\`## 面向测试的变更说明\`
    - \`### 变更摘要\`:用测试人员能理解的业务 / 行为 / 接口 / 数据变化语言说明本次 MR 做了什么
    - \`### 影响范围\`:说明可能受影响的页面、入口、接口、权限、数据、配置、定时任务、用户路径或回归范围
    - \`### 测试关注点\`:说明测试应验证的行为、边界、回归点;低风险时可明确写"无需专项测试"或"建议基础回归"
@@ -385,6 +388,9 @@ ${useAlertBlock ? "> [!caution]\n> " : "> ⚠️ **Caution**\n> "}本次评审�
 ### 示例 8 · 第二条整体评论:面向测试的变更说明
 
 \`\`\`markdown
+<details>
+<summary>:test_tube: <b>面向测试的变更说明</b></summary>
+
 ## 面向测试的变更说明
 
 ### 变更摘要
@@ -402,6 +408,8 @@ ${useAlertBlock ? "> [!caution]\n> " : "> ⚠️ **Caution**\n> "}本次评审�
 
 ### 需求/依据
 依据来自 MR diff、已读取代码上下文,以及 harness 文档 \`devops-infra/docs/auth-signature.md\`(ref: \`release/2026-06\`,commit: \`abc1234\`)。
+
+</details>
 \`\`\`
 
 ### 示例 9 · 未找到 harness 依据时的测试说明依据写法

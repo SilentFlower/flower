@@ -48,8 +48,9 @@ export async function detectGitlabVersion(env?: {
 		return cachedVersion;
 	}
 
-	const host = env?.gitlabHost ?? process.env.GITLAB_HOST ?? "https://gitlab.com";
-	const token = env?.gitlabToken ?? process.env.GITLAB_TOKEN;
+	const host =
+		env !== undefined ? (env.gitlabHost ?? "https://gitlab.com") : (process.env.GITLAB_HOST ?? "https://gitlab.com");
+	const token = env !== undefined ? env.gitlabToken : process.env.GITLAB_TOKEN;
 	if (!token) {
 		// 无 token 也不抛错(评审本地 dry-run 场景可能没 token);直接走降级
 		cachedVersion = null;
