@@ -145,6 +145,18 @@ describe("buildPrompt · 面向测试的变更说明评论", () => {
 		expect(prompt).toContain("不得**塞进代码评审 walkthrough");
 	});
 
+	it("AC8b · 第二条测试说明整体评论默认折叠", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		const example = extractTestChangeExampleBlock(prompt);
+		expect(prompt).toContain("这条评论的整个 body 也**必须**包在 `<details>` 里默认折叠");
+		expect(prompt).toContain("不要加 `open` 属性");
+		expect(prompt).toContain("<summary>:test_tube: <b>面向测试的变更说明</b></summary>");
+		expect(example).toMatch(/^\s*<details>/);
+		expect(example).toContain("<summary>:test_tube: <b>面向测试的变更说明</b></summary>");
+		expect(example).toContain("</details>");
+		expect(example).not.toContain("<details open");
+	});
+
 	it("AC9 · 测试说明模板固定包含 4 项 MVP 字段", () => {
 		const prompt = buildPrompt({ skillFilePath, dryRun: false });
 		const example = extractTestChangeExampleBlock(prompt);

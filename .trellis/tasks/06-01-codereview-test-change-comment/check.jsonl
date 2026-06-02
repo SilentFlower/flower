@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "检查 prompt 改动是否符合 code-reviewer 入口层规范。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "检查测试覆盖、质量门和禁止模式。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查是否复用现有 walkthrough 与 harness 工具链，避免过度新增。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查测试说明、harness 依据、GitLab 评论行为与 CI 接入边界是否一致。"}
+{"file": ".trellis/tasks/06-01-codereview-test-change-comment/research/repo-context.md", "reason": "检查实现是否偏离已确认仓库上下文。"}
+{"file": ".trellis/tasks/archive/2026-05/05-27-code-reviewer-cross-project-context/prd.md", "reason": "检查 harness 按需查询行为未被误改成每个 MR 固定查询，也未被写成封闭白名单。"}
