@@ -51,6 +51,12 @@ export interface LineCommentResult {
 	posted: "line" | "note_fallback";
 	/** 降级原因,仅 `posted === "note_fallback"` 时存在 */
 	reason?: string | undefined;
+	/** LLM 原计划评论的新文件行号 */
+	originalLine?: number | undefined;
+	/** 实际挂载的新文件行号;仅行内评论成功时存在 */
+	actualLine?: number | undefined;
+	/** 是否由工具自动从原目标行重定位到最近可评论行 */
+	relocated?: boolean | undefined;
 }
 
 /**
@@ -247,6 +253,25 @@ interface BranchItem {
 	};
 }
 
+/**
+ * MR diff 中可用于 `new_line` 的行。
+ *
+ * @internal
+ */
+interface CommentableLine {
+	line: number;
+	kind: "add" | "context";
+}
+
+/**
+ * 距离原目标行多远以内允许自动重定位。
+ *
+ * 该值只覆盖同一小段 hunk 附近的模型行号漂移,避免把评论挂到明显无关的位置。
+ *
+ * @internal
+ */
+const LINE_RELOCATION_MAX_DISTANCE = 12;
+
 let cachedClient: GitlabClient | undefined;
 
 /**
@@ -391,16 +416,15 @@ export function countDiffChurn(diff: string): { additions: number; deletions: nu
 }
 
 /**
- * 解析 GitLab unified diff 中可用于 `new_line` 行内评论的位置。
- *
- * GitLab 只接受 diff hunk 内的新增行和上下文行作为 `new_line`;纯删除行没有
- * new_line,不应尝试发变更后行内评论。解析失败时返回空集合,调用方可降级整体评论。
+ * 解析 GitLab unified diff,返回含类型的可评论新文件行。
  *
  * @param diff GitLab `/changes` 返回的单文件 diff
- * @returns 可评论的变更后行号集合
+ * @returns 可评论行列表,按 diff 中出现顺序排列
+ *
+ * @internal
  */
-export function collectCommentableNewLines(diff: string): Set<number> {
-	const lines = new Set<number>();
+function collectCommentableLineDetails(diff: string): CommentableLine[] {
+	const lines: CommentableLine[] = [];
 	let newLine: number | undefined;
 	for (const rawLine of diff.split("\n")) {
 		const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(rawLine);
@@ -415,12 +439,148 @@ export function collectCommentableNewLines(diff: string): Set<number> {
 		if (rawLine.startsWith("-")) {
 			continue;
 		}
-		if (rawLine.startsWith("+") || rawLine.startsWith(" ")) {
-			lines.add(newLine);
+		if (rawLine.startsWith("+")) {
+			lines.push({ line: newLine, kind: "add" });
+			newLine += 1;
+			continue;
+		}
+		if (rawLine.startsWith(" ")) {
+			lines.push({ line: newLine, kind: "context" });
 			newLine += 1;
 		}
 	}
 	return lines;
+}
+
+/**
+ * 解析 GitLab unified diff 中可用于 `new_line` 行内评论的位置。
+ *
+ * GitLab 只接受 diff hunk 内的新增行和上下文行作为 `new_line`;纯删除行没有
+ * new_line,不应尝试发变更后行内评论。解析失败时返回空集合,调用方可降级整体评论。
+ *
+ * @param diff GitLab `/changes` 返回的单文件 diff
+ * @returns 可评论的变更后行号集合
+ */
+export function collectCommentableNewLines(diff: string): Set<number> {
+	return new Set(collectCommentableLineDetails(diff).map((line) => line.line));
+}
+
+/**
+ * 给 MR diff hunk 行加上新文件行号和类型标记,帮助 LLM 选择可评论行。
+ *
+ * @param diff GitLab `/changes` 返回的单文件 diff
+ * @returns 带 `add` / `ctx` / `del` 标记的 diff 文本
+ *
+ * @internal
+ */
+function annotateDiffNewLines(diff: string): string {
+	const output: string[] = [];
+	let oldLine: number | undefined;
+	let newLine: number | undefined;
+	for (const rawLine of diff.split("\n")) {
+		if (rawLine.length === 0) {
+			output.push(rawLine);
+			continue;
+		}
+		const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(rawLine);
+		if (hunk) {
+			const parsedOldLine = Number.parseInt(hunk[1] ?? "", 10);
+			const parsedNewLine = Number.parseInt(hunk[2] ?? "", 10);
+			oldLine = Number.isNaN(parsedOldLine) ? undefined : parsedOldLine;
+			newLine = Number.isNaN(parsedNewLine) ? undefined : parsedNewLine;
+			output.push(rawLine);
+			continue;
+		}
+		if (rawLine.startsWith("\\") || (oldLine === undefined && newLine === undefined)) {
+			output.push(rawLine);
+			continue;
+		}
+		if (rawLine.startsWith("-")) {
+			output.push(formatAnnotatedDiffLine("-", oldLine, "del", rawLine.slice(1)));
+			if (oldLine !== undefined) oldLine += 1;
+			continue;
+		}
+		if (rawLine.startsWith("+")) {
+			output.push(formatAnnotatedDiffLine("+", newLine, "add", rawLine.slice(1)));
+			if (newLine !== undefined) newLine += 1;
+			continue;
+		}
+		if (rawLine.startsWith(" ")) {
+			output.push(formatAnnotatedDiffLine(" ", newLine, "ctx", rawLine.slice(1)));
+			if (oldLine !== undefined) oldLine += 1;
+			if (newLine !== undefined) newLine += 1;
+			continue;
+		}
+		output.push(rawLine);
+	}
+	return output.join("\n");
+}
+
+/**
+ * 格式化带行号标记的 diff 行。
+ *
+ * @param prefix 原 diff 前缀:`+` / `-` / 空格
+ * @param line 行号;删除行是旧文件行号,新增 / 上下文行是新文件行号
+ * @param kind 行类型标记
+ * @param content 原始行内容(不含 diff 前缀)
+ * @returns 带标记的单行文本
+ *
+ * @internal
+ */
+function formatAnnotatedDiffLine(
+	prefix: "+" | "-" | " ",
+	line: number | undefined,
+	kind: string,
+	content: string,
+): string {
+	const marker = line === undefined ? "----" : String(line).padStart(4, " ");
+	return `${prefix}${marker} ${kind}  ${content}`;
+}
+
+/**
+ * 判断评论体是否包含 GitLab suggestion 代码块。
+ *
+ * @param body 评论 Markdown body
+ * @returns `true` 表示包含 suggestion 块
+ *
+ * @internal
+ */
+function hasSuggestionBlock(body: string): boolean {
+	return /```suggestion\b/i.test(body);
+}
+
+/**
+ * 查找距离目标行最近的可评论候选行。
+ *
+ * @param lines 可评论行列表
+ * @param targetLine 目标新文件行号
+ * @param limit 返回候选数量
+ * @returns 距离优先、行号升序的候选行
+ *
+ * @internal
+ */
+function findNearestCommentableLines(lines: CommentableLine[], targetLine: number, limit = 3): CommentableLine[] {
+	return [...lines]
+		.sort((a, b) => {
+			const distance = Math.abs(a.line - targetLine) - Math.abs(b.line - targetLine);
+			if (distance !== 0) return distance;
+			return a.line - b.line;
+		})
+		.slice(0, limit);
+}
+
+/**
+ * 构造不可行内评论时的候选行展示文案。
+ *
+ * @param file 文件路径
+ * @param candidates 候选可评论行
+ * @returns 展示用文案
+ *
+ * @internal
+ */
+function formatCandidateLines(file: string, candidates: CommentableLine[]): string {
+	if (candidates.length === 0) return "无";
+	return candidates.map((line) => `\`${file}:${line.line}\``).join("、");
 }
 
 /**
@@ -482,7 +642,7 @@ function createRealClient(host: string, token: string): GitlabClient {
 			return changes
 				.map((c) => {
 					const filePath = c.deleted_file ? c.old_path : c.new_path;
-					return `--- a/${filePath}\n+++ b/${filePath}\n${c.diff}`;
+					return `--- a/${filePath}\n+++ b/${filePath}\n${annotateDiffNewLines(c.diff)}`;
 				})
 				.join("\n");
 		},
@@ -509,18 +669,43 @@ function createRealClient(host: string, token: string): GitlabClient {
 			const changesBody = await getChanges(projectId, mrIid);
 			const refs = changesBody.diff_refs;
 			const changedFile = changesBody.changes.find((change) => !change.deleted_file && change.new_path === input.file);
+			const commentableLines = changedFile === undefined ? [] : collectCommentableLineDetails(changedFile.diff);
+			const commentableLineSet = new Set(commentableLines.map((line) => line.line));
 			const isCommentable =
-				Number.isInteger(input.line) &&
-				changedFile !== undefined &&
-				collectCommentableNewLines(changedFile.diff).has(input.line);
+				Number.isInteger(input.line) && changedFile !== undefined && commentableLineSet.has(input.line);
 			const path = `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests/${mrIid}/discussions`;
-			const wrapped = input.severity === "blocker" ? `<!-- severity: blocker -->\n${input.body}` : input.body;
+			let body = input.body;
+			let actualLine = input.line;
 			if (!isCommentable) {
 				const reason = `目标行不在 MR diff 的可评论 new_line 中:${input.file}:${input.line}`;
-				const fallbackBody = [`原计划行内评论位置不可用: \`${input.file}:${input.line}\`。`, "", input.body].join("\n");
-				await postMrCommentInternal(projectId, mrIid, fallbackBody, input.severity);
-				return { posted: "note_fallback", reason };
+				const candidates = Number.isInteger(input.line) ? findNearestCommentableLines(commentableLines, input.line) : [];
+				const nearest = candidates[0];
+				const suggestionBlocked = hasSuggestionBlock(input.body);
+				if (
+					nearest !== undefined &&
+					!suggestionBlocked &&
+					Number.isInteger(input.line) &&
+					Math.abs(nearest.line - input.line) <= LINE_RELOCATION_MAX_DISTANCE
+				) {
+					actualLine = nearest.line;
+					body = [
+						`定位调整：原目标 \`${input.file}:${input.line}\` 不在 MR diff 可评论行中，已挂到最近可评论行 \`${input.file}:${actualLine}\`。`,
+						"",
+						input.body,
+					].join("\n");
+				} else {
+					const fallbackBody = [
+						`原计划行内评论位置不可用：\`${input.file}:${input.line}\`。`,
+						`原因：${suggestionBlocked ? "评论包含 suggestion，未自动重定位，避免建议应用到错误行。" : "目标行不在 MR diff 的可评论 new_line 中。"}`,
+						`最近可评论行：${formatCandidateLines(input.file, candidates)}。`,
+						"",
+						input.body,
+					].join("\n");
+					await postMrCommentInternal(projectId, mrIid, fallbackBody, input.severity);
+					return { posted: "note_fallback", reason, originalLine: input.line };
+				}
 			}
+			const wrapped = input.severity === "blocker" ? `<!-- severity: blocker -->\n${body}` : body;
 			await gitlabFetch(host, token, path, {
 				method: "POST",
 				body: JSON.stringify({
@@ -531,11 +716,14 @@ function createRealClient(host: string, token: string): GitlabClient {
 						start_sha: refs.start_sha,
 						head_sha: refs.head_sha,
 						new_path: input.file,
-						new_line: input.line,
+						new_line: actualLine,
 					},
 				}),
 			});
-			return { posted: "line" };
+			if (actualLine !== input.line) {
+				return { posted: "line", originalLine: input.line, actualLine, relocated: true };
+			}
+			return { posted: "line", actualLine };
 		},
 
 		async getBotComments(projectId, mrIid) {

@@ -90,6 +90,16 @@ describe("GitlabClient · happy path", () => {
 		expect(diff).toContain("@@ -1,5 +1,5 @@");
 	});
 
+	it("getMrDiff 在 hunk 内标注新文件行号和 add/ctx/del 类型", async () => {
+		fetchMock.mockResolvedValueOnce(jsonResponse(mockChangesBody()));
+		const diff = await gitlabClient().getMrDiff("group/repo", 42);
+		expect(diff).toContain("-   1 del  old");
+		expect(diff).toContain("+   1 add  new");
+		expect(diff).toContain("    2 ctx  context");
+		expect(diff).toContain("+   3 add  more");
+		expect(diff).toContain("    4 ctx  tail");
+	});
+
 	it("getMrFiles 返回 new_path,deleted_file 取 old_path", async () => {
 		fetchMock.mockResolvedValueOnce(jsonResponse(mockChangesBody()));
 		const files = await gitlabClient().getMrFiles("group/repo", 42);
@@ -178,7 +188,7 @@ describe("GitlabClient · happy path", () => {
 		expect(urls.filter((u) => u.includes("/discussions")).length).toBe(2);
 	});
 
-	it("postMrLineComment 目标行不可评论时降级发整体评论,不 POST discussions", async () => {
+	it("postMrLineComment 目标行不可评论且距离很远时降级发整体评论,不 POST discussions", async () => {
 		fetchMock
 			.mockResolvedValueOnce(jsonResponse(mockChangesBody())) // GET changes
 			.mockResolvedValueOnce(jsonResponse({}, 201)); // POST notes fallback
@@ -193,6 +203,7 @@ describe("GitlabClient · happy path", () => {
 		expect(result).toEqual({
 			posted: "note_fallback",
 			reason: "目标行不在 MR diff 的可评论 new_line 中:src/auth/login.ts:91",
+			originalLine: 91,
 		});
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		const [calledUrl, init] = fetchMock.mock.calls[1] ?? [];
@@ -201,7 +212,66 @@ describe("GitlabClient · happy path", () => {
 		const body = JSON.parse(String((init as RequestInit | undefined)?.body)) as { body: string };
 		expect(body.body).toContain("原计划行内评论位置不可用");
 		expect(body.body).toContain("src/auth/login.ts:91");
+		expect(body.body).toContain("原因：目标行不在 MR diff 的可评论 new_line 中。");
+		expect(body.body).toContain("最近可评论行：`src/auth/login.ts:4`、`src/auth/login.ts:3`、`src/auth/login.ts:2`。");
 		expect(body.body).toContain("这里需要调整");
+	});
+
+	it("postMrLineComment 目标行不可评论但距离近时自动重定位到最近可评论行", async () => {
+		fetchMock.mockResolvedValueOnce(jsonResponse(mockChangesBody())).mockResolvedValueOnce(jsonResponse({}, 201));
+
+		const result = await gitlabClient().postMrLineComment("g/r", 1, {
+			file: "src/auth/login.ts",
+			line: 6,
+			body: "这里需要调整",
+			severity: "major",
+		});
+
+		expect(result).toEqual({
+			posted: "line",
+			originalLine: 6,
+			actualLine: 4,
+			relocated: true,
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		const [calledUrl, init] = fetchMock.mock.calls[1] ?? [];
+		expect(String(calledUrl)).toContain("/discussions");
+		const postBody = JSON.parse(String((init as RequestInit | undefined)?.body)) as {
+			body: string;
+			position: { new_line: number };
+		};
+		expect(postBody.position.new_line).toBe(4);
+		expect(postBody.body).toContain(
+			"定位调整：原目标 `src/auth/login.ts:6` 不在 MR diff 可评论行中，已挂到最近可评论行 `src/auth/login.ts:4`。",
+		);
+		expect(postBody.body).toContain("这里需要调整");
+	});
+
+	it("postMrLineComment 含 suggestion 且目标行不可评论时不自动重定位", async () => {
+		fetchMock
+			.mockResolvedValueOnce(jsonResponse(mockChangesBody())) // GET changes
+			.mockResolvedValueOnce(jsonResponse({}, 201)); // POST notes fallback
+
+		const result = await gitlabClient().postMrLineComment("g/r", 1, {
+			file: "src/auth/login.ts",
+			line: 6,
+			body: "建议修改\n```suggestion\nfixed\n```",
+			severity: "major",
+		});
+
+		expect(result).toEqual({
+			posted: "note_fallback",
+			reason: "目标行不在 MR diff 的可评论 new_line 中:src/auth/login.ts:6",
+			originalLine: 6,
+		});
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		const [calledUrl, init] = fetchMock.mock.calls[1] ?? [];
+		expect(String(calledUrl)).toContain("/notes");
+		expect(String(calledUrl)).not.toContain("/discussions");
+		const body = JSON.parse(String((init as RequestInit | undefined)?.body)) as { body: string };
+		expect(body.body).toContain("评论包含 suggestion，未自动重定位，避免建议应用到错误行。");
+		expect(body.body).toContain("最近可评论行：`src/auth/login.ts:4`、`src/auth/login.ts:3`、`src/auth/login.ts:2`。");
+		expect(body.body).toContain("```suggestion");
 	});
 
 	it("getBotComments 用 /api/v4/user 自查 username 并过滤", async () => {
