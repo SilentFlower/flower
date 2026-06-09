@@ -445,3 +445,39 @@ code-reviewer-detailed-html 任务在 cccf174 完成 reviewer 章节 S1-S12 事�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: 优化 GitLab MR 行内评论定位
+
+**Date**: 2026-06-09
+**Task**: 优化 GitLab MR 行内评论定位
+**Package**: flower-code-reviewer
+**Branch**: `main`
+
+### Summary
+
+实现 MR diff add/ctx/del 行号标注、行内评论近邻重定位与安全降级；补充测试、code-spec 和 GitLab REST debugging guide；已推送 GitHub main 并合入 GitLab company。补推 Harbor base/node:22-alpine 后，业务构建暂时未复测。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `694905c6` | (see git log) |
+| `ff0bcd72` | (see git log) |
+| `21bf7d6d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
