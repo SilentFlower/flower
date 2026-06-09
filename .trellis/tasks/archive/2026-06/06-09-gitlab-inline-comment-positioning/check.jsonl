@@ -1,0 +1,13 @@
+{"file": ".trellis/tasks/06-09-gitlab-inline-comment-positioning/prd.md", "reason": "检查实现是否满足需求和验收标准。"}
+{"file": ".trellis/tasks/06-09-gitlab-inline-comment-positioning/design.md", "reason": "检查实现是否符合设计边界、重定位策略和 suggestion 安全策略。"}
+{"file": ".trellis/tasks/06-09-gitlab-inline-comment-positioning/implement.md", "reason": "检查实施清单和验证命令是否完成。"}
+{"file": ".trellis/spec/guides/index.md", "reason": "共享质量检查指南索引。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 GitLab 工具、prompt、测试和用户可见行为是否一致。"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/index.md", "reason": "检查 GitLab REST 客户端和行内 position 契约。"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/error-handling.md", "reason": "检查 fallback、异常和重试语义。"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/logging-guidelines.md", "reason": "检查日志与错误信息不泄漏敏感信息。"}
+{"file": ".trellis/spec/flower-tools-gitlab/backend/quality-guidelines.md", "reason": "检查 GitLab 工具单测和质量门。"}
+{"file": ".trellis/spec/flower-tools-gitlab/frontend/type-safety.md", "reason": "检查工具类型契约扩展。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "检查 reviewer prompt 工作流约束。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "检查 prompt 文案强度和单测。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/type-safety.md", "reason": "检查 TypeScript strict 与测试类型。"}
