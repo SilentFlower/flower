@@ -72,6 +72,8 @@ git status --short
 
 对每个有变更的仓库，依次执行以下操作：
 
+> **commit-only 模式**（调用方传入「只提交不推」/「commit-only」语义，如 Trellis Phase 3.4「commit now, push later」）：只执行 2.1 展示 → 2.2 暂存确认 → 2.3 commit，**跳过 2.4 push 与 2.5 merge**。Step 3 快照、Step 4 结果照常，结果中标注「本地已提交、未推送，后续仍走 trellis-push 推」。
+
 #### 2.1 展示变更摘要
 
 ```bash
@@ -104,6 +106,8 @@ git commit -m "<type>(<scope>): <description>"
 ```
 
 #### 2.4 Push 当前分支
+
+> **commit-only 模式:跳过 2.4 与 2.5**，直接进 Step 3。
 
 ```bash
 git push origin <current_branch>
@@ -291,6 +295,7 @@ git remote -v | grep -E "^origin\s+"
 | 语义 | 说明 | 用户怎么说 |
 |------|------|-----------|
 | 默认 | 自动检测所有有变更的仓库并处理 | `/trellis-push` |
+| commit-only | 只 commit 不 push（Phase 3.4「commit now, push later」），跳过 2.4/2.5 | 「只提交不推」/「commit-only」 |
 | 指定仓库 | 只处理指定仓库 | 「只 push 前端」/「push frontend」 |
 | 重新配置 | 重新询问目标分支 | 「重新配置 push 目标分支」/「reconfigure push」 |
 | 临时目标 | 临时指定目标分支（不修改配置） | 「push 到 hotfix 分支」 |
