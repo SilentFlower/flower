@@ -49,7 +49,7 @@
 3. 不在 `cli.ts` / `run.ts` 里直接 console.log 评审意见(必须走 GitLab 工具;dry-run `--dry-run` 是例外)
 4. 改 prompt 时知道必要的硬约束:
    - **severity 词表 = `blocker | major | minor`**(对齐 flower-tools-gitlab `severitySchema` 与 `comments/render.ts`,**禁止**残留旧词表 `info | warning | blocker`)
-   - 工具优先(评论必须经 GitLab 工具发出)/ 不重复评论 / 禁止 `^/<quick-action>` 行 / 评论前必须读取相关行窗 `gitlab_get_file_content(path, ref, startLine, endLine)` / diff 截断时必须写 N/M 截断说明
+   - 工具优先(评论必须经 GitLab 工具发出)/ 不重复评论 / 禁止 `^/<quick-action>` 行 / 评论前必须读取相关行窗 `gitlab_get_file_content(path, ref, startLine, endLine)` / 行内评论行号必须优先来自 `gitlab_get_mr_diff` 的 `add` / `ctx` 标记 / diff 截断时必须写 N/M 截断说明
    - 评审结束后必须先发代码评审 walkthrough,再单独发第二条「面向测试的变更说明」整体评论
 
 ---
@@ -92,6 +92,7 @@
 | **E1 · LLM 网关 fail open** | `isLlmFailure(err)` 5 级判定(AuthError 黑名单 / LLM 关键字 / 网络关键字 / HTTP 5xx 429 / 默认 fail close);LLM 失败 → `buildLlmFailureNotice` warning 评论 + `return exitCode: 0` 不阻塞 pipeline;**非 LLM 错误(AuthError / FileNotFoundError)正常抛**;但 `scanForBlockers` 触发的 blocker(已成功评出的)仍 fail close | `run.ts` |
 | **E2 · MR diff size cap** | env `FLOWER_MAX_FILES`(默认 50);`applyDiffCap` 按 churn(additions + deletions)降序稳定排序取 top N;截断时 prompt 注入 `truncation: {shown, total}` → LLM 在 walkthrough 必须写「⚠️ 本次仅评 N/M 个最大变更文件,其余请手工 review」 | `run.ts` + `prompts.ts` |
 | **E3 · quick action sanitize** | `sanitizeQuickActions(body)`(在 `@flower-ai/flower-tools-common`),50+ quick action 关键字 + 大小写不敏感;首字符 `/` → `&#47;`;flower-tools-gitlab 的 post 评论工具 execute 内 wrap;与 prompt 第 4 条硬约束形成**双层防御** | `flower-tools-common/src/sanitize.ts` + `flower-tools-gitlab/src/index.ts` |
+| **E6 · 行内评论定位** | `gitlab_get_mr_diff` hunk 内标注 `add` / `ctx` / `del` 和行号;prompt 必须要求 `gitlab_post_line_comment.line` 优先取 `add` / `ctx` 对应的新文件行号,禁止直接使用 `gitlab_get_file_content` 的普通文件行号;工具层会对不可评论行做近邻重定位或降级整体评论 | `flower-tools-gitlab/src/client.ts` + `flower-tools-gitlab/src/index.ts` + `prompts.ts` |
 | **E5 · 行窗读取 + size cap + 二进制跳过** | `safeReadFile` wrapper 在 `flower-tools-gitlab/src/safe-read.ts` 工具层,`gitlab_get_file_content` execute 内 wrap;默认只返回 500 行,显式 `startLine/endLine` 时单次最多 1000 行;env `FLOWER_MAX_FILE_SIZE`(默认 51200);二进制按后缀(18 类)跳过;LLM 默认拿不到整份大文件或二进制原始内容 | `flower-tools-gitlab/src/safe-read.ts` |
 | **E4 · markdown 校验** | **延后**(remark 依赖较重);mitigation 暂留 prompt 5 个完整模板样例引导 LLM 复制 |
 
@@ -301,6 +302,121 @@ done
 
 后续可把 §10.2 抽成 `scripts/reviewer-e2e-reset.sh <project> <mr_iid>`,封装 backup + delete + retry,减少 e2e 复测的重复操作。**当前未实现,sopt only**。
 
+### 10.5 GitLab REST 查询速查 SOP(2026-06-09)
+
+本节用于排查 reviewer、MR 评论、diff、pipeline 或业务方 GitLab 状态。用户明确说明“可以用我环境变量里的 GitLab token 访问 GitLab”时,优先用本 SOP 直接查真实 GitLab,不要凭记忆猜 MR 状态。
+
+#### 10.5.1 范围 / 触发
+
+- 触发:需要确认 MR diff、评论、reviewer 是否发过行内评论、pipeline 是否重跑、镜像 tag 是否生效、GitLab API 返回什么。
+- 目标:用环境变量里的 token 进行只读查询或明确授权的维护动作,减少手工进 GitLab UI。
+- 安全边界:默认只读;删除评论、创建 pipeline、retry job 等写操作必须有明确目的,并先备份相关数据。
+
+#### 10.5.2 命令 / API 签名
+
+- token 来源:
+  - `GLAB_NEW_TOKEN`:开发者本地 PAT,优先使用。
+  - `GITLAB_TOKEN`:reviewer / CI token,本地未配置 `GLAB_NEW_TOKEN` 时使用。
+- host:
+  - `GITLAB_HOST`:可选,未设置时企业内网默认 `http://gitlab.xhgjdev.com`。
+- 常用变量:
+  - `PROJECT_PATH`:项目 path,例如 `digital-biz-projects/iqs/xhgj-iqs-ui`。
+  - `PROJECT`:URL encode 后的 project id/path。
+  - `MR_IID`:MR IID,不是全局 MR id。
+
+```bash
+TOKEN="${GLAB_NEW_TOKEN:-${GITLAB_TOKEN:-}}"
+HOST="${GITLAB_HOST:-http://gitlab.xhgjdev.com}"
+PROJECT_PATH="digital-biz-projects/iqs/xhgj-iqs-ui"
+PROJECT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$PROJECT_PATH")"
+MR_IID="47"
+test -n "$TOKEN" || { echo "缺少 GLAB_NEW_TOKEN / GITLAB_TOKEN" >&2; exit 1; }
+```
+
+#### 10.5.3 合同
+
+- GitLab REST API 鉴权必须使用 header:`PRIVATE-TOKEN: $TOKEN`;不要把 token 拼到 URL、remote 或日志里。
+- `PROJECT_PATH` 含 `/` 时必须整体 URL encode,例如 `a/b/c` → `a%2Fb%2Fc`;不要只 encode 最后一段。
+- MR URL 末尾 `/-/merge_requests/47` 中的 `47` 是 `MR_IID`,API 路径使用 `/merge_requests/$MR_IID`。
+- 响应需要筛字段时优先用 `python3 -c` 解析 JSON;不要用脆弱的 grep 截 JSON。
+- 查询 comments 时 `GET /notes` 覆盖整体评论和行内评论;行内位置在 `position.new_path` / `position.new_line`。
+- 查 diff / position 时优先 `GET /changes`,其中 `diff_refs` 是行内评论 position 的 sha 来源。
+- 输出日志不得打印 `$TOKEN`,不得把完整评论 body 大段贴到默认日志;必要时截断。
+
+#### 10.5.4 常用查询
+
+**查 MR 基本信息**:
+
+```bash
+curl -s -H "PRIVATE-TOKEN: $TOKEN" \
+  "$HOST/api/v4/projects/$PROJECT/merge_requests/$MR_IID" \
+  | python3 -c 'import sys,json; m=json.load(sys.stdin); print({k:m.get(k) for k in ["iid","title","state","source_branch","target_branch","sha","merge_status","web_url"]})'
+```
+
+**查 MR diff refs 和文件列表**:
+
+```bash
+curl -s -H "PRIVATE-TOKEN: $TOKEN" \
+  "$HOST/api/v4/projects/$PROJECT/merge_requests/$MR_IID/changes" \
+  | python3 -c 'import sys,json; m=json.load(sys.stdin); print("diff_refs=",m.get("diff_refs")); [print(c.get("new_path"), "deleted=", c.get("deleted_file")) for c in m.get("changes", [])]'
+```
+
+**查 bot / reviewer 评论和行内位置**:
+
+```bash
+curl -s -H "PRIVATE-TOKEN: $TOKEN" \
+  "$HOST/api/v4/projects/$PROJECT/merge_requests/$MR_IID/notes?per_page=100&sort=asc" \
+  | python3 -c 'import sys,json; notes=json.load(sys.stdin); [print(n["id"], n["author"]["username"], (n.get("position") or {}).get("new_path"), (n.get("position") or {}).get("new_line"), str(n.get("body",""))[:120].replace("\n"," ")) for n in notes if not n.get("system")]'
+```
+
+**查 MR pipelines**:
+
+```bash
+curl -s -H "PRIVATE-TOKEN: $TOKEN" \
+  "$HOST/api/v4/projects/$PROJECT/merge_requests/$MR_IID/pipelines?per_page=20" \
+  | python3 -c 'import sys,json; [print(p.get("id"), p.get("status"), p.get("ref"), p.get("sha"), p.get("web_url")) for p in json.load(sys.stdin)]'
+```
+
+**查项目 pipelines**:
+
+```bash
+curl -s -H "PRIVATE-TOKEN: $TOKEN" \
+  "$HOST/api/v4/projects/$PROJECT/pipelines?per_page=20" \
+  | python3 -c 'import sys,json; [print(p.get("id"), p.get("status"), p.get("ref"), p.get("sha"), p.get("web_url")) for p in json.load(sys.stdin)]'
+```
+
+#### 10.5.5 校验与错误矩阵
+
+| 条件 | 处理 |
+|---|---|
+| `$TOKEN` 为空 | 立即停止,提示缺少 `GLAB_NEW_TOKEN / GITLAB_TOKEN` |
+| HTTP 401 / 403 | token 无效或权限不足;不要重试刷接口,换 token 或确认 scope |
+| HTTP 404 | 优先检查 `PROJECT_PATH` 是否整体 encode、host 是否正确、MR IID 是否来自 URL |
+| JSON parse 失败 | 先打印 HTTP code 和响应前 200 字符,通常是鉴权、网关或 HTML 错误页 |
+| 需要删评论 | 先按 §10.2 备份 notes;删除走 `/merge_requests/:iid/notes/:note_id` |
+| 需要重跑 reviewer | 优先新建 MR pipeline 或推空 commit;不要 retry 已成功的旧 pipeline |
+
+#### 10.5.6 正常 / 基线 / 错误用例
+
+- 正常:用户给出 `http://gitlab.xhgjdev.com/.../-/merge_requests/47`,先从 URL 提取 `PROJECT_PATH` 和 `MR_IID=47`,用 `$GLAB_NEW_TOKEN` 查 `/changes` 与 `/notes`,确认行内评论为什么降级。
+- 基线:只需要确认 reviewer 是否跑过,查 `/merge_requests/$MR_IID/pipelines` 和 `/notes`,无需 clone 项目。
+- 错误:直接用浏览器 URL 里的未 encode project path 调 API,得到 404 后误判 MR 不存在。
+
+#### 10.5.7 错误与正确示例
+
+##### 错误
+
+```bash
+curl "$HOST/api/v4/projects/digital-biz-projects/iqs/xhgj-iqs-ui/merge_requests/47?private_token=$TOKEN"
+```
+
+##### 正确
+
+```bash
+PROJECT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$PROJECT_PATH")"
+curl -s -H "PRIVATE-TOKEN: $TOKEN" "$HOST/api/v4/projects/$PROJECT/merge_requests/$MR_IID"
+```
+
 ### 11. 跨项目上下文 prompt 约定(2026-05-27)
 
 当业务事实可能不在当前 MR 项目内时,prompt 必须引导 reviewer 使用 `@flower-ai/flower-tools-gitlab` 的跨项目工具按需读取权威文档,而不是依赖当前项目里可能失修的 `doc/`。
@@ -333,6 +449,41 @@ done
 - 必须写明工具顺序和 `bash + rg` 的后续搜索方式。
 - 必须显式写「不使用 `gitlab_search_project_blobs`」,避免 LLM 猜测存在轻量 blob 搜索工具。
 - 必须写明当前项目旧文档降权规则,否则 reviewer 容易把失修文档当权威依据。
+
+### 12. 行内评论行号来源 prompt 约定(2026-06-09)
+
+#### 12.1 触发条件
+
+- 修改 `prompts.ts` 中的工作流程、工具使用说明、few-shot 示例时,必须检查本节。
+- 修改 `flower-tools-gitlab` 的 diff 输出格式或 `gitlab_post_line_comment` 参数说明时,必须同步本节。
+
+#### 12.2 硬约束
+
+- `gitlab_get_mr_diff` 是行内评论位置的主来源。hunk 内 `add` / `ctx` 标记对应的新文件行号,才是 `gitlab_post_line_comment.line` 的优先来源。
+- `del` 标记是旧文件行号,没有可用 `new_line`,不能传给 `gitlab_post_line_comment.line`。
+- `gitlab_get_file_content` 返回的是完整文件行窗,用于理解上下文、确认函数和调用方;其中显示的普通文件行号不能直接当作 MR 可评论位置。
+- 如果问题语义落在 hunk 外或未改动函数内部,应选择同一 hunk 中最贴近问题的 `add` / `ctx` 标记行;只有 diff 标记行确实不足以定位时,才依赖工具的重定位或降级。
+- prompt 中不能写「任选相关文件行号」「使用读取文件内容中的行号」这类弱化约束。
+
+#### 12.3 必需测试
+
+- `prompts.test.ts`:断言工作流程中出现 `add` / `ctx` 行号来源要求。
+- `prompts.test.ts`:断言 prompt 明确说明 `gitlab_get_file_content` 行窗行号只作上下文,不要直接用于行内评论。
+- `prompts.test.ts`:断言 `del` 行没有可用 `new_line`。
+
+#### 12.4 错误与正确示例
+
+##### 错误
+
+```text
+读取 gitlab_get_file_content 后,对发现问题的行调用 gitlab_post_line_comment。
+```
+
+##### 正确
+
+```text
+先从 gitlab_get_mr_diff 的 add/ctx 标记选择可评论 new_line;gitlab_get_file_content 的行号只用于理解上下文。
+```
 
 ---
 

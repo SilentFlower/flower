@@ -24,6 +24,7 @@ These guides help you **ask the right questions before coding**.
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 | [Debugging LLM Integration](./debugging-llm-integration.md) | LLM 网关接入"streaming 错误"类问题的决策树(先 curl 网关再怀疑 SDK 配置) | 接入新 LLM 网关时拿到 parser 错误 / 空响应 / 404 |
+| [GitLab REST Debugging](./gitlab-rest-debugging.md) | 用环境变量 token 查询 MR、评论、diff、pipeline 的排查清单 | 用户给 GitLab 链接并授权使用环境变量 token 时 |
 
 ---
 
@@ -86,6 +87,15 @@ These guides help you **ask the right questions before coding**.
 - [ ] 怀疑 SDK 与网关 SSE 不兼容(先验证不是路径问题再说)
 
 → Read [Debugging LLM Integration](./debugging-llm-integration.md)
+
+### When to Think About GitLab REST Debugging
+
+- [ ] 用户给了 GitLab MR / pipeline / job 链接
+- [ ] 用户说明可以用环境变量里的 GitLab token
+- [ ] 需要确认 reviewer 评论、行内位置、diff refs 或 pipeline 状态
+- [ ] 需要删除旧 bot 评论或触发 reviewer 重跑前做备份
+
+→ Read [GitLab REST Debugging](./gitlab-rest-debugging.md)
 
 ---
 

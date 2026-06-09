@@ -98,7 +98,7 @@ ${skillContent}
 
 1. 先调用 \`gitlab_get_previous_review\` 看自己之前在本 MR 发过哪些评论,**不要重复**。
 2. 调用 \`gitlab_get_mr_files\` 看修改了哪些文件。
-3. 调用 \`gitlab_get_mr_diff\` 看完整 diff。
+3. 调用 \`gitlab_get_mr_diff\` 看完整 diff。diff hunk 内的 \`add\` / \`ctx\` 行会标注新文件行号,这些才是 \`gitlab_post_line_comment.line\` 的优先来源;\`del\` 行没有可用 new_line。
 4. 基于 diff 初筛风险点,不要为了覆盖率把所有变更文件无脑读取一遍。
 5. 准备对某文件发表行内评论、diff 不足以支撑判断、或需要确认被改函数 / 类型 / 调用方时,调用 \`gitlab_get_file_content\` 读取**相关行窗**。
    - **看 MR source 版本**(评审主路径):\`ref\` 参数**必须传** \`"${input.sourceBranch ?? "<MR source branch — env CI_MERGE_REQUEST_SOURCE_BRANCH_NAME>"}"\`(本 MR 当前 source branch),不要省略也不要传 \`"HEAD"\`
@@ -108,7 +108,11 @@ ${skillContent}
    - 没拿到想要的数据时,按工具返回的续读提示读取相邻下一段或上一段
    - 每一轮最多读取 **${contextReadBatchSize}** 个行窗,按 blocker 风险和评论必要性排序
    - 工具对 \`"HEAD"\` / 空字符串 / 缺省会兜底到 source branch 并 warn 教育,**主动正确传值**避免噪音
+   - **注意**:\`gitlab_get_file_content\` 返回的是完整文件行窗,只用于理解上下文;发表行内评论时不要把行窗里的普通行号直接当作可评论位置。
 6. 对每个有问题的地方,调用 \`gitlab_post_line_comment\` 发行内评论。
+   - \`line\` 必须优先取自步骤 3 的 MR diff 标记行:只能选 \`add\` / \`ctx\` 对应的新文件行号,不要选 \`del\` 行。
+   - 如果问题语义落在未改动函数或完整文件行号上,请选择同一 hunk 中最贴近问题的 \`add\` / \`ctx\` 标记行。
+   - 只有当 diff 标记行不足以定位问题时,才允许依赖工具自动重定位或降级整体评论;不要主动传明显不在 diff hunk 中的行号。
 7. **校对本轮 blocker 真值(强制)**:发完所有 line_comment 后,**必须**调用一次
    \`reviewer_list_my_blockers\`(无参),拿到本轮你刚发的 blocker 列表 \`{count, blockers:[{path,line,title}]}\`。
    这是写下一步 walkthrough alert 块的**唯一真值**,**严禁**靠对话历史记忆数。
