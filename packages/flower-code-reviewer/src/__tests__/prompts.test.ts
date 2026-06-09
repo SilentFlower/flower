@@ -45,6 +45,17 @@ describe("buildPrompt · 7 条硬约束", () => {
 		expect(prompt).toContain("续读提示");
 	});
 
+	it("工作流程要求行内评论行号来自 MR diff 的 add/ctx 标记,不直接使用文件行窗行号", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).toContain("diff hunk 内的 `add` / `ctx` 行会标注新文件行号");
+		expect(prompt).toContain("`del` 行没有可用 new_line");
+		expect(prompt).toContain("`gitlab_get_file_content` 返回的是完整文件行窗");
+		expect(prompt).toContain("不要把行窗里的普通行号直接当作可评论位置");
+		expect(prompt).toContain("`line` 必须优先取自步骤 3 的 MR diff 标记行");
+		expect(prompt).toContain("只能选 `add` / `ctx` 对应的新文件行号");
+		expect(prompt).toContain("请选择同一 hunk 中最贴近问题的 `add` / `ctx` 标记行");
+	});
+
 	it("评论 markdown 样式段落含原有约束 + 测试说明 + 真实上下文约束", () => {
 		const prompt = buildPrompt({ skillFilePath, dryRun: false });
 		expect(prompt).toContain("4 段式");

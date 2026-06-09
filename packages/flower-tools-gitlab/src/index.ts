@@ -45,7 +45,8 @@ const severitySchema = Type.Union([Type.Literal("blocker"), Type.Literal("major"
 export const gitlabGetMrDiffTool = defineTool({
 	name: "gitlab_get_mr_diff",
 	label: "获取 MR diff",
-	description: "拿到当前 MR 的完整变更 diff(unified format)",
+	description:
+		"拿到当前 MR 的完整变更 diff。hunk 内会标注新文件行号和 add/ctx/del 类型;gitlab_post_line_comment.line 应优先使用 add/ctx 标记的新文件行号。",
 	parameters: Type.Object({}),
 	async execute(_id) {
 		const { projectId, mrIid } = readEnv();
@@ -112,7 +113,7 @@ export const gitlabPostLineCommentTool = defineTool({
 	description: "在 MR 的具体文件、具体行号上发表评论。必须传文件路径和行号",
 	parameters: Type.Object({
 		file: Type.String({ description: "文件路径(相对仓库根)" }),
-		line: Type.Number({ description: "行号(变更后的行号)" }),
+		line: Type.Number({ description: "MR diff 中 add/ctx 标记的新文件行号;不要直接使用文件行窗里的普通行号" }),
 		body: Type.String({ description: "评论内容(Markdown)" }),
 		severity: severitySchema,
 	}),
@@ -126,12 +127,18 @@ export const gitlabPostLineCommentTool = defineTool({
 			line: number;
 			posted: typeof result.posted;
 			reason: string | undefined;
+			originalLine: number | undefined;
+			actualLine: number | undefined;
+			relocated: boolean | undefined;
 		} = {
 			severity: params.severity,
 			file: params.file,
 			line: params.line,
 			posted: result.posted,
 			reason: result.reason,
+			originalLine: result.originalLine,
+			actualLine: result.actualLine,
+			relocated: result.relocated,
 		};
 		if (result.posted === "note_fallback") {
 			return {
@@ -139,6 +146,17 @@ export const gitlabPostLineCommentTool = defineTool({
 					{
 						type: "text",
 						text: `目标行不可行内评论,已降级发表整体评论: ${params.file}:${params.line}`,
+					},
+				],
+				details,
+			};
+		}
+		if (result.relocated) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: `行内评论已重定位发表: ${params.file}:${params.line} → ${params.file}:${result.actualLine}`,
 					},
 				],
 				details,
