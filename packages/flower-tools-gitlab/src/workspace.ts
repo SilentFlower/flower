@@ -48,12 +48,40 @@ export interface PreparedProjectWorkspace {
 }
 
 /**
+ * 推导 namespace 的祖先链(业务组级即止,由近到远)。
+ *
+ * 跨项目白名单与 harness 自动发现共享同一边界:
+ * - 保留段数 ≥ 2 的所有前缀;顶层 group(单段)不放行,业务组之间互相隔离
+ *   (例:`digital-biz-projects/srm/fronts` → `[".../srm/fronts", ".../srm"]`,
+ *   不包含 `digital-biz-projects`)
+ * - namespace 本身只有 1 段时保留自身,否则连同组项目都不可读(保持旧行为)
+ *
+ * @param namespace GitLab namespace 路径,例如 `digital-biz-projects/srm/fronts`
+ * @returns 由近到远的祖先 namespace 列表;入参为空时返回空数组
+ */
+export function resolveNamespaceAncestors(namespace: string): string[] {
+	const normalized = normalizeNamespace(namespace);
+	if (!normalized) return [];
+	const segments = normalized.split("/");
+	if (segments.length === 1) return [normalized];
+	const ancestors: string[] = [];
+	// 由近到远收集前缀,最少保留 2 段(业务组级):发现算法按此顺序就近探测
+	for (let keep = segments.length; keep >= 2; keep--) {
+		ancestors.push(segments.slice(0, keep).join("/"));
+	}
+	return ancestors;
+}
+
+/**
  * 从环境变量解析允许访问的项目 namespace 前缀。
  *
  * 优先级:
- * 1. `FLOWER_GITLAB_CONTEXT_PROJECT_PREFIXES`,逗号分隔
- * 2. `CI_PROJECT_NAMESPACE`
- * 3. `CI_PROJECT_PATH` 去掉最后一段项目名
+ * 1. `FLOWER_GITLAB_CONTEXT_PROJECT_PREFIXES`,逗号分隔(显式配置,可收紧或放宽)
+ * 2. `CI_PROJECT_NAMESPACE` 的祖先链(业务组级即止,见 `resolveNamespaceAncestors`)
+ * 3. `CI_PROJECT_PATH` 去掉最后一段项目名后的祖先链
+ *
+ * 默认值取祖先链而非单一 namespace:嵌套分组(如 `digital-biz-projects/srm/fronts`)
+ * 的评审任务需要可达父分组下的 harness 仓库(`digital-biz-projects/srm/srm-harness`)。
  *
  * @returns 允许的 namespace 前缀列表
  */
@@ -66,11 +94,11 @@ export function resolveAllowedProjectPrefixes(): string[] {
 			.filter((item) => item.length > 0);
 	}
 	const namespace = normalizeNamespace(process.env.CI_PROJECT_NAMESPACE ?? "");
-	if (namespace) return [namespace];
+	if (namespace) return resolveNamespaceAncestors(namespace);
 	const projectPath = normalizeNamespace(process.env.CI_PROJECT_PATH ?? "");
 	const lastSlash = projectPath.lastIndexOf("/");
 	if (lastSlash > 0) {
-		return [projectPath.slice(0, lastSlash)];
+		return resolveNamespaceAncestors(projectPath.slice(0, lastSlash));
 	}
 	return [];
 }

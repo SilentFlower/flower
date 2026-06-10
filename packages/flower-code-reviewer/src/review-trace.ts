@@ -45,11 +45,14 @@ export interface ReviewTrace {
 	readFiles: Set<string>;
 	/** LLM 通过 `gitlab_post_line_comment` 发的行内评论列表 */
 	lineComments: PostedLineComment[];
+	/** LLM 通过 `gitlab_prepare_project_workspace` 准备跨项目工作区的次数(R3 依据校验数据源) */
+	workspacePrepareCount: number;
 }
 
 let trace: ReviewTrace = {
 	readFiles: new Set(),
 	lineComments: [],
+	workspacePrepareCount: 0,
 };
 
 /**
@@ -59,6 +62,7 @@ export function resetTrace(): void {
 	trace = {
 		readFiles: new Set(),
 		lineComments: [],
+		workspacePrepareCount: 0,
 	};
 }
 
@@ -100,6 +104,19 @@ export function recordLineComment(input: { file: string; line: number; severity:
 		severity: input.severity,
 		title: extractBlockerTitle(input.body),
 	});
+}
+
+/**
+ * 记录一次 `gitlab_prepare_project_workspace` 调用(LLM 真的去准备 harness 等跨项目工作区)
+ *
+ * R3 依据校验数据源:测试说明写"已查询 harness 未找到相关材料"时,本计数必须 ≥ 1,
+ * 否则 `scanHarnessEvidence` 判定为「声称查过但没查」违规(warn 观测)。
+ *
+ * 与 `recordFileRead` 同理,记录的是 tool_call 意图(execute 失败也算尝试过);
+ * prepare 失败时 LLM 能从 tool result 感知并应改写为其他依据形态。
+ */
+export function recordWorkspacePrepare(): void {
+	trace.workspacePrepareCount += 1;
 }
 
 /**

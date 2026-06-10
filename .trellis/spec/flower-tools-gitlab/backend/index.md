@@ -179,8 +179,8 @@ await gitlabClient().postMrLineComment(projectId, mrIid, {
 ### 3. 契约
 
 - `FLOWER_GITLAB_CONTEXT_PROJECT_PREFIXES`:可选,逗号分隔的允许 namespace 前缀;优先级最高。
-- `CI_PROJECT_NAMESPACE`:未显式配置 prefix 时作为默认白名单。
-- `CI_PROJECT_PATH`:没有 `CI_PROJECT_NAMESPACE` 时取去掉最后一段项目名后的 namespace。
+- `CI_PROJECT_NAMESPACE`:未显式配置 prefix 时,默认白名单为其**祖先链**(`resolveNamespaceAncestors`,业务组级即止;2026-06-10 起,原"单一 namespace"行为已变更)。
+- `CI_PROJECT_PATH`:没有 `CI_PROJECT_NAMESPACE` 时取去掉最后一段项目名后的 namespace,同样展开祖先链。
 - `FLOWER_GITLAB_CONTEXT_ROOT`:可选,默认 `/tmp/review-context/repos`。
 - `project`:必须是 `namespace/project` 路径,不能是 URL;允许 `.git` 后缀输入,内部会去掉。
 - `group`:必须是 GitLab namespace/path,不能是 URL 或 `.git` 仓库地址。
@@ -236,4 +236,74 @@ await execFile("git", ["-C", target, "fetch", "--depth", "1", "origin", ref], {
 		GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`oauth2:${token}`).toString("base64")}`,
 	},
 });
+```
+
+## 场景: harness 自动发现与祖先链白名单(2026-06-10)
+
+### 1. 范围 / 触发
+
+- 触发:2026-06-10 诊断(xhgj-iqs-ui job 17580)发现 reviewer 从不主动查 harness;SRM 嵌套分组(`digital-biz-projects/srm/fronts/*`)下父分组 harness 被旧"单一 namespace 白名单"硬拦截。
+- 变更:白名单默认值推导 + 新增 `harness-discovery.ts` 宿主发现模块,属 infra + 安全边界变更,必须记录。
+
+### 2. 签名
+
+- `resolveNamespaceAncestors(namespace: string): string[]`(workspace.ts,导出)
+  - `"a/b/c"` → `["a/b/c", "a/b"]`(由近到远,段数 ≥ 2 即业务组级即止);`"a/b"` → `["a/b"]`;`"a"` → `["a"]`(单段保留自身);空入参 → `[]`
+- `discoverHarnessProject(): Promise<HarnessDiscoveryResult | null>`(harness-discovery.ts,导出)
+- `HarnessDiscoveryResult = { project: string | null; defaultBranch: string | null; branches: string[]; branchesTruncated: boolean; candidates: string[]; searchedGroups: string[] }`
+
+### 3. 契约
+
+- 三态语义:返回 `null` = 完全无法探测(无 CI namespace / 白名单为空);`project: null` = 已探测未发现(`searchedGroups` 供 prompt 如实引用);`project` 非空 = 命中。
+- 发现链与白名单同源:探测链 = `resolveNamespaceAncestors(CI_PROJECT_NAMESPACE)` 过滤 `assertAllowedGroup`;显式配置 `FLOWER_GITLAB_CONTEXT_PROJECT_PREFIXES` 收紧时探测范围同步收紧。
+- 逐跳 `listGroupProjects(group, { search: "harness", includeSubgroups: true })`,就近优先;命中即停,不继续上钻。
+- 客户端兜底过滤:只认项目路径尾段含 `harness` 的结果(服务端 search 会匹配描述);排除 `CI_PROJECT_PATH` 自身。
+- 同跳多命中消歧:优先 `<group尾段>-harness` 精确命名;其余进 `candidates`。
+- 分支清单:`listProjectBranches` 结果 default 置首,上限 50 条(`branchesTruncated` 标记);拉取失败返回空清单不影响主结果。
+- **永不抛错**:单跳 API 失败 `console.warn`(前缀 `[harness-discovery]`,错误信息已由 client 截断且不含 token)后继续上钻。
+
+### 4. 校验与错误矩阵
+
+| 条件 | 结果 |
+|------|------|
+| 无 `CI_PROJECT_NAMESPACE` 且 `CI_PROJECT_PATH` 不可推导 | 返回 `null`,不发任何请求 |
+| 祖先链全部不在白名单内 | 返回 `null` |
+| 某跳 listGroupProjects 403/404/网络错 | warn + 继续下一跳 |
+| 全链未命中 | `{ project: null, searchedGroups: <全链> }` |
+| 命中但分支拉取失败 | `project` 正常返回,`branches: []` |
+| 顶层 group(单段祖先) | 永不出现在探测链(除非 namespace 本身单段) |
+
+### 5. 正常 / 基线 / 错误用例
+
+- 正常(IQS 平铺):namespace `digital-biz-projects/iqs` → 第一跳命中 `digital-biz-projects/iqs/iqs-harness`(2026-06-10 真实实例验证通过,分支含 `v1.4` / `v1.4-p1`)。
+- 基线(SRM 嵌套):namespace `digital-biz-projects/srm/fronts` → 第一跳未命中 → 上钻 `…/srm` 命中 `srm-harness`(真实实例验证通过);白名单同时放行 `…/srm/fronts` + `…/srm`,拒绝 `digital-biz-projects` 顶层与跨业务组。
+- 错误:MR 项目本身名含 harness(如评审 `iqs-harness` 自己的 MR)→ 排除自指,返回 `project: null`。
+
+### 6. 必需测试
+
+- `workspace.test.ts`:祖先链推导(3 级/2 级/1 级/空)、`resolveAllowedProjectPrefixes` 祖先链默认值、SRM 场景放行/拒绝矩阵。
+- `harness-discovery.test.ts`:平铺第一跳命中、嵌套第二跳命中、多命中消歧、排除自身、单跳失败继续、全链未命中、无 CI env 返回 null 且零请求、显式白名单收紧探测链、分支截断标记、分支失败降级。
+
+### 7. 错误与正确示例
+
+#### 错误
+
+```typescript
+// 发现失败抛错会阻塞整个评审主流程
+export async function discoverHarnessProject(): Promise<HarnessDiscoveryResult> {
+	const projects = await gitlabClient().listGroupProjects(group, { search: "harness" }); // 403 → 抛
+	...
+}
+```
+
+#### 正确
+
+```typescript
+// 单跳失败 warn 后继续上钻;全程降级不抛,主流程永不被探测阻塞
+try {
+	projects = await gitlabClient().listGroupProjects(group, { search: "harness", includeSubgroups: true });
+} catch (err) {
+	console.warn(`[harness-discovery] 探测 group "${group}" 失败,继续上钻:${message}`);
+	continue;
+}
 ```
