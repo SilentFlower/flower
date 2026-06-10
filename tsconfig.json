@@ -7,6 +7,7 @@
 		{ "path": "./packages/flower-tools-gitlab" },
 		{ "path": "./packages/flower-compliance" },
 		{ "path": "./packages/flower-telemetry" },
+		{ "path": "./packages/flower-observer" },
 		{ "path": "./packages/flower-code-reviewer" },
 		{ "path": "./packages/flower-ops-bot" }
 	]

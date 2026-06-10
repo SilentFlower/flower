@@ -95,6 +95,8 @@ packages:
     path: packages/flower-code-reviewer
   flower-compliance:
     path: packages/flower-compliance
+  flower-observer:
+    path: packages/flower-observer
   flower-ops-bot:
     path: packages/flower-ops-bot
   flower-providers:

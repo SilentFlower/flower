@@ -1,0 +1,49 @@
+{
+	"name": "@flower-ai/flower-observer",
+	"version": "0.1.0",
+	"type": "module",
+	"description": "flower 系产品常驻观测服务:接收 flower-telemetry httpSink 实时推送与 SIEM 审计事件,SQLite 幂等入库,提供评审 trace 列表/回放/指标 Web UI",
+	"keywords": [
+		"pi",
+		"agent",
+		"telemetry",
+		"observability",
+		"trace",
+		"dashboard",
+		"sqlite"
+	],
+	"homepage": "https://github.com/SilentFlower/flower/tree/main/packages/flower-observer#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/SilentFlower/flower.git",
+		"directory": "packages/flower-observer"
+	},
+	"bugs": {
+		"url": "https://github.com/SilentFlower/flower/issues"
+	},
+	"license": "MIT",
+	"author": "silentflower",
+	"publishConfig": {
+		"access": "public"
+	},
+	"main": "./dist/server.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json && cp -r src/static dist/",
+		"clean": "tsc -p tsconfig.json --clean",
+		"dev": "tsx watch src/server.ts",
+		"start": "node --disable-warning=ExperimentalWarning dist/server.js",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@flower-ai/flower-telemetry": "*",
+		"@hono/node-server": "^2.0.4",
+		"hono": "^4.12.25"
+	},
+	"devDependencies": {
+		"tsx": "^4.20.0",
+		"vitest": "^3.2.4"
+	}
+}
