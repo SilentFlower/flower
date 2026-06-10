@@ -68,7 +68,8 @@
 - **第二条整体评论:面向测试的变更说明**:必须单独发送,不能塞进 walkthrough;整 body 包 `<details>` 默认折叠(不得加 `open` 属性),固定包含「变更摘要 / 影响范围 / 测试关注点 / 需求/依据」四项
   - 受众是测试人员,优先写业务 / 行为 / 接口 / 数据变化,文件名和函数名只作为依据补充
   - harness 按需查询,触发条件是开放式业务依据判断;字段含义、权限规则、导入导出模板、业务状态机、跨端约定、版本需求等只是典型例子,不是封闭白名单
-  - 如果依据来自 harness,在「需求/依据」中标注文件路径和 ref / commit;未找到时写「未找到权威需求依据」
+  - **harness 位置由宿主注入**(2026-06-10 R1):run.ts 启动期 `discoverHarnessProject()` 沿 namespace 祖先链就近发现,经 `BuildPromptInput.harnessContext` 注入「跨项目 harness 上下文」prompt 段(含分支清单 + ref 版本对齐提示);模型不再自行猜测 harness 路径
+  - 「需求/依据」**严格按实际行为三选一**(2026-06-10 R3,旧句式「未找到权威需求依据」已废弃):①引用 harness 文件路径 + ref/commit;②`已查询 harness(<路径> @ <ref>)未找到与本变更相关的权威材料`(必须真的 prepare 过);③`低风险变更,未查询 harness`;宿主注入段标注"未发现"时写`宿主自动探测未发现 harness 仓库(已探测 <group 链>)`
   - 不硬性限制句数或条目数,但必须避免重复 walkthrough、复述完整 diff 或堆砌无关细节
 - **无问题场景**:代码评审评论可保持简洁,但不能作为唯一评论;仍必须额外发送第二条「面向测试的变更说明」
 - **severity marker 语义**(2026-05-20 二次迭代):
@@ -98,10 +99,26 @@
 
 ### 4. 评审 trace 单例 + 「无依据评论」blocker 拦截
 
-- **`review-trace.ts` module-level 单例** `ReviewTrace`:`recordFileRead` / `recordLineComment` / `resetTrace` / `getTrace` / `findUnsupportedComments`
-- `extension.ts` `pi.on('tool_call', ...)` 监听:`gitlab_get_file_content` 调用 → `recordFileRead` 累计 readFiles;`gitlab_post_line_comment` → `recordLineComment` 累计已发评论
+- **`review-trace.ts` module-level 单例** `ReviewTrace`:`recordFileRead` / `recordLineComment` / `recordWorkspacePrepare` / `resetTrace` / `getTrace` / `findUnsupportedComments`
+- `extension.ts` `pi.on('tool_call', ...)` 监听:`gitlab_get_file_content` 调用 → `recordFileRead` 累计 readFiles;`gitlab_post_line_comment` → `recordLineComment` 累计已发评论;`gitlab_prepare_project_workspace` → `recordWorkspacePrepare` 累计 `workspacePrepareCount`(2026-06-10 R3 数据源)
 - `run.ts` finalize 阶段(LLM 全部 tool call 完成后)调 `findUnsupportedComments(readFiles, lineComments)` → 若 line_comment 的 `path` ∉ `readFiles` → 拼 `[severity:blocker] 无依据评论:对 ${path} 发出评论但未读完整文件` 整体评论 post 一次 → `scanForBlockers({unsupportedCommentFiles})` 触发 exit 1
 - **`scanForBlockers` 重载**:旧位置参数 `(beforeIds, after)` 兼容,新对象签名 `({beforeIds, after, unsupportedCommentFiles?})` 扩展;渐进迁移
+
+### 4b. harness 依据校验 `scanHarnessEvidence`(2026-06-10 R3 · 纯观测)
+
+- `run.ts` finalize 阶段与 scanForBlockers 并列调用,**不影响 exitCode**(D2 决策:先观测积累数据,再评估是否升级为硬拦截)
+- 签名:`scanHarnessEvidence({ testCommentBody, prepareCallCount, harnessDiscovered, severeCommentCount }): string[]`(返回违规类型列表,空 = 合规)
+- 测试说明定位:跑后新评论中 body 含 `面向测试的变更说明`(`TEST_COMMENT_MARKER`)的最后一条;未发该评论 → 不校验
+- 判定规则(确定性子串/正则,零主观):
+  | 写法 | 违规条件 | 违规类型 |
+  |---|---|---|
+  | ②`已查询 harness…未找到` | `prepareCallCount === 0` | `claimed-search-without-prepare` |
+  | ③`低风险变更,未查询 harness`(兼容全角逗号) | `severeCommentCount > 0` | `low-risk-claim-with-severe-findings` |
+  | `宿主自动探测未发现 harness` | 宿主实际发现了 | `claimed-not-discovered-but-discovered` |
+  | 旧句式`未找到权威需求依据` | 出现即违规 | `legacy-no-evidence-phrase` |
+- 违规时探针日志格式固定(便于统计):`[code-reviewer] ⚠️ harness 依据校验违规(纯观测,不影响 job 结果): violations=<逗号分隔> prepare_count=<n>`;不打评论正文
+- run.ts 启动期探针:`[code-reviewer] harness 探测: project=… / 未发现(已探测 …) / 降级(探测异常)`
+- 测试:`run.test.ts` 覆盖四类违规 + ①不误判 + 全角逗号变体 + 未发评论不校验;`extension.test.ts` / `review-trace.test.ts` 覆盖 prepare 计数与 reset
 
 ### 5. 注册顺序(extension.ts)
 

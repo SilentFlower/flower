@@ -138,6 +138,23 @@ describe("extension · tool_call hook 提取 line_comment 完整字段", () => {
 		expect([...getTrace().readFiles]).toEqual(["src/a.ts"]);
 	});
 
+	it("gitlab_prepare_project_workspace event → 累计 workspacePrepareCount(R3 数据源)", async () => {
+		const { pi, getToolCallHandler } = createMockPi();
+		extensionFactory(pi);
+
+		const handler = getToolCallHandler();
+		await handler?.({
+			toolName: "gitlab_prepare_project_workspace",
+			input: { project: "digital-biz-projects/srm/srm-harness", ref: "v1.4", alias: "srm-harness" },
+		});
+		await handler?.({
+			toolName: "gitlab_prepare_project_workspace",
+			input: { project: "digital-biz-projects/srm/srm-harness", ref: "master", alias: "srm-harness" },
+		});
+
+		expect(getTrace().workspacePrepareCount).toBe(2);
+	});
+
 	it("其他 tool event → trace 不变", async () => {
 		const { pi, getToolCallHandler } = createMockPi();
 		extensionFactory(pi);
@@ -151,6 +168,7 @@ describe("extension · tool_call hook 提取 line_comment 完整字段", () => {
 		const trace = getTrace();
 		expect(trace.readFiles.size).toBe(0);
 		expect(trace.lineComments).toEqual([]);
+		expect(trace.workspacePrepareCount).toBe(0);
 	});
 });
 

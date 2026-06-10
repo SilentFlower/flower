@@ -6,7 +6,14 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { extractBlockerTitle, getTrace, recordFileRead, recordLineComment, resetTrace } from "../review-trace.js";
+import {
+	extractBlockerTitle,
+	getTrace,
+	recordFileRead,
+	recordLineComment,
+	recordWorkspacePrepare,
+	resetTrace,
+} from "../review-trace.js";
 
 describe("review-trace · 单例行为", () => {
 	beforeEach(() => {
@@ -72,14 +79,23 @@ describe("review-trace · 单例行为", () => {
 		expect(trace.lineComments[1]?.file).toBe("src/a.go");
 	});
 
+	it("recordWorkspacePrepare 累计 prepare 次数(R3 数据源)", () => {
+		expect(getTrace().workspacePrepareCount).toBe(0);
+		recordWorkspacePrepare();
+		recordWorkspacePrepare();
+		expect(getTrace().workspacePrepareCount).toBe(2);
+	});
+
 	it("resetTrace 清空所有累计", () => {
 		recordFileRead("src/a.go");
 		recordLineComment({ file: "src/a.go", line: 1, severity: "blocker", body: "🔴 **阻塞** · X" });
+		recordWorkspacePrepare();
 		resetTrace();
 
 		const trace = getTrace();
 		expect(trace.readFiles.size).toBe(0);
 		expect(trace.lineComments).toEqual([]);
+		expect(trace.workspacePrepareCount).toBe(0);
 	});
 });
 

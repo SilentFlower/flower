@@ -15,7 +15,7 @@ import { registerHavefunProviders } from "@flower-ai/flower-providers";
 import { registerCommonTools } from "@flower-ai/flower-tools-common";
 import { registerGitlabTools } from "@flower-ai/flower-tools-gitlab";
 import { registerObservability } from "./observability.js";
-import { recordFileRead, recordLineComment } from "./review-trace.js";
+import { recordFileRead, recordLineComment, recordWorkspacePrepare } from "./review-trace.js";
 import { registerReviewerSelfTools } from "./reviewer-self-tools.js";
 
 /**
@@ -35,9 +35,10 @@ export default function (pi: ExtensionAPI): void {
  * 把 LLM 的工具调用追踪到 review-trace,供 run.ts finalize 阶段做「无依据评论」检查,
  * 以及 `reviewer_list_my_blockers` 工具读取本轮 blocker 真值
  *
- * 监听两个工具:
+ * 监听三个工具:
  * - `gitlab_get_file_content` → 累计 readFiles
  * - `gitlab_post_line_comment` → 累计 lineComments(含 severity + 抽取的 title)
+ * - `gitlab_prepare_project_workspace` → 累计 workspacePrepareCount(R3 依据校验数据源)
  *
  * 注:本监听器**不**阻塞工具(不返回 `{ block: true }`),只观察;阻塞由 compliance 负责。
  */
@@ -48,6 +49,10 @@ function registerReviewTrace(pi: ExtensionAPI): void {
 			if (typeof path === "string") {
 				recordFileRead(path);
 			}
+			return undefined;
+		}
+		if (event.toolName === "gitlab_prepare_project_workspace") {
+			recordWorkspacePrepare();
 			return undefined;
 		}
 		if (event.toolName === "gitlab_post_line_comment") {

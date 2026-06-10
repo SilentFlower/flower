@@ -20,11 +20,13 @@ import {
 	applyDiffCap,
 	buildLlmFailureNotice,
 	buildUnsupportedCommentNotice,
+	type HarnessEvidenceScanInput,
 	isLlmFailure,
 	ReviewSoftTimeoutError,
 	resolveMaxFiles,
 	runPiMainWithSoftTimeout,
 	scanForBlockers,
+	scanHarnessEvidence,
 } from "../run.js";
 
 function makeComment(id: number, body: string): BotComment {
@@ -375,5 +377,82 @@ describe("runPiMainWithSoftTimeout", () => {
 
 	it("timeoutMs=0 → 关闭软超时", async () => {
 		await expect(runPiMainWithSoftTimeout(async () => "ok", 0)).resolves.toBe("ok");
+	});
+});
+
+describe("scanHarnessEvidence · R3 需求/依据写法一致性校验(纯观测)", () => {
+	function baseInput(overrides: Partial<HarnessEvidenceScanInput> = {}): HarnessEvidenceScanInput {
+		return {
+			testCommentBody: null,
+			prepareCallCount: 0,
+			harnessDiscovered: false,
+			severeCommentCount: 0,
+			...overrides,
+		};
+	}
+
+	it("未发测试说明评论时不校验(返回空)", () => {
+		expect(scanHarnessEvidence(baseInput())).toEqual([]);
+	});
+
+	it("②声称已查询未找到 + 0 次 prepare → claimed-search-without-prepare", () => {
+		const body =
+			"### 需求/依据\n已查询 harness(`digital-biz-projects/srm/srm-harness` @ `v1.4`)未找到与本变更相关的权威材料;本说明仅基于 MR diff 和已读取代码上下文。";
+		expect(scanHarnessEvidence(baseInput({ testCommentBody: body }))).toEqual(["claimed-search-without-prepare"]);
+	});
+
+	it("②声称已查询未找到 + 有 prepare 记录 → 合规", () => {
+		const body = "已查询 harness(`x/y` @ `master`)未找到与本变更相关的权威材料";
+		expect(scanHarnessEvidence(baseInput({ testCommentBody: body, prepareCallCount: 1 }))).toEqual([]);
+	});
+
+	it("①引用 harness 文件(含'已查询'但有依据)不误判", () => {
+		const body =
+			"### 需求/依据\n依据来自 MR diff、已读取代码上下文,以及 harness 文档 `srm-harness/docs/export.md`(ref: `v1.4`,commit: `abc1234`)。";
+		expect(scanHarnessEvidence(baseInput({ testCommentBody: body }))).toEqual([]);
+	});
+
+	it("③低风险声明 + 本轮有 blocker/major → low-risk-claim-with-severe-findings", () => {
+		const body = "### 需求/依据\n低风险变更,未查询 harness;本说明基于 MR diff 和已读取代码上下文。";
+		expect(scanHarnessEvidence(baseInput({ testCommentBody: body, severeCommentCount: 2 }))).toEqual([
+			"low-risk-claim-with-severe-findings",
+		]);
+	});
+
+	it("③低风险声明(全角逗号变体)同样命中", () => {
+		const body = "低风险变更，未查询 harness";
+		expect(scanHarnessEvidence(baseInput({ testCommentBody: body, severeCommentCount: 1 }))).toEqual([
+			"low-risk-claim-with-severe-findings",
+		]);
+	});
+
+	it("③低风险声明 + 无严重评论 → 合规", () => {
+		const body = "低风险变更,未查询 harness;本说明基于 MR diff 和已读取代码上下文。";
+		expect(scanHarnessEvidence(baseInput({ testCommentBody: body }))).toEqual([]);
+	});
+
+	it("声称宿主未发现但宿主实际发现了 → claimed-not-discovered-but-discovered", () => {
+		const body = "宿主自动探测未发现 harness 仓库(已探测 `a/b`);本说明仅基于 MR diff 和已读取代码上下文。";
+		expect(scanHarnessEvidence(baseInput({ testCommentBody: body, harnessDiscovered: true }))).toEqual([
+			"claimed-not-discovered-but-discovered",
+		]);
+	});
+
+	it("声称宿主未发现且宿主确实未发现 → 合规", () => {
+		const body = "宿主自动探测未发现 harness 仓库(已探测 `a/b`)";
+		expect(scanHarnessEvidence(baseInput({ testCommentBody: body, harnessDiscovered: false }))).toEqual([]);
+	});
+
+	it("旧句式'未找到权威需求依据' → legacy-no-evidence-phrase", () => {
+		const body = "### 需求/依据\n未找到权威需求依据;本测试说明仅基于 MR diff 和已读取代码上下文。";
+		expect(scanHarnessEvidence(baseInput({ testCommentBody: body }))).toEqual(["legacy-no-evidence-phrase"]);
+	});
+
+	it("多重违规同时返回(旧句式 + 低风险矛盾)", () => {
+		const body = "未找到权威需求依据。另外低风险变更,未查询 harness。";
+		expect(scanHarnessEvidence(baseInput({ testCommentBody: body, severeCommentCount: 1 }))).toEqual([
+			"low-risk-claim-with-severe-findings",
+			"legacy-no-evidence-phrase",
+		]);
 	});
 });
