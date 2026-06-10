@@ -41,7 +41,7 @@
       "Step 9"
     ],
     "partial_step": null,
-    "next_step": "spec 沉淀(3.3 可选)→ PR 合入 main → /trellis:finish-work 归档",
-    "notes": "check-all 通过;3 处 design 字面偏差已确认接受(详情内联折叠替代右栏/时长分布 CSS 柱替代 uPlot/lookback 顶栏);37 单测 + 真实 pipeline e2e + Docker 容器冒烟全绿"
+    "next_step": "/trellis:finish-work 归档(代码已合入 main);后续任务已立项:trellis-config-spec-sync(含 spec 沉淀)/ observer-phase2-backlog / observer-deploy-company-test",
+    "notes": "check-all 通过;3 处 design 字面偏差已确认接受(详情内联折叠替代右栏/时长分布 CSS 柱替代 uPlot/lookback 顶栏);37 单测 + 真实 pipeline e2e + Docker 容器冒烟全绿;spec 沉淀归并到 trellis-config-spec-sync 任务"
   }
 }
