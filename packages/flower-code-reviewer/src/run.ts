@@ -22,15 +22,17 @@ import { buildPiCliArgs } from "@flower-ai/flower-providers";
 import {
 	AuthError,
 	type BotComment,
+	discoverHarnessProject,
 	FileNotFoundError,
 	gitlabClient,
+	type HarnessDiscoveryResult,
 	type MrFileChange,
 } from "@flower-ai/flower-tools-gitlab";
 import type { CliArgs } from "./args.js";
 import { detectGitlabVersion, type GitlabVersion } from "./comments/index.js";
 import extensionFactory from "./extension.js";
 import { preparePiSettings } from "./pi-settings.js";
-import { buildPrompt } from "./prompts.js";
+import { type BuildPromptInput, buildPrompt } from "./prompts.js";
 import { findUnsupportedComments, getTrace, resetTrace } from "./review-trace.js";
 import { resolveReviewRuntimeConfig } from "./runtime-config.js";
 import { pickSkill } from "./skill-selector.js";
@@ -296,6 +298,29 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 		}
 	}
 
+	// 3.5 R1 · 沿 namespace 祖先链自动发现 harness(就近优先,兼容平铺/嵌套分组)
+	//     失败降级 null(prompt 提示模型可自行兜底发现),**不阻塞评审主流程**
+	let harnessContext: BuildPromptInput["harnessContext"] | undefined;
+	const ciProjectPath = process.env.CI_PROJECT_PATH?.trim();
+	const ciNamespace = process.env.CI_PROJECT_NAMESPACE?.trim();
+	if (ciProjectPath && ciNamespace && process.env.GITLAB_TOKEN) {
+		let discovery: HarnessDiscoveryResult | null = null;
+		try {
+			discovery = await discoverHarnessProject();
+		} catch (err) {
+			console.warn("[code-reviewer] harness 自动探测异常,降级为模型自行发现:", err);
+		}
+		harnessContext = { projectPath: ciProjectPath, namespace: ciNamespace, discovery };
+		// 探针日志:在 CI 日志确认发现结果(只打项目路径/计数,不打文档内容)
+		const probe =
+			discovery === null
+				? "降级(探测异常)"
+				: discovery.project === null
+					? `未发现(已探测 ${discovery.searchedGroups.join(" → ")})`
+					: `project=${discovery.project}, default=${discovery.defaultBranch ?? "?"}, branches=${discovery.branches.length}`;
+		console.log(`[code-reviewer] harness 探测: ${probe}`);
+	}
+
 	// 4. 构造 prompt(把 gitlabVersion + 截断元数据 + MR source branch 传入)
 	// 注入 sourceBranch:LLM 在 prompt 里能看到具体 branch 名,主动显式传 ref(而非依赖工具兜底)
 	const skillFilePath = join(getSkillsDir(), `${skill}.md`);
@@ -310,6 +335,7 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 		contextReadMaxLines: runtimeConfig.contextReadMaxLines,
 		...(truncation !== undefined ? { truncation } : {}),
 		...(sourceBranch ? { sourceBranch } : {}),
+		...(harnessContext !== undefined ? { harnessContext } : {}),
 	});
 
 	// 5. 跑前 snapshot bot 评论 id 集合(用于跑后 diff)
@@ -371,6 +397,22 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 		// (从 trace 单例取,不再二次 filter `after - beforeIds`,避免双源漂移)
 		const lineBlockerCount = trace.lineComments.filter((c) => c.severity === "blocker").length;
 
+		// R3 · 需求/依据写法与工具调用记录一致性校验(D2:纯观测 warn,不影响 exitCode)
+		const newComments = after.filter((c) => !beforeIds.has(c.id));
+		const testComment = [...newComments].reverse().find((c) => c.body.includes(TEST_COMMENT_MARKER));
+		const harnessViolations = scanHarnessEvidence({
+			testCommentBody: testComment?.body ?? null,
+			prepareCallCount: trace.workspacePrepareCount,
+			harnessDiscovered: harnessContext?.discovery?.project != null,
+			severeCommentCount: trace.lineComments.filter((c) => c.severity === "blocker" || c.severity === "major").length,
+		});
+		if (harnessViolations.length > 0) {
+			// 探针格式固定(便于后续按违规类型统计),只打类型与计数,不打评论正文
+			console.warn(
+				`[code-reviewer] ⚠️ harness 依据校验违规(纯观测,不影响 job 结果): violations=${harnessViolations.join(",")} prepare_count=${trace.workspacePrepareCount}`,
+			);
+		}
+
 		// 若有无依据评论,先发一条整体 blocker 评论让评审作者看见(并被纳入 scan)
 		if (unsupportedFiles.length > 0) {
 			const body = buildUnsupportedCommentNotice(unsupportedFiles);
@@ -397,6 +439,68 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 		console.warn("[code-reviewer] 跑后评论拉取失败,blocker 扫描跳过:", err);
 		return { exitCode: 0, skillUsed: skill, blockerCount: 0, unsupportedFileCount: 0 };
 	}
+}
+
+/**
+ * 第二条整体评论(面向测试的变更说明)的识别标记
+ *
+ * prompt §3 固定 summary 含此字串;step 8 用它从跑后新评论中定位测试说明 body。
+ */
+const TEST_COMMENT_MARKER = "面向测试的变更说明";
+
+/**
+ * R3 · `scanHarnessEvidence` 输入(全部来自机器可判定数据源,零主观)
+ */
+export interface HarnessEvidenceScanInput {
+	/** 第二条整体评论(面向测试)的 body;本次 run 未发该评论时为 null(不校验) */
+	testCommentBody: string | null;
+	/** 本 run `gitlab_prepare_project_workspace` 调用次数(来自 review-trace) */
+	prepareCallCount: number;
+	/** 宿主启动期是否发现了 harness 仓库 */
+	harnessDiscovered: boolean;
+	/** 本 run 发出的 blocker/major 行内评论数(来自 review-trace) */
+	severeCommentCount: number;
+}
+
+/**
+ * R3 · 校验测试说明`需求/依据`写法与本 run 工具调用记录的一致性(D2:纯观测)
+ *
+ * 背景:2026-06-10 诊断发现模型把 few-shot 旧示例"未找到权威需求依据"当零成本出口照抄
+ * (job 17580 实测 0 次跨项目调用)。prompt 已改三分语义,本函数兜底校验模型是否照做。
+ *
+ * 判定规则(与 prompt §3 三分语义一一对应,均为确定性子串/正则匹配):
+ *
+ * | 写法 | 违规条件 | 违规类型 |
+ * |---|---|---|
+ * | ②"已查询 harness…未找到" | prepare 调用 0 次 | `claimed-search-without-prepare` |
+ * | ③"低风险变更,未查询 harness" | 本轮发过 blocker/major(自相矛盾) | `low-risk-claim-with-severe-findings` |
+ * | "宿主自动探测未发现 harness" | 宿主实际发现了 | `claimed-not-discovered-but-discovered` |
+ * | 旧句式"未找到权威需求依据" | 出现即违规(已废弃) | `legacy-no-evidence-phrase` |
+ *
+ * @param input 见 {@link HarnessEvidenceScanInput}
+ * @returns 违规类型列表(空数组 = 合规);caller 对每项 console.warn,**不影响 exitCode**
+ */
+export function scanHarnessEvidence(input: HarnessEvidenceScanInput): string[] {
+	const body = input.testCommentBody;
+	if (!body) return [];
+	const violations: string[] = [];
+	// ② 声称查过但没有任何 prepare 记录 → 说谎或幻觉
+	if (/已查询\s*harness[\s\S]{0,80}?未找到/.test(body) && input.prepareCallCount === 0) {
+		violations.push("claimed-search-without-prepare");
+	}
+	// ③ 声称低风险未查,但本轮发出过 blocker/major 行内评论 → "低风险"判定自相矛盾
+	if (/低风险变更[,，]\s*未查询\s*harness/.test(body) && input.severeCommentCount > 0) {
+		violations.push("low-risk-claim-with-severe-findings");
+	}
+	// 声称宿主未发现,但宿主启动期实际发现了 → 与注入事实相悖
+	if (/宿主自动探测未发现\s*harness/.test(body) && input.harnessDiscovered) {
+		violations.push("claimed-not-discovered-but-discovered");
+	}
+	// 旧模糊句式已废弃:出现即标记(prompt few-shot 已无此模板,出现说明未按新语义执行)
+	if (body.includes("未找到权威需求依据")) {
+		violations.push("legacy-no-evidence-phrase");
+	}
+	return violations;
 }
 
 /**

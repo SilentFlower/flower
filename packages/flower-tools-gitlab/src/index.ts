@@ -28,7 +28,10 @@ export type {
 	Severity,
 } from "./client.js";
 export { AuthError, collectCommentableNewLines, FileNotFoundError, gitlabClient, RetryableError } from "./client.js";
+export type { HarnessDiscoveryResult } from "./harness-discovery.js";
+export { discoverHarnessProject } from "./harness-discovery.js";
 export type { PreparedProjectWorkspace, PrepareProjectWorkspaceInput } from "./workspace.js";
+export { resolveNamespaceAncestors } from "./workspace.js";
 
 /**
  * 严重程度(对齐 render / prompts.ts 词表;LLM tool 入参 schema)
@@ -300,7 +303,9 @@ export const gitlabListGroupProjectsTool = defineTool({
 	description:
 		"列出允许 namespace 下 GitLab group 的项目摘要。用于需要跨项目上下文时发现 harness/UI/服务仓库。只读 API,不会 clone 仓库;项目必须在 FLOWER_GITLAB_CONTEXT_PROJECT_PREFIXES 或当前 CI namespace 允许范围内。",
 	parameters: Type.Object({
-		group: Type.String({ description: "GitLab group 路径,例如 `digital-biz-projects/iqs`" }),
+		group: Type.String({
+			description: "GitLab group 路径,例如 `<顶层group>/<业务组>`(评审 prompt 注入段已给出当前可用分组)",
+		}),
 		includeSubgroups: Type.Optional(Type.Boolean({ description: "是否包含子 group 项目,默认 true" })),
 		search: Type.Optional(Type.String({ description: "可选项目名搜索词,例如 `harness`" })),
 	}),
@@ -338,7 +343,9 @@ export const gitlabListProjectBranchesTool = defineTool({
 	description:
 		"列出允许项目的分支摘要。用于准备跨项目文档工作区前确认 ref,例如 harness 是否存在 `v1.4` 分支。只读 API,不会 clone 仓库。",
 	parameters: Type.Object({
-		project: Type.String({ description: "GitLab 项目路径,例如 `digital-biz-projects/iqs/iqs-harness`" }),
+		project: Type.String({
+			description: "GitLab 项目路径,例如 `<业务组>/<业务名>-harness`(评审 prompt 注入段已给出已发现的 harness 路径)",
+		}),
 		search: Type.Optional(Type.String({ description: "可选分支搜索词,例如 `v1.4`" })),
 	}),
 	async execute(_id, params) {
@@ -373,9 +380,11 @@ export const gitlabPrepareProjectWorkspaceTool = defineTool({
 	description:
 		"按需把允许项目的指定 ref shallow fetch 到固定本地目录,返回可用 `rg` 搜索的路径和实际 commit。用于读取 harness 等权威业务文档;不会在 job 启动时无条件 clone,也不会返回 token。",
 	parameters: Type.Object({
-		project: Type.String({ description: "GitLab 项目路径,例如 `digital-biz-projects/iqs/iqs-harness`" }),
+		project: Type.String({
+			description: "GitLab 项目路径,例如 `<业务组>/<业务名>-harness`(评审 prompt 注入段已给出已发现的 harness 路径)",
+		}),
 		ref: Type.String({ description: "branch / tag / commit sha,例如 `master` 或 `v1.4`" }),
-		alias: Type.String({ description: "本地目录别名,例如 `iqs-harness`;只能包含安全字符" }),
+		alias: Type.String({ description: "本地目录别名,例如 `srm-harness`;只能包含安全字符" }),
 		depth: Type.Optional(Type.Number({ description: "shallow fetch depth,默认 1,最大 100" })),
 	}),
 	async execute(_id, params) {

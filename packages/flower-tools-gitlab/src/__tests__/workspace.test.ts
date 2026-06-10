@@ -16,7 +16,30 @@ import {
 	normalizeWorkspaceRef,
 	redactGitAuth,
 	resolveAllowedProjectPrefixes,
+	resolveNamespaceAncestors,
 } from "../workspace.js";
+
+describe("workspace · namespace 祖先链", () => {
+	it("3 级 namespace 由近到远保留到业务组级(不含顶层 group)", () => {
+		expect(resolveNamespaceAncestors("digital-biz-projects/srm/fronts")).toEqual([
+			"digital-biz-projects/srm/fronts",
+			"digital-biz-projects/srm",
+		]);
+	});
+
+	it("2 级 namespace 只保留自身", () => {
+		expect(resolveNamespaceAncestors("digital-biz-projects/iqs")).toEqual(["digital-biz-projects/iqs"]);
+	});
+
+	it("单段 namespace 保留自身(保持旧行为)", () => {
+		expect(resolveNamespaceAncestors("xhgj003027")).toEqual(["xhgj003027"]);
+	});
+
+	it("空入参返回空数组", () => {
+		expect(resolveNamespaceAncestors("")).toEqual([]);
+		expect(resolveNamespaceAncestors("  ")).toEqual([]);
+	});
+});
 
 describe("workspace · 白名单解析", () => {
 	afterEach(() => {
@@ -34,9 +57,19 @@ describe("workspace · 白名单解析", () => {
 		expect(resolveAllowedProjectPrefixes()).toEqual(["digital-biz-projects/iqs"]);
 	});
 
+	it("嵌套 namespace 默认放宽为祖先链(SRM 场景)", () => {
+		vi.stubEnv("CI_PROJECT_NAMESPACE", "digital-biz-projects/srm/fronts");
+		expect(resolveAllowedProjectPrefixes()).toEqual(["digital-biz-projects/srm/fronts", "digital-biz-projects/srm"]);
+	});
+
 	it("没有 CI_PROJECT_NAMESPACE 时从 CI_PROJECT_PATH 推导 namespace", () => {
 		vi.stubEnv("CI_PROJECT_PATH", "digital-biz-projects/iqs/xhgj-iqs-boot");
 		expect(resolveAllowedProjectPrefixes()).toEqual(["digital-biz-projects/iqs"]);
+	});
+
+	it("CI_PROJECT_PATH 嵌套时同样推导祖先链", () => {
+		vi.stubEnv("CI_PROJECT_PATH", "digital-biz-projects/srm/fronts/srm-admin-front");
+		expect(resolveAllowedProjectPrefixes()).toEqual(["digital-biz-projects/srm/fronts", "digital-biz-projects/srm"]);
 	});
 });
 
@@ -49,6 +82,18 @@ describe("workspace · project/group 校验", () => {
 
 	it("拒绝不在白名单内的项目", () => {
 		expect(() => assertAllowedProject("other/group/repo", ["digital-biz-projects/iqs"])).toThrow(/白名单/);
+	});
+
+	it("SRM 嵌套场景:祖先链白名单放行父分组 harness,拒绝顶层与跨业务组", () => {
+		const srmPrefixes = ["digital-biz-projects/srm/fronts", "digital-biz-projects/srm"];
+		// 父分组下的 harness 仓库可达
+		expect(() => assertAllowedProject("digital-biz-projects/srm/srm-harness", srmPrefixes)).not.toThrow();
+		// 父分组本身可列出(发现算法需要)
+		expect(() => assertAllowedGroup("digital-biz-projects/srm", srmPrefixes)).not.toThrow();
+		// 顶层 group 不放行
+		expect(() => assertAllowedGroup("digital-biz-projects", srmPrefixes)).toThrow(/白名单/);
+		// 跨业务组(IQS)不放行
+		expect(() => assertAllowedProject("digital-biz-projects/iqs/iqs-harness", srmPrefixes)).toThrow(/白名单/);
 	});
 
 	it("允许白名单 group 本身和子 group", () => {

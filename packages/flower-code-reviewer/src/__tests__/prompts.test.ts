@@ -130,7 +130,8 @@ describe("buildPrompt · 7 条硬约束", () => {
 		expect(prompt).toContain("gitlab_list_group_projects");
 		expect(prompt).toContain("gitlab_list_project_branches");
 		expect(prompt).toContain("gitlab_prepare_project_workspace");
-		expect(prompt).toContain("业务 / 需求事实优先查配置的 harness 仓库");
+		// R1:harness 位置由宿主注入,prompt 引导模型读注入段而不是自行猜测
+		expect(prompt).toContain("宿主已自动探测,不要自行猜测项目路径");
 		expect(prompt).toContain("当前 MR 项目的 `doc/`、`*.md`、`*.csv` 默认只作历史线索");
 		expect(prompt).toContain("bash + `rg`");
 		expect(prompt).toContain("gitlab_search_project_blobs");
@@ -138,7 +139,8 @@ describe("buildPrompt · 7 条硬约束", () => {
 		expect(prompt).toContain("不要求每个 MR 固定准备 harness 工作区");
 		expect(prompt).toContain("不是封闭白名单");
 		expect(prompt).toContain("字段含义、权限规则、导入导出模板、业务状态机、跨端约定、版本需求等只是典型例子");
-		expect(prompt).toContain("未找到权威需求依据");
+		// R3:旧模糊句式废弃,只允许出现在"严禁"语境
+		expect(prompt).toContain('**严禁**写模糊的"未找到权威需求依据"');
 	});
 });
 
@@ -194,15 +196,21 @@ describe("buildPrompt · 面向测试的变更说明评论", () => {
 		expect(prompt).toContain("建议基础回归");
 	});
 
-	it("AC3/AC4 · 需求依据要求标注 harness 路径和 ref/commit,未找到时明确降级", () => {
+	it("AC3/AC4 · 需求依据按实际行为三选一,旧模糊句式废弃", () => {
 		const prompt = buildPrompt({ skillFilePath, dryRun: false });
 		const example = extractTestChangeExampleBlock(prompt);
-		expect(prompt).toContain("harness 文档路径 + ref / commit");
-		expect(prompt).toContain("如果依据来自 harness,测试说明的`需求/依据`中简短说明依据文件路径和 ref / commit");
+		// §3 三分语义规范
+		expect(prompt).toContain("严格按实际行为三选一");
+		expect(prompt).toContain("已查询 harness(<项目路径> @ <ref>)未找到与本变更相关的权威材料");
+		expect(prompt).toContain("低风险变更,未查询 harness");
+		expect(prompt).toContain("宿主自动探测未发现 harness 仓库");
+		// ① 形态:示例 8 引用 harness 文件 + ref/commit
 		expect(example).toContain("devops-infra/docs/auth-signature.md");
 		expect(example).toContain("ref: `release/2026-06`");
 		expect(example).toContain("commit: `abc1234`");
-		expect(prompt).toContain("未找到权威需求依据");
+		// 旧句式只允许以"严禁/反例"语境出现,旧示例 9 正文已删除
+		expect(prompt).not.toContain("未找到权威需求依据;本测试说明仅基于");
+		expect(prompt).not.toContain("若未找到权威材料,写");
 		expect(prompt).toContain("不作为权威业务结论");
 	});
 
@@ -422,5 +430,96 @@ describe("buildPrompt · E2 truncation hint", () => {
 		expect(prompt).toContain("MR diff size cap");
 		expect(prompt).toContain("按 churn(增量 + 删除行数)排序");
 		expect(prompt).toContain("本次仅评 <shown>/<total>");
+	});
+});
+
+describe("buildPrompt · 跨项目 harness 上下文注入(R1)", () => {
+	const foundDiscovery = {
+		project: "digital-biz-projects/srm/srm-harness",
+		defaultBranch: "master",
+		branches: ["master", "v1.4"],
+		branchesTruncated: false,
+		candidates: [] as string[],
+		searchedGroups: ["digital-biz-projects/srm/fronts", "digital-biz-projects/srm"],
+	};
+
+	it("命中:注入 harness 路径、分支清单、ref 版本对齐提示与 prepare 示例", () => {
+		const prompt = buildPrompt({
+			skillFilePath,
+			dryRun: false,
+			sourceBranch: "hotfix-v1.4-p1-test",
+			harnessContext: {
+				projectPath: "digital-biz-projects/srm/fronts/srm-admin-front",
+				namespace: "digital-biz-projects/srm/fronts",
+				discovery: foundDiscovery,
+			},
+		});
+		expect(prompt).toContain("## 跨项目 harness 上下文(宿主已自动探测)");
+		expect(prompt).toContain("`digital-biz-projects/srm/fronts/srm-admin-front`");
+		expect(prompt).toContain("harness 仓库:`digital-biz-projects/srm/srm-harness`(default branch:`master`)");
+		expect(prompt).toContain("分支清单:`master`、`v1.4`");
+		// D3:ref 版本对齐提示带 MR source branch
+		expect(prompt).toContain("优先匹配当前 MR 分支 `hotfix-v1.4-p1-test` 的版本语义");
+		// alias 取项目尾段
+		expect(prompt).toContain('alias="srm-harness"');
+	});
+
+	it("命中:候选与分支截断提示按需渲染", () => {
+		const prompt = buildPrompt({
+			skillFilePath,
+			dryRun: false,
+			harnessContext: {
+				projectPath: "digital-biz-projects/srm/fronts/srm-admin-front",
+				namespace: "digital-biz-projects/srm/fronts",
+				discovery: {
+					...foundDiscovery,
+					branchesTruncated: true,
+					candidates: ["digital-biz-projects/srm/docs-harness"],
+				},
+			},
+		});
+		expect(prompt).toContain("分支清单已截断");
+		expect(prompt).toContain("同链其他候选:`digital-biz-projects/srm/docs-harness`");
+	});
+
+	it("未发现:注入已探测 group 链与如实写法", () => {
+		const prompt = buildPrompt({
+			skillFilePath,
+			dryRun: false,
+			harnessContext: {
+				projectPath: "digital-biz-projects/iqs/xhgj-iqs-ui",
+				namespace: "digital-biz-projects/iqs",
+				discovery: {
+					project: null,
+					defaultBranch: null,
+					branches: [],
+					branchesTruncated: false,
+					candidates: [],
+					searchedGroups: ["digital-biz-projects/iqs"],
+				},
+			},
+		});
+		expect(prompt).toContain("**未发现 harness 仓库**");
+		expect(prompt).toContain("`digital-biz-projects/iqs` 探测");
+		expect(prompt).toContain("宿主自动探测未发现 harness 仓库(已探测 <上述 group 链>)");
+	});
+
+	it("降级(discovery null):提示模型可自行兜底发现", () => {
+		const prompt = buildPrompt({
+			skillFilePath,
+			dryRun: false,
+			harnessContext: {
+				projectPath: "digital-biz-projects/iqs/xhgj-iqs-ui",
+				namespace: "digital-biz-projects/iqs",
+				discovery: null,
+			},
+		});
+		expect(prompt).toContain("宿主探测不可用(降级)");
+		expect(prompt).toContain('search="harness"');
+	});
+
+	it("不传 harnessContext:不渲染注入段(本地调试向后兼容)", () => {
+		const prompt = buildPrompt({ skillFilePath, dryRun: false });
+		expect(prompt).not.toContain("## 跨项目 harness 上下文");
 	});
 });
