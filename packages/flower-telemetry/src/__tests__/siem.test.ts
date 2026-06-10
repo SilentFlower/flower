@@ -35,12 +35,25 @@ describe("projectAuditRecord · metadata-only 投影", () => {
 			correlation: { project: "g/r", mrIid: "1", commitSha: "abc", pipelineId: "9" },
 			reason: "startup",
 		});
-		expect(record).toEqual({ kind: "session_start", product: "test", reason: "startup", ts: BASE.ts });
+		expect(record).toEqual({
+			kind: "session_start",
+			product: "test",
+			traceId: "t-1",
+			reason: "startup",
+			ts: BASE.ts,
+		});
 	});
 
-	it("span(tool_call) → tool_call:只有 inputKeys,**绝不含 input 值**", () => {
+	it("span(tool_call) → tool_call:只有 inputKeys,**绝不含 input 值**;携带 traceId 供 trace 关联", () => {
 		const record = projectAuditRecord(TOOL_CALL_EVENT);
-		expect(record).toEqual({ kind: "tool_call", product: "test", tool: "bash", inputKeys: ["command"], ts: BASE.ts });
+		expect(record).toEqual({
+			kind: "tool_call",
+			product: "test",
+			traceId: "t-1",
+			tool: "bash",
+			inputKeys: ["command"],
+			ts: BASE.ts,
+		});
 		expect(JSON.stringify(record)).not.toContain("git status");
 	});
 
@@ -53,7 +66,14 @@ describe("projectAuditRecord · metadata-only 投影", () => {
 			isError: true,
 			result: "secret output",
 		});
-		expect(record).toEqual({ kind: "tool_result", product: "test", tool: "bash", isError: true, ts: BASE.ts });
+		expect(record).toEqual({
+			kind: "tool_result",
+			product: "test",
+			traceId: "t-1",
+			tool: "bash",
+			isError: true,
+			ts: BASE.ts,
+		});
 		expect(JSON.stringify(record)).not.toContain("secret output");
 	});
 
@@ -64,7 +84,7 @@ describe("projectAuditRecord · metadata-only 投影", () => {
 			outcomeType: "security_block",
 			securityBlock: { tool: "bash", mode: "ci-readonly", reason: 'bash 命令 "env" 不在白名单内' },
 		});
-		expect(record).toMatchObject({ kind: "tool_blocked", tool: "bash", mode: "ci-readonly" });
+		expect(record).toMatchObject({ kind: "tool_blocked", tool: "bash", mode: "ci-readonly", traceId: "t-1" });
 		expect(record?.reason).toContain("env");
 	});
 
@@ -143,6 +163,7 @@ describe("siemSink · SIEM_INGEST_URL 已配置", () => {
 		expect((init as RequestInit | undefined)?.method).toBe("POST");
 		const body = JSON.parse(String((init as RequestInit | undefined)?.body)) as Record<string, unknown>;
 		expect(body.kind).toBe("tool_call");
+		expect(body.traceId).toBe("t-1");
 		expect(body.inputKeys).toEqual(["command"]);
 		expect(body.user).toBeDefined();
 		expect(body.host).toBeDefined();

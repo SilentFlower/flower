@@ -19,6 +19,7 @@ TelemetryPipeline                              ← 唯一的归一化层:
     ▼
     ├─ jsonlSink(path)         JSONL 文件(CI artifact,数据基座)
     ├─ consoleSink({format})   stdout 打印(pretty 人读 / json 机器检索)
+    ├─ httpSink({url})         批量 NDJSON 实时推送(常驻观测服务 flower-observer)
     └─ siemSink()  [critical]  SIEM 审计(metadata-only,不受总开关影响)
 ```
 
@@ -37,7 +38,7 @@ trace 并上报 SIEM(`tool_blocked`)— 这同时修复了旧架构"被拦截的
 | `span` | 过程事件(完成时刻发出):`agent` / `turn`(含计时分解)/ `llm_call` / `tool_call`(调用意图,含脱敏 input)/ `tool_result` |
 | `outcome` | 结果真值:`line_comment` / `self_check` / `security_block` / `run_summary` |
 | `trace_end` | run 结束;含 totals(turns / toolCalls / durationMs) |
-| `stream` | 流式显示信号(thinking/text 增量等),**仅供 consoleSink,不落盘不上报** |
+| `stream` | 流式显示信号(thinking/text 增量等),**仅供 consoleSink,不落盘不上报不推送** |
 
 ## 内置 sink
 
@@ -45,11 +46,23 @@ trace 并上报 SIEM(`tool_blocked`)— 这同时修复了旧架构"被拦截的
 |------|------|------|------|
 | `jsonlSink(path)` | 全量(已脱敏截断) | 本地 JSONL 文件 | `FLOWER_TELEMETRY=0` 关 |
 | `consoleSink({format:"pretty"\|"json"})` | pretty:人读 CI 日志;json:一行一事件带 traceId | stdout | 同上(产品层一般再叠 `FLOWER_VERBOSE`) |
+| `httpSink({url, token?})` | 全量(与 jsonlSink **同一行格式**) | 批量 NDJSON POST 到观测服务 | `FLOWER_TELEMETRY=0` 关 |
 | `siemSink()` | **metadata-only**(工具名/字段名/成败,绝无入参值) | POST `SIEM_INGEST_URL` | **critical,不可关** |
 
 `siemSink` payload 与旧 `flower-compliance` 的 `sendAudit` 完全兼容
 (`session_start` / `tool_call`+`inputKeys` / `tool_result`+`isError` / user / host),
-新增 `tool_blocked` kind(拦截事件)。
+新增 `tool_blocked` kind(拦截事件)与 `traceId` 字段(关联全量 trace)。
+
+### httpSink 线协议(即观测服务的 ingest 契约)
+
+- `POST <url>`(URL 即完整端点,语义对齐 `SIEM_INGEST_URL`,不额外拼路径),
+  `Content-Type: application/x-ndjson`,body 每事件一行 `JSON.stringify`
+  —— **与 JSONL 文件逐字节同格式**,服务端一个解析器吃 HTTP 推送与 artifact 文件两种来源
+- 配置 `token` 时附 `Authorization: Bearer <token>`
+- `2xx` 为成功;其余(含超时/网络错误)整批留缓冲随下次触发重试 —— 超时场景请求可能已被
+  服务端写入,**服务端必须按 `(traceId, seq)` 幂等去重**
+- 批量与可靠性:攒批发送(默认 50 条 / 2s 触发间隔),缓冲有界(默认 2000 条,超出丢最旧),
+  失败 fail-open 静默(`DEBUG_TELEMETRY=1` 才 warn);跨 run 不持久化(artifact 是备份通道)
 
 ## 用法(code-reviewer 实例)
 
@@ -100,6 +113,6 @@ pipeline 对 `span.input` / `span.result` / `securityBlock.reason` 等字段统�
 
 ## 后续规划(Out of Scope,见任务 PRD)
 
-- `TELEMETRY_INGEST_URL` HTTP 批量上报 sink(第二阶段)
+- flower-observer 常驻观测服务(httpSink 的接收端:幂等 ingest / 存储 / UI / artifact 补拉)
 - ops-bot 接入:需 pi-agent-core adapter(本包内核已与 pi ExtensionAPI 解耦,sink 全部可复用)
 - GitLab 回流信号离线 job(评论 resolve 率)与回放评估工具链

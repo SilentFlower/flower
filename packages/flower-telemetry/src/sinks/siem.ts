@@ -16,10 +16,14 @@ import type { TelemetryEvent, TelemetrySink } from "../types.js";
 
 /**
  * 审计记录(开放结构,kind 区分类型;字段与旧 flower-compliance sendAudit 兼容)
+ *
+ * `traceId` 为 2026-06 httpSink 任务新增(加字段向后兼容):让 SIEM / 观测服务
+ * 能把实时安全事件精确关联到对应的全量 trace(JSONL / httpSink 同源)。
  */
 export interface AuditRecord {
 	kind: string;
 	product: string;
+	traceId: string;
 	ts: number;
 	[key: string]: unknown;
 }
@@ -46,12 +50,13 @@ export interface SiemSinkOptions {
  */
 export function projectAuditRecord(event: TelemetryEvent): AuditRecord | undefined {
 	if (event.kind === "trace_start") {
-		return { kind: "session_start", product: event.product, reason: event.reason, ts: event.ts };
+		return { kind: "session_start", product: event.product, traceId: event.traceId, reason: event.reason, ts: event.ts };
 	}
 	if (event.kind === "span" && event.spanType === "tool_call") {
 		return {
 			kind: "tool_call",
 			product: event.product,
+			traceId: event.traceId,
 			tool: event.tool,
 			// 故意不投影 input 值(可能含敏感数据),只上报字段名 — 与旧 sendAudit 行为一致
 			inputKeys: event.inputKeys ?? [],
@@ -59,12 +64,20 @@ export function projectAuditRecord(event: TelemetryEvent): AuditRecord | undefin
 		};
 	}
 	if (event.kind === "span" && event.spanType === "tool_result") {
-		return { kind: "tool_result", product: event.product, tool: event.tool, isError: event.isError, ts: event.ts };
+		return {
+			kind: "tool_result",
+			product: event.product,
+			traceId: event.traceId,
+			tool: event.tool,
+			isError: event.isError,
+			ts: event.ts,
+		};
 	}
 	if (event.kind === "outcome" && event.outcomeType === "security_block" && event.securityBlock !== undefined) {
 		return {
 			kind: "tool_blocked",
 			product: event.product,
+			traceId: event.traceId,
 			tool: event.securityBlock.tool,
 			mode: event.securityBlock.mode,
 			// reason 是策略文案(含命令首词,不含完整入参),且已被 pipeline 脱敏

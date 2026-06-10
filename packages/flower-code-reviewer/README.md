@@ -62,7 +62,9 @@ npm run dev -- --dry-run
 | `LLM_API_KEY` | LLM 网关 API key |
 | `SIEM_INGEST_URL` | 审计上报地址(可选;由 flower-telemetry siemSink 消费,metadata-only) |
 | `FLOWER_TELEMETRY_FILE` | JSONL trace 输出路径(可选,默认 `flower-review-trace.jsonl`;配 artifacts 收集做评审质量分析) |
-| `FLOWER_TELEMETRY` | 观测总开关(可选;`0` 关闭 JSONL/console 采集,SIEM 审计不受影响) |
+| `FLOWER_TELEMETRY_URL` | 观测服务 ingest 端点(可选;配置后挂载 httpSink,实时批量推送全量 trace 事件) |
+| `FLOWER_TELEMETRY_TOKEN` | httpSink 推送的 Bearer token(可选;配合 `FLOWER_TELEMETRY_URL` 使用) |
+| `FLOWER_TELEMETRY` | 观测总开关(可选;`0` 关闭 JSONL/console/http 采集,SIEM 审计不受影响) |
 | `FLOWER_VERBOSE` | CI 日志打印开关(可选;默认开,`0` 关) |
 
 ### 构建镜像
@@ -80,7 +82,7 @@ flower-code-reviewer/
 │   ├── cli.ts             # 入口
 │   ├── args.ts            # 参数解析
 │   ├── extension.ts       # pi 扩展(注册 provider + telemetry + 合规 + 工具)
-│   ├── telemetry-setup.ts # telemetry sink 装配(console/jsonl/siem 开关策略)
+│   ├── telemetry-setup.ts # telemetry sink 装配(console/jsonl/http/siem 开关策略)
 │   ├── run.ts             # 评审主流程(收尾写 outcome + flush trace)
 │   ├── prompts.ts         # prompt 构造
 │   └── skill-selector.ts  # 自动选 skill

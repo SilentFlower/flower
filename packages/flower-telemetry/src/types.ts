@@ -4,7 +4,7 @@
  * 设计要点:
  * - 一次 run = 一条 trace:`trace_start` 开头、`trace_end` 收尾,中间是 span 流与 outcome 流
  * - 字段显式声明(不开 `[key: string]: unknown` 口子),保证 JSONL 下游消费端可依赖 schema
- * - `stream` 事件仅供 consoleSink 实时显示,jsonlSink / siemSink 必须忽略(不落盘、不上报)
+ * - `stream` 事件仅供 consoleSink 实时显示,jsonlSink / siemSink / httpSink 必须忽略(不落盘、不上报、不推送)
  */
 
 /**
@@ -202,7 +202,7 @@ export type StreamType =
 	| "toolcall_ready";
 
 /**
- * 流式打印事件(仅供 consoleSink;jsonlSink / siemSink 忽略)
+ * 流式打印事件(仅供 consoleSink;jsonlSink / siemSink / httpSink 忽略)
  *
  * 注意:thinking_delta / text_delta 的 `delta` **不做脱敏**(增量切片会把 secret 拆碎,
  * 逐片正则既慢又必然漏)— 与现行 CI stdout 直出行为一致;
