@@ -1,20 +1,20 @@
 {
-	"name": "@flower-ai/flower-compliance",
+	"name": "@flower-ai/flower-telemetry",
 	"version": "0.1.0",
 	"type": "module",
-	"description": "pi agent 的合规拦截 + 全量审计扩展(CI 只读 / 生产只读模式)",
+	"description": "pi agent 的观测事件管道(归一化 + 可插拔 sink:JSONL / console / SIEM)",
 	"keywords": [
 		"pi",
 		"agent",
-		"compliance",
-		"audit",
-		"security"
+		"telemetry",
+		"observability",
+		"audit"
 	],
-	"homepage": "https://github.com/SilentFlower/flower/tree/main/packages/flower-compliance#readme",
+	"homepage": "https://github.com/SilentFlower/flower/tree/main/packages/flower-telemetry#readme",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/SilentFlower/flower.git",
-		"directory": "packages/flower-compliance"
+		"directory": "packages/flower-telemetry"
 	},
 	"bugs": {
 		"url": "https://github.com/SilentFlower/flower/issues"

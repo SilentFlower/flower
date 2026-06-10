@@ -42,7 +42,7 @@
 
 ### 1. 同根不同枝
 
-两个产品**共享 70% 的底层能力**(LLM provider、工具、合规、审计),
+两个产品**共享 70% 的底层能力**(LLM provider、工具、合规、观测/审计),
 但**生命周期、入口、会话模型完全不同**,所以独立部署、独立进程。
 
 | 维度 | code-reviewer | ops-bot |
@@ -303,10 +303,18 @@ GitLab API 工具集。**仅 code-reviewer 使用**。
 
 ### packages/flower-compliance
 
-审计 + 合规扩展。两个产品都加载,但开启不同模式:
+合规拦截扩展(纯策略包):只做"判定 + 拦截",拦截事件经 `onBlock` 回调交产品层接到 telemetry。
 
 - code-reviewer:`mode: "ci-readonly"`
-- ops-bot:`mode: "production-readonly"`
+- ops-bot:`mode: "production-readonly"`(当前 no-op,工具本身只读)
+
+### packages/flower-telemetry
+
+观测事件管道:pi 事件归一化 + 可插拔 sink(JSONL / console / SIEM)。
+
+- JSONL trace(CI artifact)= 评审质量迭代的数据基座(回放评估、评论采纳率)
+- consoleSink 承接原 observability 的 CI 日志打印(`FLOWER_VERBOSE` 语义不变)
+- siemSink 承接原 compliance 的 SIEM 审计(metadata-only、critical 不可关、payload 兼容)
 
 ---
 
@@ -326,7 +334,8 @@ flower/
     ├── flower-tools-common/                 # 共享:通用工具
     ├── flower-tools-arms/                   # 共享:ARMS 工具(给 ops-bot)
     ├── flower-tools-gitlab/                 # 共享:GitLab 工具(给 code-reviewer)
-    ├── flower-compliance/                   # 共享:合规 + 审计扩展
+    ├── flower-compliance/                   # 共享:合规拦截(纯策略包)
+    ├── flower-telemetry/                    # 共享:观测管道(归一化 + JSONL/console/SIEM sink)
     │
     ├── flower-code-reviewer/            # 产品 1
     │   ├── src/
@@ -413,7 +422,7 @@ npm run dev
 ### 第 1 周:基础设施(本仓库当前阶段)
 - [x] 搭 monorepo 骨架
 - [ ] `flower-providers` 接通目标 LLM 网关
-- [ ] `flower-compliance` 接通审计
+- [x] `flower-telemetry` 观测管道(JSONL trace 数据基座 + SIEM 审计收编,拦截事件不再漏报)
 
 ### 第 2 周:`code-reviewer` MVP
 - [ ] GitLab 工具集(get_diff / post_comment)

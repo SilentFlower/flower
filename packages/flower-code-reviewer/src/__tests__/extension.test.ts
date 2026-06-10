@@ -9,7 +9,11 @@
  * 不测 piMain 集成 / provider / compliance 注册细节(那是 pi 框架的事)。
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { resetTelemetry } from "@flower-ai/flower-telemetry";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import extensionFactory from "../extension.js";
 import { getTrace, recordLineComment, resetTrace } from "../review-trace.js";
 import { reviewerListMyBlockersTool } from "../reviewer-self-tools.js";
@@ -17,22 +21,26 @@ import { reviewerListMyBlockersTool } from "../reviewer-self-tools.js";
 /**
  * 简易 mock pi:只支持 `on` + `registerTool` + `registerProvider` + `registerSkill`
  * + `registerHook` 等 noop;捕获 tool_call handler 供测试调用
+ *
+ * `toolCallHandlers` 按注册顺序收集全部 tool_call handler(注册顺序契约测试用);
+ * `getToolCallHandler` 返回最后一个(review-trace 监听,既有用例沿用)。
  */
 function createMockPi(): {
 	pi: Parameters<typeof extensionFactory>[0];
 	getToolCallHandler: () =>
 		| ((event: { toolName: string; input: Record<string, unknown> }) => Promise<unknown>)
 		| undefined;
+	toolCallHandlers: Array<(event: Record<string, unknown>) => Promise<unknown>>;
 	registeredTools: Array<{ name: string }>;
 } {
-	let toolCallHandler: ((event: { toolName: string; input: Record<string, unknown> }) => Promise<unknown>) | undefined;
+	const toolCallHandlers: Array<(event: Record<string, unknown>) => Promise<unknown>> = [];
 	const registeredTools: Array<{ name: string }> = [];
 
 	// biome-ignore lint/suspicious/noExplicitAny: 测试 mock,绕过 ExtensionAPI 严格签名
 	const pi: any = {
 		on: (eventName: string, handler: (e: Record<string, unknown>) => Promise<unknown>) => {
 			if (eventName === "tool_call") {
-				toolCallHandler = handler as typeof toolCallHandler;
+				toolCallHandlers.push(handler);
 			}
 		},
 		registerTool: (def: { name: string }) => {
@@ -50,7 +58,11 @@ function createMockPi(): {
 
 	return {
 		pi,
-		getToolCallHandler: () => toolCallHandler,
+		getToolCallHandler: () => {
+			const last = toolCallHandlers[toolCallHandlers.length - 1];
+			return last as ReturnType<ReturnType<typeof createMockPi>["getToolCallHandler"]>;
+		},
+		toolCallHandlers,
 		registeredTools,
 	};
 }
@@ -169,6 +181,85 @@ describe("extension · tool_call hook 提取 line_comment 完整字段", () => {
 		expect(trace.readFiles.size).toBe(0);
 		expect(trace.lineComments).toEqual([]);
 		expect(trace.workspacePrepareCount).toBe(0);
+	});
+});
+
+describe("extension · 注册顺序契约:telemetry 先于 compliance(拦截调用可观测)", () => {
+	let dir: string;
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "flower-ext-"));
+		resetTrace();
+		resetTelemetry();
+		vi.stubEnv("FLOWER_VERBOSE", "0"); // 测试不要 console sink 刷屏
+		vi.stubEnv("FLOWER_TELEMETRY_FILE", join(dir, "trace.jsonl"));
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		resetTelemetry();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	/** 模拟 pi 的 tool_call 派发:按注册顺序执行,首个 {block} 短路 */
+	async function dispatchToolCall(
+		handlers: Array<(event: Record<string, unknown>) => Promise<unknown>>,
+		event: Record<string, unknown>,
+	): Promise<unknown> {
+		for (const handler of handlers) {
+			const res = (await handler(event)) as { block?: boolean } | undefined;
+			if (res?.block === true) return res;
+		}
+		return undefined;
+	}
+
+	it("被 compliance 拦截的 bash 调用:tool_call span 已进 JSONL,且 security_block outcome 落盘(漏报缺陷回归)", async () => {
+		const { pi, toolCallHandlers } = createMockPi();
+		extensionFactory(pi);
+		// 注册顺序契约:≥3 个 tool_call handler(telemetry → compliance → review-trace)
+		expect(toolCallHandlers.length).toBeGreaterThanOrEqual(3);
+
+		const res = (await dispatchToolCall(toolCallHandlers, {
+			toolName: "bash",
+			toolCallId: "call-blocked-1",
+			input: { command: "env" },
+		})) as { block: boolean; reason: string };
+		expect(res.block).toBe(true);
+
+		const lines = readFileSync(join(dir, "trace.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.map((l) => JSON.parse(l) as Record<string, unknown>);
+		// 调用意图 span:telemetry 先于 compliance 注册才能看到
+		const span = lines.find((l) => l.kind === "span" && l.spanType === "tool_call");
+		expect(span).toMatchObject({ tool: "bash", toolCallId: "call-blocked-1", inputKeys: ["command"] });
+		// 拦截结论 outcome:经 onBlock → recordSecurityEvent 接线写入
+		const blocked = lines.find((l) => l.kind === "outcome" && l.outcomeType === "security_block");
+		expect(blocked).toBeDefined();
+		expect((blocked as { securityBlock: Record<string, unknown> }).securityBlock).toMatchObject({
+			tool: "bash",
+			mode: "ci-readonly",
+			toolCallId: "call-blocked-1",
+			command: "env",
+		});
+	});
+
+	it("放行的白名单调用:有 tool_call span,无 security_block outcome", async () => {
+		const { pi, toolCallHandlers } = createMockPi();
+		extensionFactory(pi);
+		const res = await dispatchToolCall(toolCallHandlers, {
+			toolName: "bash",
+			toolCallId: "call-ok-1",
+			input: { command: "git status" },
+		});
+		expect(res).toBeUndefined();
+
+		const lines = readFileSync(join(dir, "trace.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.map((l) => JSON.parse(l) as Record<string, unknown>);
+		expect(lines.some((l) => l.kind === "span" && l.spanType === "tool_call")).toBe(true);
+		expect(lines.some((l) => l.kind === "outcome")).toBe(false);
 	});
 });
 

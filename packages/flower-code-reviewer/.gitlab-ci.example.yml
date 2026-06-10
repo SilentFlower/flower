@@ -36,10 +36,17 @@ code-review:
 #     # LLM 网关
 #     LLM_BASE_URL: $LLM_BASE_URL
 #     LLM_API_KEY: $LLM_API_KEY
-#     # 审计
-#     SIEM_INGEST_URL: $SIEM_INGEST_URL
+#     # 观测 / 审计(flower-telemetry)
+#     SIEM_INGEST_URL: $SIEM_INGEST_URL                       # SIEM 审计端点(可选,metadata-only)
+#     FLOWER_TELEMETRY_FILE: flower-review-trace.jsonl        # JSONL trace 输出(默认值,可省略)
 #   script:
 #     - flower-review --mr-iid $CI_MERGE_REQUEST_IID
+#   # 收集评审 trace 做质量分析(回放评估 / 评论采纳率;失败时也收,残缺 trace 仍有价值)
+#   artifacts:
+#     when: always
+#     paths:
+#       - flower-review-trace.jsonl
+#     expire_in: 30 days
 #   # 失败也不阻塞 pipeline(由 agent 内部根据 blocker 决定 exit 1)
 #   allow_failure: false
 #   timeout: 10 minutes

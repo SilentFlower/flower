@@ -48,7 +48,8 @@ export function registerHavefunProviders(
 ```typescript
 export default function (pi: ExtensionAPI): void {
   registerHavefunProviders(pi, { appSource: "code-reviewer" });
-  registerCompliance(pi, { mode: "ci-readonly", product: "code-reviewer" });
+  registerTelemetry(pi, { product: "code-reviewer", sinks: buildTelemetrySinks() });
+  registerCompliance(pi, { mode: "ci-readonly", product: "code-reviewer", onBlock: /* 接 telemetry */ });
   registerCommonTools(pi);
   registerGitlabTools(pi);
 }
@@ -59,8 +60,9 @@ export default function (pi: ExtensionAPI): void {
 | 顺序 | 注册者 | 理由 |
 |------|--------|------|
 | 1 | provider | 没 provider,后面所有 LLM 调用都找不到模型 |
-| 2 | compliance | 是后续工具调用的"门禁",必须早于业务工具 |
-| 3 | tools(common / gitlab) | 业务工具,任意顺序 |
+| 2 | telemetry | 观测监听必须先于 compliance:pi 按注册顺序短路,先注册才能看到被拦截的调用意图 |
+| 3 | compliance | 是后续工具调用的"门禁",必须早于业务工具;onBlock 回调接 telemetry(2026-06-10) |
+| 4 | tools(common / gitlab) | 业务工具,任意顺序 |
 
 ---
 

@@ -46,7 +46,8 @@ registerGitlabTools(pi);
 registerCompliance(pi, { mode: "ci-readonly", product: "code-reviewer" });
 ```
 
-必须 **provider → compliance → tools**。
+必须 **provider → telemetry → compliance → tools**(telemetry 先于 compliance:
+pi 按注册顺序短路,否则被拦截的调用意图进不了 trace)。
 
 ### ❌ 在 prompt 里软化硬约束
 
