@@ -481,3 +481,39 @@ code-reviewer-detailed-html 任务在 cccf174 完成 reviewer 章节 S1-S12 事�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: review-bot harness 智能发现与需求依据三分语义
+
+**Date**: 2026-06-10
+**Task**: review-bot harness 智能发现与需求依据三分语义
+**Package**: flower-code-reviewer
+**Branch**: `main`
+
+### Summary
+
+诊断 job 17580 发现 reviewer 从不查 harness(0 次跨项目调用、照抄示例9)且 SRM 嵌套分组被白名单硬拦截。落地:1)白名单默认值改 namespace 祖先链(业务组级即止);2)新增 harness-discovery 宿主就近自动发现(平铺/嵌套均真实实例验证命中)并注入 prompt(含分支清单+ref 版本对齐);3)需求/依据三分语义+scanHarnessEvidence 四规则纯观测校验;4)工具描述去 IQS 硬编码。532 测试全过,check-all 通过,已合入 company 并推送。待办:镜像构建后 IQS/SRM 真实 MR 验证(见 task snapshot)。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ffc8b8e3` | (see git log) |
+| `a01d6129` | (see git log) |
+| `cad2df8c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
