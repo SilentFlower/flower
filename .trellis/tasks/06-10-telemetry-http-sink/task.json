@@ -22,5 +22,24 @@
 	"parent": null,
 	"relatedFiles": [],
 	"notes": "",
-	"meta": {}
+	"meta": {},
+	"last_push_snapshot": {
+		"snapshot_at": "2026-06-10T16:26:34+08:00",
+		"branch": "feat/telemetry-http-sink",
+		"pushed_commits": {
+			"flower": "3afcaf18"
+		},
+		"completed_steps": [
+			"Step 1",
+			"Step 2",
+			"Step 3",
+			"Step 4",
+			"Step 5",
+			"Step 6",
+			"Step 7"
+		],
+		"partial_step": null,
+		"next_step": "合入 main(待用户指示)后 /trellis:finish-work 归档",
+		"notes": "check-all 通过(含补充的 flush 在途等待单测);全仓 632 测试绿;biome churn 已回退未混入;暂不合 main"
+	}
 }
