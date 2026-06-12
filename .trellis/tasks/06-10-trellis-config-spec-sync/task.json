@@ -22,5 +22,19 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {},
+  "last_push_snapshot": {
+    "snapshot_at": "2026-06-12T11:50:53+08:00",
+    "branch": "feat/trellis-config-spec-sync",
+    "pushed_commits": {
+      "flower": "9d12914a"
+    },
+    "completed_steps": [
+      "PRD 补全(Requirements + 6 条 AC)",
+      "实现(config.yaml 注册 flower-telemetry + telemetry/observer 两包 backend spec 共 5 文件)",
+      "check-all inline(1 处 P0 端点路径已修复重验)"
+    ],
+    "next_step": "/trellis:finish-work 归档(代码已合入 main)",
+    "notes": "check-all 通过;6 条 AC 全部满足;9d12914a 已推送 origin 并 ff 合入 main;company 远程未动"
+  }
 }
