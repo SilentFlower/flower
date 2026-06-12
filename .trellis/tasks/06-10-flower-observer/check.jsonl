@@ -1,4 +1,0 @@
-{"file": ".trellis/tasks/06-10-flower-observer/research/tech-stack.md", "reason": "验证选型决策落地:运行时依赖仅 hono + @hono/node-server(零新增)、node:sqlite 用法与实测范式一致、未引入 Postgres/Vite 等已否决方案"}
-{"file": ".trellis/tasks/06-10-flower-observer/research/ui-patterns.md", "reason": "验证三页 UI 与信息架构一致:列表列/过滤器齐全、详情页树重建与配对正确、四态(running/success/failed/incomplete)物化与 stale-running 查询期推导、行为回放边界(stream 不入库)明示"}
-{"file": "packages/flower-telemetry/README.md", "reason": "验证 ingest 契约合规:NDJSON 解析与 artifact 同源、整批重发幂等不重计、2xx 成功语义(不可返回 3xx)、坏行容忍计数、Bearer 鉴权 401"}
-{"file": ".trellis/spec/guides/index.md", "reason": "检查维度参照:跨层数据流一致性(ingest→存储→API→UI)、代码复用(utility 是否该上移 common)、共享文件改动是否同步"}
