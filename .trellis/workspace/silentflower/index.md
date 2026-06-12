@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
-- **Last Active**: 2026-06-10
+- **Total Sessions**: 13
+- **Last Active**: 2026-06-12
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~519 | Active |
+| `journal-1.md` | ~555 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-06-12 | 归档 flower-observer / telemetry-pipeline / http-sink 三个已完成任务 | `b4ba94ec`, `4d6b983a`, `3afcaf18` | `feat/flower-observer` |
 | 12 | 2026-06-10 | review-bot harness 智能发现与需求依据三分语义 | `ffc8b8e3`, `a01d6129`, `cad2df8c` | `main` |
 | 11 | 2026-06-09 | 优化 GitLab MR 行内评论定位 | `694905c6`, `ff0bcd72`, `21bf7d6d` | `main` |
 | 10 | 2026-06-04 | 完成 codereview 测试变更说明评论 | `e449507`, `a166d76`, `4c4788c` | `main` |
