@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/06-10-flower-telemetry-pipeline/prd.md", "reason": "对照 7 条验收标准逐项核查(含拦截漏报回归测试与 siem payload 无 input 值断言)。"}
+{"file": ".trellis/tasks/06-10-flower-telemetry-pipeline/design.md", "reason": "对照事件模型/注册顺序/兼容清单核查实现一致性(FLOWER_VERBOSE、SIEM payload 字段兼容)。"}
+{"file": ".trellis/tasks/06-10-flower-telemetry-pipeline/implement.md", "reason": "核对 Step 1-7 完成度、Review Gates(拦截测试零回归)与验证命令执行结果。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 telemetry/compliance/code-reviewer 三包契约一致性(BlockEvent 类型、onBlock 接线、注册顺序)。"}
+{"file": ".trellis/spec/flower-compliance/backend/index.md", "reason": "核查 compliance 瘦身后契约同步、拦截行为与安全边界未回退。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "核查 exitCode 语义未被 outcome/flush 改动影响、测试质量门达标。"}

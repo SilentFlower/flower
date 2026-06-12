@@ -1,0 +1,13 @@
+{"file": ".trellis/tasks/06-10-flower-telemetry-pipeline/prd.md", "reason": "需求 R1-R4、ADR-lite 六条架构决策、已决议问题(outcome 纳入/secret 正则脱敏)与验收标准。"}
+{"file": ".trellis/tasks/06-10-flower-telemetry-pipeline/design.md", "reason": "事件三层模型、TelemetrySink 接口与 critical 语义、siem payload 兼容投影、注册顺序约束、兼容清单与回滚。"}
+{"file": ".trellis/tasks/06-10-flower-telemetry-pipeline/implement.md", "reason": "Step 1-7 实施顺序、每步验证命令与 Review Gates(Step 5 后拦截测试全绿才进 Step 6)。"}
+{"file": ".trellis/spec/guides/index.md", "reason": "共享工程思考指南索引。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "audit.ts/observability.ts 是迁移不是重写;沿用 module 单例(review-trace 模式)与 fail-open fetch 姿态,避免新抽象。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "改动横跨 telemetry(新包)/compliance/code-reviewer 三包,onBlock 回调契约与 BlockEvent 类型需跨包一致。"}
+{"file": ".trellis/spec/flower-compliance/backend/index.md", "reason": "compliance 包契约(凭证从 env 读缺失允许等),本任务直接修改其公共 API(去 audit 加 onBlock)。"}
+{"file": ".trellis/spec/flower-compliance/backend/error-handling.md", "reason": "fail-open 语义规范:sink 故障/回调抛错不得影响拦截与主流程。"}
+{"file": ".trellis/spec/flower-compliance/backend/logging-guidelines.md", "reason": "DEBUG_AUDIT 才打 warn、不刷屏 CI 日志的日志规范,siemSink/pipeline 沿用。"}
+{"file": ".trellis/spec/flower-compliance/backend/quality-guidelines.md", "reason": "vitest 测试质量门(stubEnv/mock fetch 模式),siem/console/pipeline 单测对齐。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "code-reviewer 包规范索引,extension.ts 注册顺序与 run.ts finalize 改动需对齐。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/type-safety.md", "reason": "process.env 读取与类型守卫风格(含 SIEM_INGEST_URL 既有示例),telemetry env 处理对齐。"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/quality-guidelines.md", "reason": "exitCode 语义与质量门,run.ts outcome(run_summary) 写入不得改变 exitCode 行为。"}
