@@ -481,3 +481,109 @@ code-reviewer-detailed-html 任务在 cccf174 完成 reviewer 章节 S1-S12 事�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: review-bot harness 智能发现与需求依据三分语义
+
+**Date**: 2026-06-10
+**Task**: review-bot harness 智能发现与需求依据三分语义
+**Package**: flower-code-reviewer
+**Branch**: `main`
+
+### Summary
+
+诊断 job 17580 发现 reviewer 从不查 harness(0 次跨项目调用、照抄示例9)且 SRM 嵌套分组被白名单硬拦截。落地:1)白名单默认值改 namespace 祖先链(业务组级即止);2)新增 harness-discovery 宿主就近自动发现(平铺/嵌套均真实实例验证命中)并注入 prompt(含分支清单+ref 版本对齐);3)需求/依据三分语义+scanHarnessEvidence 四规则纯观测校验;4)工具描述去 IQS 硬编码。532 测试全过,check-all 通过,已合入 company 并推送。待办:镜像构建后 IQS/SRM 真实 MR 验证(见 task snapshot)。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ffc8b8e3` | (see git log) |
+| `a01d6129` | (see git log) |
+| `cad2df8c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 13: 归档 flower-observer / telemetry-pipeline / http-sink 三个已完成任务
+
+**Date**: 2026-06-12
+**Task**: 归档 flower-observer / telemetry-pipeline / http-sink 三个已完成任务
+**Package**: flower-code-reviewer
+**Branch**: `feat/flower-observer`
+
+### Summary
+
+三个任务代码均已合入 main 且 check-all 通过:flower-observer(常驻观测服务,Step1~9)、flower-telemetry-pipeline(管道与 sink 体系,Step1~7)、telemetry-http-sink(NDJSON 实时推送,Step1~7)。本次会话执行 finish-work 收尾,将三者归档至 archive/2026-06/。后续任务 trellis-config-spec-sync / observer-phase2-backlog / observer-deploy-company-test 仍处 planning。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b4ba94ec` | (see git log) |
+| `4d6b983a` | (see git log) |
+| `3afcaf18` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 14: 完成 trellis-config-spec-sync:注册 flower-telemetry 并沉淀两包 backend spec
+
+**Date**: 2026-06-12
+**Task**: 完成 trellis-config-spec-sync:注册 flower-telemetry 并沉淀两包 backend spec
+**Package**: flower-code-reviewer
+**Branch**: `feat/trellis-config-spec-sync`
+
+### Summary
+
+flower-telemetry 注册进 config.yaml packages;新建 .trellis/spec/{flower-telemetry,flower-observer}/backend/ 共 5 个文件,沉淀 node:sqlite WAL/upsert 范式、httpSink 线协议两侧要点(幂等/禁3xx/坏行容忍)、跨通道计数去重、sink fail-open 约定、tsc --build 避 TS5083。check-all inline 发现并修复 1 处 P0(端点路径 /v1/ingest→/v1/events)。代码已 ff 合入 main 并推送 origin;任务归档至 archive/2026-06/。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9d12914a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

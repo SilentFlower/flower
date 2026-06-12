@@ -1,0 +1,45 @@
+{
+  "id": "harness-discovery",
+  "name": "harness-discovery",
+  "title": "review-bot 智能发现 harness 仓库并强化需求依据可信度",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": "flower-code-reviewer",
+  "priority": "P2",
+  "creator": "silentflower",
+  "assignee": "silentflower",
+  "createdAt": "2026-06-10",
+  "completedAt": "2026-06-10",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {},
+  "last_push_snapshot": {
+    "snapshot_at": "2026-06-10T11:35:23+08:00",
+    "branch": "main",
+    "pushed_commits": {
+      "flower": "ffc8b8e3"
+    },
+    "completed_steps": [
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S5",
+      "S6",
+      "S7"
+    ],
+    "partial_step": null,
+    "next_step": "DoD 合并部署后真实验证:IQS + SRM 各跑一次真实 MR 评审 job,核对探针日志(harness 探测:)与依据段形态(①/②/③,不再出现旧句式)",
+    "notes": "check-all 全维度通过;Review Gate(真实实例探测)已验证 SRM 嵌套/IQS 平铺均命中"
+  }
+}

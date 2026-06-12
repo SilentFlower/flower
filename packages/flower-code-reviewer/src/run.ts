@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { main as piMain } from "@earendil-works/pi-coding-agent";
 import { buildPiCliArgs } from "@flower-ai/flower-providers";
+import { finishTelemetryTrace, flushTelemetry, getTelemetryPipeline } from "@flower-ai/flower-telemetry";
 import {
 	AuthError,
 	type BotComment,
@@ -378,14 +379,14 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 				}
 			}
 			// **不**调 scanForBlockers(没有 LLM 评论可扫,blocker 不应虚报)
-			return { exitCode: 0, skillUsed: skill, blockerCount: 0, unsupportedFileCount: 0 };
+			return await finishReviewTelemetry({ exitCode: 0, skillUsed: skill, blockerCount: 0, unsupportedFileCount: 0 });
 		}
 		throw err;
 	}
 
 	// 8. 跑后扫 blocker(包含「无依据评论」检查)
 	if (!enableBlockerScan || projectId === undefined) {
-		return { exitCode: 0, skillUsed: skill, blockerCount: 0, unsupportedFileCount: 0 };
+		return await finishReviewTelemetry({ exitCode: 0, skillUsed: skill, blockerCount: 0, unsupportedFileCount: 0 });
 	}
 	try {
 		const after = await gitlabClient().getBotComments(projectId, mrIid);
@@ -428,17 +429,70 @@ export async function runReview(args: CliArgs): Promise<ReviewResult> {
 			after,
 			unsupportedCommentFiles: unsupportedFiles,
 		});
-		return {
+		return await finishReviewTelemetry({
 			exitCode: hasBlocker ? 1 : 0,
 			skillUsed: skill,
 			blockerCount: lineBlockerCount,
 			unsupportedFileCount: unsupportedFiles.length,
-		};
+		});
 	} catch (err) {
 		// 评论已发,扫描失败不应反向定罪整个评审
 		console.warn("[code-reviewer] 跑后评论拉取失败,blocker 扫描跳过:", err);
-		return { exitCode: 0, skillUsed: skill, blockerCount: 0, unsupportedFileCount: 0 };
+		return await finishReviewTelemetry({ exitCode: 0, skillUsed: skill, blockerCount: 0, unsupportedFileCount: 0 });
 	}
+}
+
+/**
+ * 评审收尾:把 review-trace 真值写入 telemetry outcome,收束 trace 并冲刷 sink
+ *
+ * telemetry 数据基座的核心写入点:line_comment / self_check / run_summary 三类 outcome
+ * 是评审质量离线分析与回放评估的真值来源(prd R3)。
+ * 写入失败绝不影响评审结论(fail-open,与 telemetry pipeline 同一姿态)。
+ *
+ * @param result 本次评审结论(原样透传返回,便于各 return 点单表达式收尾)
+ * @returns 入参 result
+ *
+ * @internal 暴露给单测验证 outcome 组装(生产代码只应由 runReview 内部调用)
+ */
+export async function finishReviewTelemetry(result: ReviewResult): Promise<ReviewResult> {
+	try {
+		const pipeline = getTelemetryPipeline();
+		if (pipeline !== undefined) {
+			const trace = getTrace();
+			for (const comment of trace.lineComments) {
+				pipeline.emit({
+					kind: "outcome",
+					outcomeType: "line_comment",
+					comment: { file: comment.file, line: comment.line, severity: comment.severity, title: comment.title },
+				});
+			}
+			pipeline.emit({
+				kind: "outcome",
+				outcomeType: "self_check",
+				selfCheck: {
+					unsupportedFiles: findUnsupportedComments(trace.readFiles, trace.lineComments),
+					blockerCount: trace.lineComments.filter((c) => c.severity === "blocker").length,
+					workspacePrepareCount: trace.workspacePrepareCount,
+				},
+			});
+			pipeline.emit({
+				kind: "outcome",
+				outcomeType: "run_summary",
+				runSummary: {
+					exitCode: result.exitCode,
+					skillUsed: result.skillUsed,
+					blockerCount: result.blockerCount,
+					unsupportedFileCount: result.unsupportedFileCount,
+				},
+			});
+		}
+		finishTelemetryTrace();
+		await flushTelemetry();
+	} catch (err) {
+		// 观测收尾失败绝不反向定罪评审主流程
+		console.warn("[code-reviewer] telemetry 收尾失败(不影响评审结论):", err);
+	}
+	return result;
 }
 
 /**

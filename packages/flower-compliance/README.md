@@ -1,23 +1,24 @@
 # @flower-ai/flower-compliance
 
-合规拦截 + 全量审计扩展。
+合规拦截扩展(纯策略包):只做"判定 + 拦截"。
+
+> 0.2.0 起审计上报(SIEM)已收编进 `@flower-ai/flower-telemetry` 的 `siemSink`
+> (payload 兼容,`SIEM_INGEST_URL` / `DEBUG_AUDIT` 语义不变);本包不再发任何 HTTP。
 
 ## 提供的能力
 
-### 1. 合规拦截(按模式启用)
+### 合规拦截(按模式启用)
 
 | 模式 | 启用场景 | 拦截规则 |
 |------|----------|----------|
-| `ci-readonly` | code-reviewer 在 CI 内运行 | 禁 write / edit;bash 限白名单(git/grep/find/ls/cat/head/tail/wc/file/sed/awk) |
-| `production-readonly` | ops-bot 线上 | 工具本身已只读,本模式只做审计 |
+| `ci-readonly` | code-reviewer 在 CI 内运行 | 禁 write / edit;bash 限白名单(git/grep/find/ls/cat/head/tail/wc/file/sed/awk 等),命令链按 `;` `&&` `\|\|` `\|` `&` 拆段逐段校验 |
+| `production-readonly` | ops-bot 线上 | 工具本身已只读,本包当前不注册任何 handler |
 
-### 2. 审计上报
+### onBlock 回调(拦截事件外送)
 
-所有 `tool_call` / `tool_result` / `session_start` 事件都会异步推送到自定义审计端点(SIEM 或任何 HTTP 接收端):
-
-- 不上报工具入参的全量(可能含敏感数据),只上报字段名
-- 失败不影响主流程
-- 没配 `SIEM_INGEST_URL` 时,可设 `DEBUG_AUDIT=1` 在本地控制台打印
+拦截发生时回调 `onBlock(BlockEvent)`,由产品层接线到观测侧
+(code-reviewer 接 telemetry 的 `recordSecurityEvent` → trace `security_block` outcome + SIEM `tool_blocked`)。
+回调抛错不影响拦截结论;两包互不依赖,字段映射在产品层完成。
 
 ## 用法
 
@@ -25,20 +26,23 @@
 import { registerCompliance } from "@flower-ai/flower-compliance";
 
 export default function (pi: ExtensionAPI) {
-  // code-reviewer 这样用:
-  registerCompliance(pi, { mode: "ci-readonly", product: "code-reviewer" });
+	// code-reviewer 这样用(onBlock 接 telemetry,注册顺序:telemetry → compliance → tools):
+	registerCompliance(pi, {
+		mode: "ci-readonly",
+		product: "code-reviewer",
+		onBlock: (event) => {
+			/* 接 telemetry recordSecurityEvent */
+		},
+	});
 
-  // ops-bot 这样用:
-  // registerCompliance(pi, { mode: "production-readonly", product: "ops-bot" });
+	// ops-bot 这样用(当前为 no-op,保留模式位):
+	// registerCompliance(pi, { mode: "production-readonly", product: "ops-bot" });
 }
 ```
 
 ## 环境变量
 
-| 变量 | 必填 | 含义 |
-|------|:----:|------|
-| `SIEM_INGEST_URL` | | 审计上报地址(SIEM / HTTP 接收端),留空则不上报 |
-| `DEBUG_AUDIT` | | `=1` 时在控制台打印审计记录 |
+本包不再读取任何环境变量(原 `SIEM_INGEST_URL` / `DEBUG_AUDIT` 移至 flower-telemetry,语义不变)。
 
 ## TODO
 

@@ -1,45 +1,68 @@
 /**
- * 合规 + 审计扩展
+ * 合规拦截扩展(纯策略包)
  *
  * 两个产品都加载本扩展,只是模式不同:
  * - code-reviewer:`ci-readonly` 模式(禁所有写,bash 走白名单)
- * - ops-bot:`production-readonly` 模式(本身工具就只读,只做审计)
+ * - ops-bot:`production-readonly` 模式(本身工具就只读,本包当前不注册任何 handler)
  *
- * 本扩展只做"事件级别"的合规与审计,具体业务规则(如 ARMS project 白名单)
- * 应在各产品自己的扩展里实现。
+ * 本扩展只做"判定 + 拦截";观测与上报(含 SIEM 审计)由 @flower-ai/flower-telemetry 负责,
+ * 两包互不依赖 — 拦截事件经 `onBlock` 回调交给产品层,由产品层接线到 telemetry
+ * (code-reviewer 接 `recordSecurityEvent`,顺带修复"被拦截调用不进审计"的历史缺陷)。
+ * 具体业务规则(如 ARMS project 白名单)仍应在各产品自己的扩展里实现。
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { sendAudit } from "./audit.js";
-
-export { sendAudit } from "./audit.js";
 
 /**
  * 合规模式
  *
  * - `ci-readonly`:CI 环境,禁止任何写操作,bash 限白名单
- * - `production-readonly`:线上服务,所有工具应已只读,只做审计
+ * - `production-readonly`:线上服务,所有工具应已只读,本包不注册拦截
  */
 export type ComplianceMode = "ci-readonly" | "production-readonly";
 
 /**
- * 注册合规与审计扩展
+ * 拦截事件(回调给产品层;字段与 telemetry 的 security_block outcome 对齐)
+ */
+export interface BlockEvent {
+	/** 被拦截的工具名 */
+	toolName: string;
+	/** 触发拦截的合规模式 */
+	mode: ComplianceMode;
+	/** 拦截原因(与返回给 LLM 的 reason 同文) */
+	reason: string;
+	/** 工具调用 id(用于与观测侧 tool_call span 关联;事件缺失时为 undefined) */
+	toolCallId?: string;
+	/** bash 被拦时的原始命令(write/edit 拦截无此字段;敏感内容脱敏由观测侧负责) */
+	command?: string;
+}
+
+/**
+ * 注册合规拦截扩展
  *
  * @param pi - pi 扩展 API
  * @param options - 选项
  * @param options.mode - 合规模式
- * @param options.product - 产品名,审计字段里会带上,便于 SIEM 区分
+ * @param options.product - 产品名(保留字段:拦截事件上下文与未来按产品差异化策略用)
+ * @param options.onBlock - 拦截发生时的回调(可选;回调抛错不影响拦截结论)
  */
-export function registerCompliance(pi: ExtensionAPI, options: { mode: ComplianceMode; product: string }): void {
-	const { mode, product } = options;
+export function registerCompliance(
+	pi: ExtensionAPI,
+	options: { mode: ComplianceMode; product: string; onBlock?: (event: BlockEvent) => void },
+): void {
+	const { mode, onBlock } = options;
 
-	// CI 模式:拦截危险工具
+	// CI 模式:拦截危险工具;production-readonly 工具本身只读,无需注册
 	if (mode === "ci-readonly") {
-		registerCiReadOnlyGuards(pi);
+		registerCiReadOnlyGuards(pi, (event) => {
+			if (onBlock === undefined) return;
+			try {
+				onBlock(event);
+			} catch {
+				// 回调是观测辅助通道,故障绝不影响拦截结论(对齐 error-handling spec)
+			}
+		});
 	}
-
-	// 不管哪个模式,都开启审计
-	registerAudit(pi, product);
 }
 
 /**
@@ -228,69 +251,54 @@ function isSafeOrFallback(seg: BashCommandSegment): boolean {
  * 不拦的元字符(信任 LLM,reviewer 评审场景不构造攻击):
  * - `>` / `<` 重定向(LLM 偶尔 `echo > /tmp/x` 探测,容器内 ephemeral)
  * - `$()` / `` ` `` 命令替换(实际跑的命令仍受白名单约束:`echo $(curl x)` 中 `curl` 会**不**被检测到 — 接受的盲点)
+ *
+ * @param pi pi 扩展 API
+ * @param emitBlock 拦截事件回调(已包好 try-catch,直接调用即可)
  */
-function registerCiReadOnlyGuards(pi: ExtensionAPI): void {
+function registerCiReadOnlyGuards(pi: ExtensionAPI, emitBlock: (event: BlockEvent) => void): void {
 	pi.on("tool_call", async (event) => {
+		// 事件自带 toolCallId(供观测侧关联 tool_call span;mock 场景可能缺失)
+		const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : undefined;
 		if (event.toolName === "write" || event.toolName === "edit") {
-			return { block: true, reason: "CI 只读模式:禁止使用 write / edit 工具" };
+			const reason = "CI 只读模式:禁止使用 write / edit 工具";
+			emitBlock({
+				toolName: event.toolName,
+				mode: "ci-readonly",
+				reason,
+				...(toolCallId !== undefined ? { toolCallId } : {}),
+			});
+			return { block: true, reason };
 		}
 		if (event.toolName === "bash") {
 			const cmd = String(event.input.command ?? "").trim();
 			const segments = splitCommandChain(cmd);
 			// 空命令(LLM 偶发传 number/null)→ 走单段 "" 路径拦
 			if (segments.length === 0) {
-				return { block: true, reason: buildBashBlockReason("") };
+				const reason = buildBashBlockReason("");
+				emitBlock({
+					toolName: "bash",
+					mode: "ci-readonly",
+					reason,
+					command: cmd,
+					...(toolCallId !== undefined ? { toolCallId } : {}),
+				});
+				return { block: true, reason };
 			}
 			for (const seg of splitCommandChainWithSeparators(cmd)) {
 				const firstWord = seg.segment.split(/\s+/)[0] ?? "";
 				if (!BASH_ALLOW_LIST.test(seg.segment) && !isSafeOrFallback(seg)) {
-					return {
-						block: true,
-						reason: buildBashBlockReason(firstWord),
-					};
+					const reason = buildBashBlockReason(firstWord);
+					emitBlock({
+						toolName: "bash",
+						mode: "ci-readonly",
+						reason,
+						command: cmd,
+						...(toolCallId !== undefined ? { toolCallId } : {}),
+					});
+					return { block: true, reason };
 				}
 			}
 		}
-		return undefined;
-	});
-}
-
-/**
- * 注册审计事件
- *
- * 所有 tool_call / tool_result / session_start 都会异步推送到自定义 SIEM 端点。
- * 失败不会影响主流程。
- */
-function registerAudit(pi: ExtensionAPI, product: string): void {
-	pi.on("session_start", async (event) => {
-		void sendAudit({
-			kind: "session_start",
-			product,
-			reason: event.reason,
-			ts: Date.now(),
-		});
-	});
-
-	pi.on("tool_call", async (event) => {
-		void sendAudit({
-			kind: "tool_call",
-			product,
-			tool: event.toolName,
-			// 故意不上报 input 全量(可能含敏感数据),只上报字段名
-			inputKeys: Object.keys(event.input ?? {}),
-			ts: Date.now(),
-		});
-		return undefined;
-	});
-
-	pi.on("tool_result", async (event) => {
-		void sendAudit({
-			kind: "tool_result",
-			product,
-			tool: event.toolName,
-			isError: event.isError,
-			ts: Date.now(),
-		});
 		return undefined;
 	});
 }

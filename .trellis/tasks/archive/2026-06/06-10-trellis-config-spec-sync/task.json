@@ -1,0 +1,40 @@
+{
+  "id": "trellis-config-spec-sync",
+  "name": "trellis-config-spec-sync",
+  "title": "trellis 多包配置与 spec 补全(flower-telemetry / flower-observer)",
+  "description": "flower-telemetry 注册进 .trellis/config.yaml packages(flower-observer 已注册);为两个包新建 .trellis/spec/<pkg>/ 规范目录(index.md + 分层指南),沉淀:node:sqlite WAL/upsert 实测范式、httpSink 线协议服务端实现要点(幂等/禁3xx/坏行容忍)、跨通道计数去重模式、telemetry sink 实现约定(fail-open/不抛错)、tsc --build 指定包构建避 TS5083 技巧",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": "flower-code-reviewer",
+  "priority": "P2",
+  "creator": "silentflower",
+  "assignee": "silentflower",
+  "createdAt": "2026-06-10",
+  "completedAt": "2026-06-12",
+  "branch": "feat/trellis-config-spec-sync",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {},
+  "last_push_snapshot": {
+    "snapshot_at": "2026-06-12T11:50:53+08:00",
+    "branch": "feat/trellis-config-spec-sync",
+    "pushed_commits": {
+      "flower": "9d12914a"
+    },
+    "completed_steps": [
+      "PRD 补全(Requirements + 6 条 AC)",
+      "实现(config.yaml 注册 flower-telemetry + telemetry/observer 两包 backend spec 共 5 文件)",
+      "check-all inline(1 处 P0 端点路径已修复重验)"
+    ],
+    "next_step": "/trellis:finish-work 归档(代码已合入 main)",
+    "notes": "check-all 通过;6 条 AC 全部满足;9d12914a 已推送 origin 并 ff 合入 main;company 远程未动"
+  }
+}

@@ -15,6 +15,7 @@ COPY packages/flower-providers/package.json       packages/flower-providers/
 COPY packages/flower-tools-common/package.json    packages/flower-tools-common/
 COPY packages/flower-tools-gitlab/package.json    packages/flower-tools-gitlab/
 COPY packages/flower-compliance/package.json      packages/flower-compliance/
+COPY packages/flower-telemetry/package.json       packages/flower-telemetry/
 COPY packages/flower-code-reviewer/package.json   packages/flower-code-reviewer/
 
 RUN npm install --no-audit --no-fund
@@ -23,6 +24,7 @@ COPY packages/flower-providers       packages/flower-providers
 COPY packages/flower-tools-common    packages/flower-tools-common
 COPY packages/flower-tools-gitlab    packages/flower-tools-gitlab
 COPY packages/flower-compliance      packages/flower-compliance
+COPY packages/flower-telemetry       packages/flower-telemetry
 COPY packages/flower-code-reviewer   packages/flower-code-reviewer
 COPY tsconfig.json                   ./
 
@@ -76,6 +78,8 @@ COPY --from=builder /build/packages/flower-tools-gitlab/package.json    ./packag
 COPY --from=builder /build/packages/flower-tools-gitlab/dist            ./packages/flower-tools-gitlab/dist
 COPY --from=builder /build/packages/flower-compliance/package.json      ./packages/flower-compliance/package.json
 COPY --from=builder /build/packages/flower-compliance/dist              ./packages/flower-compliance/dist
+COPY --from=builder /build/packages/flower-telemetry/package.json       ./packages/flower-telemetry/package.json
+COPY --from=builder /build/packages/flower-telemetry/dist               ./packages/flower-telemetry/dist
 COPY --from=builder /build/packages/flower-code-reviewer/package.json   ./packages/flower-code-reviewer/package.json
 COPY --from=builder /build/packages/flower-code-reviewer/dist           ./packages/flower-code-reviewer/dist
 COPY --from=builder /build/packages/flower-code-reviewer/skills         ./packages/flower-code-reviewer/skills

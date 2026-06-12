@@ -27,7 +27,7 @@ function mockPi() {
 	return { pi, handlers };
 }
 
-/** 取拦截 hook(ci-readonly 模式下是 tool_call 上第 1 个 handler,audit hook 是第 2 个) */
+/** 取拦截 hook(瘦身后 ci-readonly 模式只注册 1 个 tool_call handler) */
 async function triggerInterceptor(handlers: Record<string, AnyHandler[]>, payload: unknown) {
 	const fn = handlers.tool_call?.[0];
 	if (!fn) throw new Error("无 tool_call handler 注册");
@@ -36,9 +36,7 @@ async function triggerInterceptor(handlers: Record<string, AnyHandler[]>, payloa
 
 describe("registerCompliance · ci-readonly 模式", () => {
 	beforeEach(() => {
-		// SIEM 端点不配,audit 静默,避免污染测试
 		vi.unstubAllEnvs();
-		vi.stubEnv("SIEM_INGEST_URL", "");
 	});
 
 	it("write 工具被拦,reason 含 '禁止使用 write'", async () => {
@@ -316,13 +314,13 @@ describe("registerCompliance · ci-readonly 模式", () => {
 		expect(res.block).toBe(true);
 	});
 
-	it("注册了 2 个 tool_call handler(拦截 + audit),session_start 1 个,tool_result 1 个", () => {
+	it("瘦身后只注册 1 个 tool_call 拦截 handler,不再注册 session_start / tool_result(审计移交 telemetry)", () => {
 		const { pi, handlers } = mockPi();
 		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
 		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
-		expect(handlers.tool_call?.length).toBe(2);
-		expect(handlers.session_start?.length).toBe(1);
-		expect(handlers.tool_result?.length).toBe(1);
+		expect(handlers.tool_call?.length).toBe(1);
+		expect(handlers.session_start).toBeUndefined();
+		expect(handlers.tool_result).toBeUndefined();
 	});
 
 	it("拦截 hook 必须返回值而非 throw(spec 要求:return { block, reason })", async () => {
@@ -339,30 +337,84 @@ describe("registerCompliance · ci-readonly 模式", () => {
 describe("registerCompliance · production-readonly 模式", () => {
 	beforeEach(() => {
 		vi.unstubAllEnvs();
-		vi.stubEnv("SIEM_INGEST_URL", "");
 	});
 
-	it("不注册 tool_call 拦截 hook(只有 audit hook)", () => {
+	it("不注册任何 handler(工具本身只读;观测由 telemetry 负责)", () => {
 		const { pi, handlers } = mockPi();
 		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
 		registerCompliance(pi as any, { mode: "production-readonly", product: "test" });
-		// 只有 audit 注册的 tool_call hook,共 1 个
-		expect(handlers.tool_call?.length).toBe(1);
+		expect(handlers.tool_call).toBeUndefined();
+		expect(handlers.session_start).toBeUndefined();
+		expect(handlers.tool_result).toBeUndefined();
+	});
+});
+
+describe("registerCompliance · onBlock 回调", () => {
+	beforeEach(() => {
+		vi.unstubAllEnvs();
 	});
 
-	it("tool_call write 触发 audit hook(返回 undefined,不拦截)", async () => {
+	it("write 被拦 → 回调一次,事件含 toolName / mode / reason / toolCallId", async () => {
 		const { pi, handlers } = mockPi();
+		const onBlock = vi.fn();
 		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
-		registerCompliance(pi as any, { mode: "production-readonly", product: "test" });
-		const res = await triggerInterceptor(handlers, { toolName: "write", input: {} });
-		expect(res).toBeUndefined();
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test", onBlock });
+		await triggerInterceptor(handlers, { toolName: "write", toolCallId: "call-7", input: { path: "a.txt" } });
+		expect(onBlock).toHaveBeenCalledTimes(1);
+		expect(onBlock).toHaveBeenCalledWith({
+			toolName: "write",
+			mode: "ci-readonly",
+			reason: expect.stringContaining("禁止使用 write"),
+			toolCallId: "call-7",
+		});
 	});
 
-	it("仍注册 session_start / tool_result audit hook", () => {
+	it("bash 命令链被拦 → 回调事件含原始 command;reason 与返回给 LLM 的一致", async () => {
+		const { pi, handlers } = mockPi();
+		const onBlock = vi.fn();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test", onBlock });
+		const res = (await triggerInterceptor(handlers, {
+			toolName: "bash",
+			input: { command: "git status; env" },
+		})) as { block: boolean; reason: string };
+		expect(res.block).toBe(true);
+		expect(onBlock).toHaveBeenCalledTimes(1);
+		const event = onBlock.mock.calls[0]?.[0] as { command?: string; reason: string };
+		expect(event.command).toBe("git status; env");
+		expect(event.reason).toBe(res.reason);
+	});
+
+	it("放行(白名单命令 / 非危险工具)→ 不回调", async () => {
+		const { pi, handlers } = mockPi();
+		const onBlock = vi.fn();
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test", onBlock });
+		await triggerInterceptor(handlers, { toolName: "bash", input: { command: "git status" } });
+		await triggerInterceptor(handlers, { toolName: "read", input: { path: "a.ts" } });
+		expect(onBlock).not.toHaveBeenCalled();
+	});
+
+	it("回调抛错 → 拦截结论不受影响(仍 block,不向上抛)", async () => {
+		const { pi, handlers } = mockPi();
+		const onBlock = vi.fn(() => {
+			throw new Error("观测通道故障");
+		});
+		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test", onBlock });
+		await expect(triggerInterceptor(handlers, { toolName: "write", input: {} })).resolves.toMatchObject({
+			block: true,
+		});
+	});
+
+	it("未传 onBlock → 拦截行为不变,不抛", async () => {
 		const { pi, handlers } = mockPi();
 		// biome-ignore lint/suspicious/noExplicitAny: minimal mock
-		registerCompliance(pi as any, { mode: "production-readonly", product: "test" });
-		expect(handlers.session_start?.length).toBe(1);
-		expect(handlers.tool_result?.length).toBe(1);
+		registerCompliance(pi as any, { mode: "ci-readonly", product: "test" });
+		await expect(
+			triggerInterceptor(handlers, { toolName: "bash", input: { command: "curl http://x" } }),
+		).resolves.toMatchObject({
+			block: true,
+		});
 	});
 });

@@ -122,35 +122,30 @@
 
 ### 5. 注册顺序(extension.ts)
 
-`provider → compliance → tools(含 gitlab) → review-trace 监听 → observability 监听`;review-trace 与 observability 的 `pi.on(tool_call)` 必须挂在 gitlab tools `pi.registerTool` 之后才能拿到 tool_call event。
+`provider → telemetry → compliance(onBlock 接 telemetry) → tools(含 gitlab) → review-trace 监听`(2026-06-10 telemetry 任务调整):
 
-### 6. observability extension(`observability.ts`,2026-05-20 加)
+- **telemetry 必须先于 compliance**:pi 的 tool_call handler 按注册顺序执行且 `{block:true}` 短路后续 handler;telemetry 先注册才能看到被拦截的调用意图(tool_call span 进 trace)
+- compliance 的拦截结论经 `onBlock` 回调 → 产品层映射(`toolName`→`tool`)→ telemetry `recordSecurityEvent`(security_block outcome + SIEM `tool_blocked`)— 修复旧架构"被拦截调用漏审计"缺陷
+- review-trace 的 `pi.on(tool_call)` 仍挂在 gitlab tools `pi.registerTool` 之后
 
-- 监听 pi-coding-agent 生命周期事件,把 LLM 的「思考 / 文本输出 / 工具调用 / 工具结果」流式打印到 stdout(GitLab CI job log),让业务方在 pipeline trace 里直接看到完整评审轨迹
-- **默认开**(business 零配置即可看);`FLOWER_VERBOSE=0` / `false` / `off` / `no` 显式关
-- 输出格式:`>>> 🤖 [turn N] start` / `>>> 🤖 第 N 轮结束 · 第 X 次尝试`(后接多行中文分组摘要)/ `💭 thinking: ...` / `💬 assistant: ...` / `🔧 [tool →] <name> args=...` / `🔧 [tool ←] <name> result=...` / `🔧 [tool ✗ error]`(compliance 拦截等)/ `>>> 🤖 [agent] session end`
-- tool input / result 截断 400 / 300 字符,防 GitLab CI 日志爆 + 敏感内容泄漏(image 内 safeReadFile 已在工具层 size cap,observability 再加一层 echo 截断)
-- 监听事件:`turn_start` / `turn_end` / `message_update`(assistantMessageEvent.type ∈ {`thinking_*` / `text_*` / `toolcall_end`})/ `tool_execution_end` / `after_provider_response`(仅 HTTP ≥ 400 提示)/ `agent_end`
-- turn end 摘要使用多行中文分组格式,优先保证 CI 日志可读性;不要在面向人读的摘要里混入英文机器字段名。若未来要机器采集,单独增加结构化 JSON 输出开关,不要挤进默认日志。示例:
-  ```text
-  >>> 🤖 第 10 轮结束 · 第 1 次尝试
-      总览: 本轮 4829ms · 模型请求 1 次 · 模型响应 1 次 · 工具 0 次 · 工具结果 0 个
-      模型接口: 请求开始 4ms · 响应头 3643ms · 未返回等待 n/a · 状态 200
-      流式输出: 首个事件 3650ms · 响应头到首个事件 3ms
-      文本输出: 本轮首字 3723ms · 响应头到本轮首字 76ms
-      工具调用: 首个工具就绪 n/a · 工具总耗时 0ms
-  ```
-- 首字相关字段语义:
-  - `first_agent_message_event_ms`:从 `turn_start.timestamp` 到首个 `message_update` 的耗时;可能是 thinking / text / toolcall,**不是**首字。
-  - `first_text_delta_ms`:从 `turn_start.timestamp` 到首个非空 `message_update.assistantMessageEvent.type === "text_delta"` 的耗时;空字符串 delta 不能记录。
-  - `first_text_delta_after_provider_ms`:从最近一次 `after_provider_response` 响应头时间到首个非空 `text_delta` 的耗时。
-  - 没有文本输出、只有 thinking / toolcall、或 provider 没有响应头时,对应首字字段输出 `n/a`,禁止把 thinking / toolcall 误记成首字。
-- 新增或调整观测字段时必须同步更新 `observability.test.ts`,至少覆盖:非空 `text_delta` 首次记录、空 `text_delta` 不记录、无文本输出输出 `n/a`、中文分组说明存在且默认摘要不再出现英文机器字段名。
+### 6. CI 日志打印与观测采集(原 observability.ts,2026-06-10 迁入 flower-telemetry)
 
-### 7. audit 默认静默(`flower-compliance/audit.ts`,2026-05-20 加)
+原 `observability.ts` 已删除,逻辑拆为两层(`@flower-ai/flower-telemetry`):
 
-- audit 失败(SIEM 不可达等)默认**完全不打 warn**(audit 是 fail-open 设计,失败不影响主流程,不该刷屏 GitLab CI 日志)
-- 调试场景:`DEBUG_AUDIT=1` 打单行 `[audit] 上报失败: <msg> (<error.cause.code>)`;不再打多层 stack(原 11 行 ECONNREFUSED stack → 0 行)
+- **归一化层** `pi-adapter.ts`:turn 计时聚合(首字/响应头等字段语义**不变**,见该包 `TurnTiming` JSDoc:非空 text_delta 才算首字、不可测字段 undefined)
+- **打印层** `consoleSink({format:"pretty"})`:多行中文分组 turn 摘要格式逐行保持;`format:"json"` 即原 spec 预判的"机器采集结构化 JSON 输出开关"(一行一事件带 traceId,为 ops-bot 多会话并发预留)
+
+宿主侧约定不变 + 新增:
+
+- `FLOWER_VERBOSE` 默认开,`0/false/off/no` 显式关(装配逻辑在 `telemetry-setup.ts`,关的是 consoleSink)
+- `FLOWER_TELEMETRY_FILE`(默认 `flower-review-trace.jsonl`):JSONL trace 落盘,CI artifacts 收集,是评审质量回放评估的数据基座;run.ts 收尾写 line_comment / self_check / run_summary 三类 outcome + trace_end 后 `flushTelemetry()`
+- 观测字段调整必须同步 flower-telemetry 的 `console.test.ts` / `pi-adapter.test.ts`(原 observability.test.ts 已随迁移删除)
+
+### 7. SIEM 审计(原 flower-compliance audit.ts,2026-06-10 迁入 flower-telemetry siemSink)
+
+- metadata-only 投影与 payload 字段兼容(session_start / tool_call+inputKeys / tool_result+isError / user / host);新增 `tool_blocked` kind(拦截事件)
+- fail-open 行为不变:失败默认**完全静默**(不刷屏 CI 日志),`DEBUG_AUDIT=1` 才打单行 `[audit] 上报失败: <msg> (<code>)`;`AbortSignal.timeout(2000)`
+- siemSink 是 critical sink:`FLOWER_TELEMETRY=0` 总开关只关 JSONL/console,审计通道不可关
 
 ### 8. 镜像版本管理 + Dockerfile 优化(2026-05-20 演进链)
 
