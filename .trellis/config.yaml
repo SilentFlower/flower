@@ -101,6 +101,8 @@ packages:
     path: packages/flower-ops-bot
   flower-providers:
     path: packages/flower-providers
+  flower-telemetry:
+    path: packages/flower-telemetry
   flower-tools-arms:
     path: packages/flower-tools-arms
   flower-tools-common:
