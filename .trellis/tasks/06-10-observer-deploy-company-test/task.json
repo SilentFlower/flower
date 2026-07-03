@@ -3,7 +3,7 @@
   "name": "observer-deploy-company-test",
   "title": "observer company 测试线打包部署(集成 devop-infra-harness)",
   "description": "把 flower-observer 部署到 company 测试线并集成 devop-infra-harness:镜像构建推 Harbor(192.168.27.236)、容器编排(db volume / TZ / OBSERVER_* env)、评审 CI 接流(FLOWER_TELEMETRY_URL + FLOWER_TELEMETRY_TOKEN 与 OBSERVER_INGEST_TOKEN 配对)、SIEM_INGEST_URL 指向 /v1/audit(可选)、OBSERVER_GITLAB_BASE_URL 配真实内网 GitLab;devop-infra-harness 的接入方式在规划阶段调研确认",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": "flower-observer",
@@ -12,8 +12,8 @@
   "assignee": "silentflower",
   "createdAt": "2026-06-10",
   "completedAt": null,
-  "branch": null,
-  "base_branch": "feat/flower-observer",
+  "branch": "company",
+  "base_branch": "main",
   "worktree_path": null,
   "commit": null,
   "pr_url": null,
@@ -22,5 +22,21 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {},
+  "last_push_snapshot": {
+    "snapshot_at": "2026-07-03T07:27:03Z",
+    "branch": {
+      "company": "company",
+      "main": "main"
+    },
+    "pushed_commits": {
+      "company": "2c744358",
+      "main": "7222f80d"
+    },
+    "push_mode": "push",
+    "completed_steps": [],
+    "partial_step": "Step 1-2 业务代码尚未在工作树确认",
+    "next_step": "Step 3 一次性环境准备(手工 kubectl/GitLab)",
+    "notes": "observer 任务文档提交至 company;Trellis 平台框架升级 (7222f80d) 提交至 main 并推至 origin/main(GitHub),未推 company/main"
+  }
 }
