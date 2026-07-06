@@ -34,6 +34,9 @@
 ## 常见误判
 
 - 404 不一定是 MR 不存在,常见原因是 project path 没有整体 encode。
+- 内网 host 的 curl 报 `SSL_ERROR_SYSCALL` / `HTTP:000` / 挂起,不一定是服务挂了:
+  先查本地代理(env `https_proxy` 指向 127.0.0.1:7890 之类),内网请求加 `--noproxy '*'` 直连
+  (2026-07-06 Rancher API 排障实测:登录偶通、后续全断,全因走了本地代理)。
 - MR URL 中的数字是 IID,不要拿全局 MR id 替代。
 - `GET /notes` 同时返回整体评论和行内评论,不需要先查 discussion id。
 - pipeline retry 只重跑 failed / canceled job;reviewer 已 success 时要新建 MR pipeline 或推空 commit。

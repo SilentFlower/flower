@@ -36,6 +36,15 @@ if (event === undefined) {
 
 - 坏行判定(`parseEventLine`):JSON parse 失败 / 非对象行 / 信封五字段(traceId / product / kind / seq / ts)
   缺失或类型不符 / `kind === "stream"`(契约上不会推送的显示信号,且 delta 不脱敏,出现即坏行)
+- **手工冒烟构造行的最小合法样例**(2026-07-06 部署验收实测:`ts` 写 ISO 字符串会整批 badLines——
+  信封要求 `ts` 为 **epoch 毫秒数字**,`seq` 为 ≥1 整数,三个字符串字段非空):
+
+  ```bash
+  printf '{"traceId":"smoke-001","seq":1,"ts":%s,"kind":"session_start","product":"smoke-test"}\n' \
+    "$(date +%s%3N)" | \
+  curl -s -X POST "$OBSERVER/v1/events" -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/x-ndjson" --data-binary @-   # 期望 {"accepted":1,...}
+  ```
 - **未知 kind 容忍入库**(schema 演进零迁移,仅不参与聚合)——坏行是"信封坏",不是"kind 新"
 - 诊断输出默认静默,`DEBUG_OBSERVER=1` 才单行 warn 且原文截断 200 字符(避免坏源刷爆日志)
 - 字段防御:已过信封校验的事件,业务字段仍以 `??` 兜底缺省值(correlation 缺失回退 `"unknown"`、
