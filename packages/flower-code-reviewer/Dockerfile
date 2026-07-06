@@ -39,12 +39,18 @@ RUN npx tsc --build --force packages/flower-code-reviewer/tsconfig.json && \
 # 砍 devDeps(biome / typescript / vitest / tsx 等只在 build 阶段需要),
 # 让 runtime 镜像 node_modules 只剩 prod deps,显著减重(预期 ~150MB 节省)
 RUN npm prune --omit=dev --no-audit --no-fund && \
-    # pi 0.76.0 的 pi-coding-agent 带 npm-shrinkwrap,会在每个 workspace 下重复安装一整套依赖。
-    # 运行时只需要一份根级 pi 包;各 workspace 通过 Node 向上查找规则复用 /app/node_modules。
-    mkdir -p node_modules/@earendil-works node_modules/@aws-sdk && \
-    cp -a -n packages/flower-code-reviewer/node_modules/@earendil-works/pi-coding-agent node_modules/@earendil-works/ && \
-    cp -a -n packages/flower-code-reviewer/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/ && \
-    cp -a -n packages/flower-code-reviewer/node_modules/@aws-sdk/client-bedrock-runtime node_modules/@aws-sdk/ && \
+    # pi 0.76.0 的 pi-coding-agent 带 npm-shrinkwrap,pi 依赖会在 workspace 下重复安装。
+    # 运行时只保留根级一份,各 workspace 通过 Node 向上查找规则复用 /app/node_modules。
+    # 落位会随 npm 决策漂移(实测 2026-07-06:pi-coding-agent 被 hoist 到根,pi-ai 只在 workspace 嵌套,
+    # 旧版写死 cp 源路径 can't stat 且被行尾 || true 吞掉整条链,缺 pi-ai 的镜像假绿出厂)——
+    # 统一按「根缺失才从任一 workspace 副本提升」处理;全都找不到必须显式失败。
+    for pkg in "@earendil-works/pi-coding-agent" "@earendil-works/pi-ai" "@aws-sdk/client-bedrock-runtime"; do \
+      if [ ! -d "node_modules/$pkg" ]; then \
+        src="$(ls -d packages/*/node_modules/$pkg 2>/dev/null | head -n 1)"; \
+        if [ -z "$src" ]; then echo "FATAL: $pkg 在根与 workspace node_modules 均不存在" >&2; exit 1; fi; \
+        mkdir -p "node_modules/${pkg%/*}" && cp -a "$src" "node_modules/$pkg"; \
+      fi; \
+    done && \
     rm -rf packages/*/node_modules/@earendil-works/pi-coding-agent \
            packages/*/node_modules/@earendil-works/pi-ai && \
     rm -rf node_modules/@earendil-works/pi-coding-agent/docs \
@@ -53,9 +59,17 @@ RUN npm prune --omit=dev --no-audit --no-fund && \
            node_modules/@earendil-works/pi-coding-agent/README.md \
            node_modules/@earendil-works/pi-coding-agent/npm-shrinkwrap.json && \
     find node_modules -type f \( -name '*.map' -o -name '*.d.ts' -o -iname '*.md' \) -delete && \
-    find node_modules -type d \( -iname test -o -iname tests -o -iname __tests__ -o -iname docs -o -iname examples \) -prune -exec rm -rf {} + && \
-    # koffi 默认打包 18 个架构 binary,Alpine 容器只需 musl_x64;砍其他 17 个省 ~25MB
-    find node_modules/koffi/build/koffi -mindepth 1 -maxdepth 1 ! -name 'musl_x64' -exec rm -rf {} + 2>/dev/null || true
+    find node_modules -type d \( -iname test -o -iname tests -o -iname __tests__ -o -iname docs -o -iname examples \) -prune -exec rm -rf {} +
+
+# koffi 默认打包 18 个架构 binary,Alpine 容器只需 musl_x64;砍其他 17 个省 ~25MB。
+# 单独一层:|| true 只兜这一条(koffi 可能不存在),不许再兜整条裁剪链
+RUN find node_modules/koffi/build/koffi -mindepth 1 -maxdepth 1 ! -name 'musl_x64' -exec rm -rf {} + 2>/dev/null || true
+
+# 构建期防假绿自检:pi 包必须从每个消费 workspace 上下文可解析,失败即构建红
+# (2026-07-06 教训:裁剪链静默失败 → 业务 MR 评审 ERR_MODULE_NOT_FOUND)
+RUN for d in packages/flower-code-reviewer packages/flower-tools-gitlab packages/flower-providers packages/flower-tools-common; do \
+      (cd "$d" && node -e "Promise.all([import('@earendil-works/pi-ai'),import('@earendil-works/pi-coding-agent')]).then(()=>console.log('resolve ok: '+process.cwd())).catch(e=>{console.error('FATAL resolve fail:',process.cwd(),e.code||e.message);process.exit(1)})") || exit 1; \
+    done
 
 # ---------- 运行时镜像 ----------
 FROM node:22-alpine

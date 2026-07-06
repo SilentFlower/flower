@@ -167,6 +167,17 @@ flower 仓 Dockerfile 优化(`packages/flower-code-reviewer/Dockerfile`)产出 i
 pi 0.76.0 后的 Dockerfile 约束:
 - `@earendil-works/pi-coding-agent` 发布包带 `npm-shrinkwrap.json`,npm workspaces 会在多个 `packages/*/node_modules` 下重复安装私有 pi 依赖。reviewer runtime 镜像必须只保留一份根级 `node_modules/@earendil-works/pi-coding-agent` / `pi-ai`,并删除 workspace 内重复副本。
 - `@earendil-works/pi-ai` 运行 Bedrock provider 时需要 `@aws-sdk/client-bedrock-runtime`;若把 `pi-ai` 从 workspace 私有目录提升到根级,必须同时确保根级有这份依赖。
+- **pi 包落位随 npm 决策漂移,禁止写死 cp 源路径**(2026-07-06 事故):镜像内 workspace 子集安装时
+  `pi-coding-agent` 被 hoist 到根、`pi-ai` 只在 workspace 嵌套——旧版写死
+  `cp packages/flower-code-reviewer/node_modules/.../pi-coding-agent` 直接 `can't stat`。
+  统一按「根缺失才从任一 `packages/*/node_modules` 副本提升,全都找不到 `exit 1`」处理
+  (实现见 Dockerfile 守卫循环;布局复现留档 `.trellis/tasks/archive` 的 hotfix-reviewer-image-pi-ai research)。
+- **禁止 `cmd1 && cmd2 ... || true` 让 `|| true` 兜整条链**:shell 优先级会把链上任何一步的失败都吞掉
+  (2026-07-06 事故:cp 失败被吞,缺 pi-ai 的镜像假绿出厂,业务 MR 评审 `ERR_MODULE_NOT_FOUND`)。
+  `|| true` 只允许兜单条命令,且优先拆成独立 RUN(如 koffi 裁剪层)。
+- **构建期 resolve 自检是强制层**:builder 末尾必须从每个消费 workspace 上下文
+  `(cd packages/<pkg> && node -e "Promise.all([import('@earendil-works/pi-ai'),import('@earendil-works/pi-coding-agent')])...")`,
+  解析失败即构建红——任何裁剪/合并逻辑的回归在构建期拦截,不许流到运行时。
 - runtime 层只复制各 workspace 的 `package.json` + `dist`;`flower-code-reviewer` 还需要复制 `skills`。禁止把 `src`、测试、`tsconfig.tsbuildinfo`、README 等开发文件带入 runtime。
 - Docker builder 使用 `tsc --build --force`;否则 `.dockerignore` 排除本地 `dist` 后,增量构建可能误判为最新并导致容器内缺少 `dist/cli.js`。
 - 清理 npm 发布包时只删明确非运行时文件(`*.map`、`*.d.ts`、Markdown、tests/docs/examples 目录)。不要使用过宽的 `CHANGELOG*` 规则:pi-coding-agent 存在运行期 import 的 `dist/utils/changelog.js`,误删会导致 CLI 启动失败。
