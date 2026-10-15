@@ -118,7 +118,7 @@ pi-ai 的 `Model<TApi>` 有泛型约束(`compat` 字段),运行时拼装无法�
 **单元测试覆盖**:
 
 - `env.test.ts` — fail-fast 矩阵(每个 env 缺失 / 非法场景)
-- `catalog.test.ts` — `BUILTIN_MODELS` 数据完整性(8 条 + 每条 `nativeApi` 合法)
+- `catalog.test.ts` — `BUILTIN_MODELS` 数据完整性(9 条 + 每条 `nativeApi` 合法)
 - `runtime.test.ts` — `getDefaultModel` 合法/非法组合 + `buildHavefunModel` 字段对照
 - `register.test.ts` — 4 次 `registerProvider` 调用 + 模型数 / 协议正确
 

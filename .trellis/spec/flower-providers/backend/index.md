@@ -46,10 +46,10 @@ flower-providers 同时服务 ops-bot(SDK 路径)与 code-reviewer(CLI 路径),�
 
 | 路径 | 入口函数 | env 缺省时的行为 | 默认值 | 设计取向 |
 |---|---|---|---|---|
-| **CLI**(reviewer)| `buildPiCliArgs` / `getLLMProviderOrDefault` 等 | fallback 到默认 + `console.log` 提示 | `havefun-openai-responses + gpt-5.5 + high` | opt-in 给业务方 CI,**降低接入门槛** |
+| **CLI**(reviewer)| `buildPiCliArgs` / `getLLMProviderOrDefault` 等 | fallback 到默认 + `console.log` 提示 | `havefun-openai-responses + gpt-6.1-sol + high` | opt-in 给业务方 CI,**降低接入门槛** |
 | **SDK**(ops-bot)| `getDefaultModel` / `getLLMProvider` 等 | fail-fast throw | — | 服务常驻部署,**显式配置** |
 
-CLI 默认值选定理由:与 2026-05-21 `xhgj003027/xhgj-iqs-ui` MR-2 pipeline 2127 / job 7552 的 stress test 显式配置组合一致。业务方零配置即拿到与生产 stress 对齐的行为;若有"成本敏感型"接入方,显式配 `LLM_PROVIDER` / `LLM_MODEL` 覆盖即可。
+CLI 默认模型于 2026-10-15 切换为 `gpt-6.1-sol`,工具调用继续使用 Responses API,默认 effort 保持 `high`。未配置变量时,`buildPiCliArgs` 必须显式输出 `--provider havefun-openai-responses --model gpt-6.1-sol --thinking high`,且该模型无需 extras 即可从内置清单解析。显式 `LLM_PROVIDER` / `LLM_MODEL` 配置优先;迁移已接入项目时需同步检查 CI/CD Variables 和外部 harness 模板中的旧模型覆盖。
 
 **关键**:CLI 路径**只对缺省兜底,不对非法值兜底**。`LLM_PROVIDER=invalid` 仍 throw,避免业务方因配错值而不知情。
 7. **两个消费者的对称接口**:flower-providers 同时服务 ops-bot 与 code-reviewer,二者形态不同,接口分两条:

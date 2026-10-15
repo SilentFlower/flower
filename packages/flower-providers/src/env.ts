@@ -36,8 +36,7 @@ export const ALLOWED_REASONING_EFFORTS: readonly ModelThinkingLevel[] = [
  *
  * @remarks 选择依据:2026-05-21 在 `xhgj003027/xhgj-iqs-ui` MR-2 pipeline 2127 / job 7552
  *          的 stress test 用 `gpt-5.5 + high effort` 跑通 5 文件 6 issue 评审,
- *          这是当前生产侧已验证的"reviewer 推荐组合"。默认对齐 stress 实测,
- *          业务方零配置即拿到与生产对齐的行为。
+ *          该协议继续用于默认模型 gpt-6.1-sol 的工具调用。
  *
  *          **仅 CLI 路径使用**;ops-bot SDK 路径(`getDefaultModel`)在缺省时仍 fail-fast,
  *          因为服务常驻部署期应显式配齐 env。
@@ -47,10 +46,10 @@ export const DEFAULT_LLM_PROVIDER: ProviderName = "havefun-openai-responses";
 /**
  * code-reviewer CLI 路径(`buildPiCliArgs`)在 `LLM_MODEL` 缺省时使用的默认 model id
  *
- * @remarks 与 `DEFAULT_LLM_PROVIDER` 协议匹配(`gpt-5.5.nativeApi === "openai-responses"`,
- *          见 `catalog.ts:BUILTIN_MODELS` 中 gpt-5.5 entry)。stress test 实测稳定组合的 model 端。
+ * @remarks 与 `DEFAULT_LLM_PROVIDER` 协议匹配(`gpt-6.1-sol.nativeApi === "openai-responses"`,
+ *          见 `catalog.ts:BUILTIN_MODELS` 中 gpt-6.1-sol entry)。仅在 CLI 未显式配置模型时使用。
  */
-export const DEFAULT_LLM_MODEL = "gpt-5.5";
+export const DEFAULT_LLM_MODEL = "gpt-6.1-sol";
 
 /**
  * code-reviewer CLI 路径(`buildPiCliArgs`)在 `LLM_REASONING_EFFORT` 缺省时使用的默认 effort

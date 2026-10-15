@@ -30,12 +30,12 @@
 ```typescript
 // 示例(env 全空时)
 console.log(`[flower-providers] LLM_PROVIDER 未配置,fallback 到 "havefun-openai-responses"`);
-console.log(`[flower-providers] LLM_MODEL 未配置,fallback 到 "gpt-5.5"`);
+console.log(`[flower-providers] LLM_MODEL 未配置,fallback 到 "gpt-6.1-sol"`);
 console.log(`[flower-providers] LLM_REASONING_EFFORT 未配置,fallback 到 "high"`);
 ```
 
 理由:
-- opt-in 给业务方接入的 CI 工具,需要让接入方明确感知"我在用默认值,改 env 可覆盖",避免"为什么 model 是 gpt-5.5?"类型的排查
+- opt-in 给业务方接入的 CI 工具,需要让接入方明确感知"我在用默认值,改 env 可覆盖",避免"为什么 model 是 gpt-6.1-sol?"类型的排查
 - info 级(`console.log` 非 `console.warn`),避免被 SIEM 误报为告警
 - 每次调用最多 3 行(provider / model / effort 各 1 行),不刷屏
 

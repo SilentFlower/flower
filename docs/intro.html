@@ -3719,7 +3719,7 @@ ${truncationHint}</pre>
 							<td style="padding: 6px 10px;"><code>LLM_MODEL</code></td>
 							<td style="padding: 6px 10px;">业务方 CI/CD Variable</td>
 							<td style="padding: 6px 10px;">否(CLI 路径有默认)</td>
-							<td style="padding: 6px 10px;">CLI 路径缺省 → <code>gpt-5.5</code>(与 default provider 协议匹配);ops-bot SDK 路径缺省 → fail-fast</td>
+							<td style="padding: 6px 10px;">CLI 路径缺省 → <code>gpt-6.1-sol</code>(与 default provider 协议匹配);ops-bot SDK 路径缺省 → fail-fast</td>
 							<td style="padding: 6px 10px;">非空字符串;具体合法性由 <code>getMergedModels</code> 校验(BUILTIN + LLM_EXTRA_MODELS_JSON 合并)</td>
 						</tr>
 						<tr style="border-bottom: 1px solid var(--line);">
@@ -4523,7 +4523,7 @@ flower-code-reviewer/run.ts:runReview
   ├─ buildPrompt({...})        → 拼好 system prompt + skill
   ├─ buildPiCliArgs({prompt})  → ["-p", prompt,
   │                               "--provider", "havefun-openai-responses",
-  │                               "--model",    "gpt-5.5",
+  │                               "--model",    "gpt-6.1-sol",
   │                               "--thinking", "high"]
   └─ piMain(argv, { extensionFactories: [extensionFactory] })
               │
@@ -4590,7 +4590,7 @@ pi 内部 turn loop (~推测,见 .d.ts event 列表)
 			<pre class="code">
 // 1. argv (string[])
 ["-p", "&lt;built prompt&gt;", "--provider", "havefun-openai-responses",
- "--model", "gpt-5.5", "--thinking", "high"]
+ "--model", "gpt-6.1-sol", "--thinking", "high"]
 
 // 2. pi ProviderConfig(packages/flower-providers/src/register.ts L79-L88)
 {

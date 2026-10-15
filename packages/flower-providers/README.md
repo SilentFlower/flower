@@ -26,7 +26,7 @@
 | Provider 名 | pi-ai 协议(`api` 字段) | 默认挂的模型家族 |
 |---|---|---|
 | `havefun-openai` | `openai-completions` | 兜底接口,默认无内置模型;通过 `LLM_EXTRA_MODELS_JSON` 注入只支持 openai-completions 的模型(grok / qwen / glm 等) |
-| `havefun-openai-responses` | `openai-responses` | GPT-5.x codex 系列(`gpt-5.4` / `gpt-5.5`),拿到 reasoning summary |
+| `havefun-openai-responses` | `openai-responses` | GPT 系列(`gpt-5.4` / `gpt-5.5` / `gpt-6.1-sol`),拿到 reasoning summary |
 | `havefun-anthropic` | `anthropic-messages` | Claude 系列(`claude-opus-4-7` / `claude-sonnet-4-6` / `claude-haiku-4-5-20251001`),原生 thinking |
 | `havefun-gemini` | `google-generative-ai` | Gemini 系列(`gemini-2.5-pro` / `gemini-2.5-flash` / `gemini-2.5-flash-lite`) |
 
@@ -74,11 +74,11 @@ new Agent({
 | `LLM_BASE_URL` | ✓ | LLM 网关**根 URL**(自部署 vLLM / 内部 AI Gateway / 任意 OpenAI 兼容代理)。**不要带 `/v1` / `/v1beta` / `/anthropic` 等后缀** — 本包按 provider 自动拼:openai-* → `/v1`,gemini → `/v1beta`,anthropic 无后缀(Anthropic SDK 自己拼 `/v1/messages`) |
 | `LLM_API_KEY` | ✓ | API key。**不会经过本包代码** — pi 直接从 env resolve;ops-bot 路径在 streamFn 中直读 |
 | `LLM_PROVIDER` | ✓(SDK 路径)| 默认 provider,合法值:`havefun-openai` / `havefun-openai-responses` / `havefun-anthropic` / `havefun-gemini`。**CLI 路径**(`buildPiCliArgs`,code-reviewer 用)缺省 fallback 到 `havefun-openai-responses`(2026-05-21 stress test 实测稳定组合) |
-| `LLM_MODEL` | ✓(SDK 路径)| 默认模型 id,必须存在于合并模型清单(builtin + extras),且其 `nativeApi` 与 `LLM_PROVIDER` 对应协议一致。**CLI 路径**缺省 fallback 到 `gpt-5.5` |
+| `LLM_MODEL` | ✓(SDK 路径)| 默认模型 id,必须存在于合并模型清单(builtin + extras),且其 `nativeApi` 与 `LLM_PROVIDER` 对应协议一致。**CLI 路径**缺省 fallback 到 `gpt-6.1-sol` |
 | `LLM_EXTRA_MODELS_JSON` |   | (可选)JSON 数组,注入额外模型,格式见下文 |
 | `LLM_REASONING_EFFORT` |   | (可选)统一调节"思考预算",合法值 `off / minimal / low / medium / high / xhigh`。**SDK 路径**配置后覆盖所有 model 的默认 effort,不配则按 per-model 默认拉到该 model 的实际上限。**CLI 路径**缺省 fallback 到 `high`(stress test 显式配置端) |
 
-任一**SDK 路径**必填 env 缺失或非法,启动期 fail-fast 抛错(`getDefaultModel` / `buildHavefunModel` / `getDefaultReasoningEffort`)。**CLI 路径**(`buildPiCliArgs`)对 `LLM_PROVIDER` / `LLM_MODEL` / `LLM_REASONING_EFFORT` 缺省自动 fallback 到 stress test 实测稳定组合(`havefun-openai-responses + gpt-5.5 + high`),非法值仍 fail-fast。可选 env 若有值但非法,首次调用对应函数时也会 fail-fast。
+任一**SDK 路径**必填 env 缺失或非法,启动期 fail-fast 抛错(`getDefaultModel` / `buildHavefunModel` / `getDefaultReasoningEffort`)。**CLI 路径**(`buildPiCliArgs`)对 `LLM_PROVIDER` / `LLM_MODEL` / `LLM_REASONING_EFFORT` 缺省自动 fallback 到 reviewer 默认组合(`havefun-openai-responses + gpt-6.1-sol + high`),非法值仍 fail-fast。可选 env 若有值但非法,首次调用对应函数时也会 fail-fast。
 
 ### `LLM_EXTRA_MODELS_JSON` 示例
 
@@ -109,14 +109,18 @@ shell / docker env 多行 JSON 转义麻烦时,推荐:
 
 ## 内置模型清单
 
-8 条 builtin,数据见 [`src/catalog.ts`](./src/catalog.ts):
+9 条 builtin,数据见 [`src/catalog.ts`](./src/catalog.ts):
 
 - Claude 家族 3 条 → `havefun-anthropic`
 - Gemini 家族 3 条 → `havefun-gemini`
-- GPT-5.x 家族 2 条(`gpt-5.4` / `gpt-5.5`) → `havefun-openai-responses`
+- GPT 家族 3 条(`gpt-5.4` / `gpt-5.5` / `gpt-6.1-sol`) → `havefun-openai-responses`
 - `havefun-openai` 默认空(供 extras 注入)
 
 cost 字段当前全填 0(占位),接通计费系统后再补真实数据。
+
+`gpt-6.1-sol` 的上下文窗口为 1,050,000 token,最大输出 128,000 token,支持文本与图片输入。
+工具调用使用 Responses API,默认 reviewer 推理强度为 `high`。能力参数见
+[OpenAI 官方模型文档](https://developers.openai.com/api/docs/models/gpt-6.1-sol)。
 
 ## Reasoning Effort
 

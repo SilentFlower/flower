@@ -170,7 +170,7 @@ describe("getLLMModel", () => {
 });
 
 describe("getLLMModelOrDefault", () => {
-	// 仅 CLI 路径使用;缺省 fallback 到 stress 实测组合的 model 端
+	// 仅 CLI 路径使用;显式配置优先于 reviewer 默认模型。
 	let snap: Record<string, string | undefined>;
 	beforeEach(() => {
 		snap = snapshotEnv();
@@ -178,9 +178,9 @@ describe("getLLMModelOrDefault", () => {
 	});
 	afterEach(() => restoreEnv(snap));
 
-	it("env 不配 → 返回 DEFAULT_LLM_MODEL('gpt-5.5')", () => {
+	it("env 不配 → 返回 DEFAULT_LLM_MODEL('gpt-6.1-sol')", () => {
 		expect(getLLMModelOrDefault()).toBe(DEFAULT_LLM_MODEL);
-		expect(getLLMModelOrDefault()).toBe("gpt-5.5");
+		expect(getLLMModelOrDefault()).toBe("gpt-6.1-sol");
 	});
 
 	it("env 空字符串 / 纯空白 → 返回 DEFAULT_LLM_MODEL", () => {
@@ -367,13 +367,13 @@ describe("getMergedModels", () => {
 	});
 	afterEach(() => restoreEnv(snap));
 
-	it("无 extras → 8 条 builtin", () => {
-		expect(getMergedModels().length).toBe(8);
+	it("无 extras → 9 条 builtin", () => {
+		expect(getMergedModels().length).toBe(9);
 	});
 
-	it("extras 注入新 id → 9 条", () => {
+	it("extras 注入新 id → 10 条", () => {
 		process.env.LLM_EXTRA_MODELS_JSON = JSON.stringify([{ id: "grok-4.20-fast", nativeApi: "openai-completions" }]);
-		expect(getMergedModels().length).toBe(9);
+		expect(getMergedModels().length).toBe(10);
 	});
 
 	it("extras 同 id 覆盖 builtin", () => {
@@ -387,7 +387,7 @@ describe("getMergedModels", () => {
 		const list = getMergedModels();
 		const opus = list.find((m) => m.id === "claude-opus-4-7");
 		expect(opus?.name).toBe("Claude Opus 4.7 (overridden)");
-		// 总数仍是 8(覆盖,不是新增)
-		expect(list.length).toBe(8);
+		// 同 id 只替换元数据,因此模型总数保持 9 条。
+		expect(list.length).toBe(9);
 	});
 });

@@ -5,7 +5,7 @@
  * - 4 个公开 provider 名(`havefun-*`)对应 pi-ai 的 4 个 LLM 协议
  * - 每个模型只声明一个原生协议(`nativeApi`),由它决定注册到哪个 provider
  *   理由见 PRD ADR-6:走原生协议才能拿到家族特性(Claude 原生 thinking /
- *   Gemini thinking budget / GPT-5.x reasoning summary),走 openai-completions
+ *   Gemini thinking budget / GPT reasoning summary),走 openai-completions
  *   会降级到最小公约数
  */
 
@@ -16,7 +16,7 @@ import type { Api, ThinkingLevelMap } from "@earendil-works/pi-ai";
  *
  * - `havefun-openai`:OpenAI Chat Completions 协议,兜底接口,默认无内置模型,
  *   通过 `LLM_EXTRA_MODELS_JSON` 注入只支持 openai-completions 的模型(如 grok / qwen / glm 等)
- * - `havefun-openai-responses`:OpenAI Responses 协议,挂 GPT-5.x codex 系列
+ * - `havefun-openai-responses`:OpenAI Responses 协议,挂 GPT 系列
  * - `havefun-anthropic`:Anthropic Messages 协议,挂 Claude 系列(支持原生 thinking)
  * - `havefun-gemini`:Google Generative AI 协议,挂 Gemini 系列
  */
@@ -133,7 +133,7 @@ export interface BuiltinModelEntry {
 }
 
 /**
- * 内置模型清单(8 条)
+ * 内置模型清单(9 条)
  *
  * @remarks 数据来源 / 字段含义:
  *          - 每条 `nativeApi` 以**人工知识**为准,不机械跟随网关 `/v1/models` 返回(例如 `gpt-5.5`
@@ -141,7 +141,7 @@ export interface BuiltinModelEntry {
  *          - `cost` 字段全填 0 — 接通计费系统后再补真实数据(PRD Out of Scope 已说明)
  *          - `contextWindow` / `maxTokens`:按各家官方文档真实值填写
  *            (Claude / Gemini 见官方 docs;GPT-5.x 按网关侧 Codex 模式上限,gpt-5.5 上下文窗口
- *            收敛到 400K)
+ *            收敛到 400K;GPT-6.1 Sol 见 https://developers.openai.com/api/docs/models/gpt-6.1-sol)
  *          - `reasoning`:仅当官方文档明确支持 extended thinking / reasoning 才写 true。
  *            Haiku 4.5 与 Gemini 2.5 Flash Lite 实测不支持,写 false
  *          - `thinkingLevelMap`:仅当 pi 默认 5 级映射无法覆盖该 model 的实际最高 effort
@@ -229,7 +229,7 @@ export const BUILTIN_MODELS: readonly BuiltinModelEntry[] = [
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		nativeApi: "google-generative-ai",
 	},
-	// ---- GPT-5.x 家族(原生协议 openai-responses,支持 reasoning summary + service tier)----
+	// ---- GPT 家族(原生协议 openai-responses,支持 reasoning summary + service tier)----
 	{
 		id: "gpt-5.4",
 		name: "GPT-5.4",
@@ -247,6 +247,17 @@ export const BUILTIN_MODELS: readonly BuiltinModelEntry[] = [
 		name: "GPT-5.5",
 		// 网关侧 Codex 模式:gpt-5.5 在网关上的上下文窗口收敛到 400,000,maxTokens 128K
 		contextWindow: 400_000,
+		maxTokens: 128_000,
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		nativeApi: "openai-responses",
+	},
+	{
+		id: "gpt-6.1-sol",
+		name: "GPT-6.1 Sol",
+		// OpenAI 官方能力:1,050,000 上下文、128K 输出;工具调用必须使用 Responses API。
+		contextWindow: 1_050_000,
 		maxTokens: 128_000,
 		reasoning: true,
 		input: ["text", "image"],

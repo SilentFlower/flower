@@ -13,6 +13,8 @@ include:
 code-review:
   extends: .review-flower-code-reviewer
   # 默认行为:用 Harbor latest 镜像 + 50 文件 / 50KB 上限 + REVIEWER_BOT_TOKEN 等 secret 由 CI/CD Variables 注入
+  # 未配置模型变量时,reviewer 默认使用 havefun-openai-responses + gpt-6.1-sol + high。
+  # 已接入项目若在 CI/CD Variables 或 harness 模板中显式指定旧模型,也需更新或删除该配置。
   # 如需覆盖,在此处加 variables: 段:
   # variables:
   #   FLOWER_IMAGE_TAG: 'a1b2c3d4'        # 锁 commit sha 镜像,生产场景推荐

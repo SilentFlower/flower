@@ -188,7 +188,7 @@ export function buildHavefunModel(provider: ProviderName, modelId: string): Mode
  *         转调的 fail-fast 抛错。**只对缺省兜底,不对非法值兜底**。
  *
  * @remarks 设计要点:
- *          - **env 缺省**:fallback 到 `havefun-openai-responses + gpt-5.5 + high`(stress test 实测稳定组合)
+ *          - **env 缺省**:fallback 到 `havefun-openai-responses + gpt-6.1-sol + high`
  *          - **永远显式传 `--provider`**:pi 内置 modelRegistry 可能有同名 model id(如 `gpt-5.5`);
  *            同时 `~/.pi/agent/settings.json` 的 `defaultProvider` 也会影响 model 解析,
  *            必须用 `--provider <name> --model <id>` 显式覆盖,确保精确命中我们注册的 havefun-* provider
@@ -199,9 +199,9 @@ export function buildHavefunModel(provider: ProviderName, modelId: string): Mode
  *
  * @example
  * ```typescript
- * // env: LLM_MODEL=gpt-5.5 / LLM_REASONING_EFFORT=xhigh / LLM_PROVIDER 缺省
+ * // env: LLM_MODEL=gpt-6.1-sol / LLM_REASONING_EFFORT=xhigh / LLM_PROVIDER 缺省
  * const argv = buildPiCliArgs({ prompt: "评审这个 MR" });
- * // argv = ["-p", "评审这个 MR", "--provider", "havefun-openai-responses", "--model", "gpt-5.5", "--thinking", "xhigh"]
+ * // argv = ["-p", "评审这个 MR", "--provider", "havefun-openai-responses", "--model", "gpt-6.1-sol", "--thinking", "xhigh"]
  * // 同时 console.log("[flower-providers] LLM_PROVIDER 未配置,fallback 到 \"havefun-openai-responses\"")
  * await piMain(argv, { extensionFactories: [...] });
  * ```

@@ -52,6 +52,6 @@
 
 1. **凭证不写死**:`baseUrl` / `apiKey` 全部从 `process.env` 读,缺关键值 fail-fast
 2. **`appSource` 必填**:仅用于审计 header(`X-App-Source`),不要给默认值,**不参与模型选择**
-3. **`BUILTIN_MODELS` 是 8 条预设**:每条单一 `nativeApi`(原生协议),只注册到对应的 1 个 provider
+3. **`BUILTIN_MODELS` 是 9 条预设**:每条单一 `nativeApi`(原生协议),只注册到对应的 1 个 provider
 4. **模型扩展走 env**:`LLM_EXTRA_MODELS_JSON` 可注入额外模型,同 id 覆盖 builtin
 5. **`getDefaultModel` 无参 + fail-fast**:`LLM_PROVIDER` + `LLM_MODEL` 任一缺失或非法立即抛错,不退化

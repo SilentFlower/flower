@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 import { ALLOWED_APIS, ALLOWED_PROVIDER_NAMES, API_TO_PROVIDER, BUILTIN_MODELS, PROVIDER_TO_API } from "../catalog.js";
 
 describe("BUILTIN_MODELS", () => {
-	it("应有 8 条记录", () => {
-		expect(BUILTIN_MODELS.length).toBe(8);
+	it("应有 9 条记录", () => {
+		expect(BUILTIN_MODELS.length).toBe(9);
 	});
 
 	it("每条 nativeApi 必须 ∈ 4 个合法 Api 值", () => {
@@ -32,9 +32,9 @@ describe("BUILTIN_MODELS", () => {
 		}
 	});
 
-	it("GPT-5.x 家族 2 条,均走 openai-responses", () => {
+	it("GPT 家族 3 条,均走 openai-responses", () => {
 		const gpts = BUILTIN_MODELS.filter((m) => m.id.startsWith("gpt-"));
-		expect(gpts.length).toBe(2);
+		expect(gpts.length).toBe(3);
 		for (const m of gpts) {
 			expect(m.nativeApi).toBe("openai-responses");
 		}

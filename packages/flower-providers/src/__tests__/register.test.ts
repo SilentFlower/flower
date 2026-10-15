@@ -105,28 +105,28 @@ describe("registerHavefunProviders — 4 个 provider 全部注册", () => {
 		}
 	});
 
-	it("模型数:anthropic=3 / gemini=3 / openai-responses=2 / openai=0(无 extras)", () => {
+	it("模型数:anthropic=3 / gemini=3 / openai-responses=3 / openai=0(无 extras)", () => {
 		const { pi, calls } = createStubPi();
 		registerHavefunProviders(pi, { appSource: "code-reviewer" });
 
 		const byName = new Map(calls.map((c) => [c.name, c]));
 		expect(byName.get("havefun-anthropic")?.config.models.length).toBe(3);
 		expect(byName.get("havefun-gemini")?.config.models.length).toBe(3);
-		expect(byName.get("havefun-openai-responses")?.config.models.length).toBe(2);
+		expect(byName.get("havefun-openai-responses")?.config.models.length).toBe(3);
 		// havefun-openai 默认空(供 extras 注入)
 		expect(byName.get("havefun-openai")?.config.models.length).toBe(0);
 	});
 
-	it("gpt-5.5 只出现在 havefun-openai-responses 的 models 中", () => {
+	it.each(["gpt-5.5", "gpt-6.1-sol"])("%s 只出现在 havefun-openai-responses 的 models 中", (modelId) => {
 		const { pi, calls } = createStubPi();
 		registerHavefunProviders(pi, { appSource: "code-reviewer" });
 
 		for (const c of calls) {
 			const ids: string[] = c.config.models.map((m: { id: string }) => m.id);
 			if (c.name === "havefun-openai-responses") {
-				expect(ids).toContain("gpt-5.5");
+				expect(ids).toContain(modelId);
 			} else {
-				expect(ids).not.toContain("gpt-5.5");
+				expect(ids).not.toContain(modelId);
 			}
 		}
 	});

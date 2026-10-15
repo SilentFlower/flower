@@ -282,8 +282,8 @@ describe("getDefaultReasoningEffort", () => {
 });
 
 describe("buildPiCliArgs — env → pi-coding-agent CLI argv", () => {
-	// 2026-05-21 行为变更:env 缺省时 fallback 到 stress 实测组合
-	// (havefun-openai-responses + gpt-5.5 + high),三个 argv(--provider/--model/--thinking)
+	// env 缺省时使用 reviewer 默认组合(havefun-openai-responses + gpt-6.1-sol + high),
+	// 三个 argv(--provider/--model/--thinking)
 	// 必然存在;LLM_PROVIDER 非法值从原"降级"改为显式 throw
 	let snap: Record<string, string | undefined>;
 	beforeEach(() => {
@@ -302,10 +302,20 @@ describe("buildPiCliArgs — env → pi-coding-agent CLI argv", () => {
 			"--provider",
 			DEFAULT_LLM_PROVIDER, // "havefun-openai-responses"
 			"--model",
-			DEFAULT_LLM_MODEL, // "gpt-5.5"
+			DEFAULT_LLM_MODEL, // "gpt-6.1-sol"
 			"--thinking",
 			DEFAULT_LLM_REASONING_EFFORT, // "high"
 		]);
+	});
+
+	it("缺省 argv 选出的模型可从内置清单解析,无需额外模型配置", () => {
+		const argv = buildPiCliArgs({ prompt: PROMPT });
+		process.env.LLM_PROVIDER = argv[argv.indexOf("--provider") + 1];
+		process.env.LLM_MODEL = argv[argv.indexOf("--model") + 1];
+		expect(getDefaultModel()).toEqual({
+			provider: "havefun-openai-responses",
+			modelId: "gpt-6.1-sol",
+		});
 	});
 
 	it("仅配 LLM_MODEL → argv 含 default provider + 用户 model + default effort", () => {

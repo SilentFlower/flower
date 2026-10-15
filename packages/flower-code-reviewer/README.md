@@ -52,6 +52,10 @@ npm run dev -- --dry-run
 
 ### 集成到 GitLab CI
 
+未设置模型相关变量时,默认使用 `havefun-openai-responses + gpt-6.1-sol + high`。
+可通过 `LLM_PROVIDER` / `LLM_MODEL` / `LLM_REASONING_EFFORT` 显式覆盖;
+迁移已接入项目时,还需更新或删除 CI/CD Variables 与外部 harness 模板中显式指定的旧模型。
+
 把 `.gitlab-ci.example.yml` 里的 job 复制到你的项目 `.gitlab-ci.yml`,
 并配置以下 CI 变量(都建议设为 masked / protected):
 
