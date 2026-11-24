@@ -790,9 +790,9 @@ try {
 	const running = page.locator('.task[data-status="running"]').filter({ hasText: "正在整理汇总结果" });
 	await running.waitFor();
 	const steps = running.locator("summary");
-	await steps.focus();
-	await steps.press("Enter");
+	// 运行中的工具步骤默认展开并显示当前动作。
 	assert(await steps.evaluate((node) => node.parentElement.open));
+	assert.match(await steps.innerText(), /^(正在|已执行)/);
 	await page.locator("#thread-scroll").evaluate((node) => {
 		node.scrollTop = node.scrollHeight;
 	});

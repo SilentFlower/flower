@@ -195,6 +195,13 @@ test("Desktop 子进程经真实 pi、回环网关和附件，摘要后重启续
 	const original = (await restart.host.call("history", { session })).find(({ requestId }) => requestId === id);
 	assert.equal(original.input, "核对两份附件并生成核对报告");
 	assert.deepEqual(original.attachments, attachments);
+	// 工具步骤与起止时间随会话落盘，重启后附件编号仍显示为附件名。
+	assert.deepEqual(
+		original.steps.map(({ toolName, target }) => [toolName, target]),
+		[["write_report", attachments[0].name]],
+	);
+	assert(original.steps.every(({ startedAt, endedAt }) => startedAt <= endedAt));
+	assert(original.startedAt <= original.endedAt);
 	const readAgain = await Promise.all(
 		original.attachments.map((ref) => readStoredEvidence(join(directory, "sessions"), session, ref)),
 	);

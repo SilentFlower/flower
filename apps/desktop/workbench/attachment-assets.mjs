@@ -13,6 +13,7 @@ const sessionPattern = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i;
 const assetPattern = /^asset:([a-f\d]{64})$/;
 const fileLimit = 16 * 1024 * 1024;
 const imageLimit = 4 * 1024 * 1024;
+const pastedTextLimit = 1024 * 1024;
 const imageFilename = /\.(png|jpe?g|jpe|jfif|webp)$/i;
 const readFlags = process.platform === "win32" ? "r" : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 
@@ -194,6 +195,22 @@ export async function importAttachmentImage(directory, session, pngBytes, displa
 	const filename = safeName(displayName);
 	const name = /\.png$/i.test(filename) ? filename : safeName(`${filename}.png`);
 	return storeFile(directory, owner, name, Buffer.from(bytes), "image/png");
+}
+
+/** 把粘贴的长文本保存为会话附件快照，进入模型时与其他文本附件一致。
+ * @param directory Host 与 worker 共用的 sessions 目录
+ * @param session 附件所属会话 UUID
+ * @param text 粘贴的原文
+ * @param displayName 附件显示名
+ * @returns 可持久化的附件引用，包含 id 和文件名
+ */
+export async function importAttachmentText(directory, session, text, displayName) {
+	const owner = sessionId(session);
+	if (typeof text !== "string" || !text.trim()) throw new Error("粘贴的文本为空。");
+	const bytes = Buffer.from(text, "utf8");
+	if (bytes.byteLength > pastedTextLimit) throw new Error("粘贴的文本超过 1 MiB，请先保存为文件再添加。");
+	const filename = safeName(displayName);
+	return storeFile(directory, owner, /\.txt$/i.test(filename) ? filename : safeName(`${filename}.txt`), bytes);
 }
 
 /** 读取当前会话中已保存的附件证据。

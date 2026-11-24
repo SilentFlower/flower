@@ -128,6 +128,7 @@
 					<div id="timeline" class="timeline" aria-label="任务记录"></div>
 				</div>
 				<div class="composition">
+					<button type="button" class="button icon-button back-to-bottom" id="back-to-bottom" aria-label="回到底部" title="回到底部" hidden><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button>
 					<section class="home-brand" id="empty" aria-labelledby="home-wordmark">
 						<div class="home-identity">
 							<img src="./ui/flower-avatar.webp" class="home-avatar" width="46" height="46" alt="">
@@ -218,6 +219,13 @@
 			<p id="sidebar-detail"></p>
 			<input id="sidebar-name" aria-label="名称" maxlength="120" required>
 			<footer><button class="button secondary" id="sidebar-cancel" type="button">取消</button><button class="button primary" id="sidebar-apply" type="submit"></button></footer>
+		</form>
+	</dialog>
+	<dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-detail">
+		<form method="dialog">
+			<h2 id="confirm-title"></h2>
+			<p id="confirm-detail"></p>
+			<footer><button class="button secondary" type="submit" value="cancel" autofocus>取消</button><button class="button primary" type="submit" id="confirm-apply" value="apply"></button></footer>
 		</form>
 	</dialog>
 	<div id="composer-add-menu" class="composer-add-menu" popover role="menu" aria-label="添加到对话">

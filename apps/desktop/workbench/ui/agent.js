@@ -10,7 +10,34 @@ window.agentUI = (() => {
 		denied: "授权已失效",
 		interrupted: "上次运行已中断",
 	};
-	const stepStates = { running: "进行中", done: "完成", error: "出错", stopped: "已结束" };
+	const stepStates = { error: "出错", stopped: "已结束" };
+	// 侧栏状态点的读屏文案；待批准沿用原有徽标显示文字。
+	const indicators = { running: "运行中", done: "已完成，未查看", failed: "失败，未查看", approval: "待批准" };
+	const indicatorRank = { approval: 4, running: 3, failed: 2, done: 1 };
+
+	/** 设置状态点。@param {HTMLElement} dot 状态点 @param {string | undefined} indicator 状态 @returns {void} */
+	function showIndicator(dot, indicator) {
+		dot.dataset.indicator = indicator ?? "";
+		// 待批准已有文字徽标，状态点只表示其余三种状态。
+		dot.hidden = !indicator || indicator === "approval";
+	}
+	const activeStatuses = new Set(["queued", "running", "cancelling"]);
+	// 每个工具的进行中、完成、基础动作与摘要量词；未知工具归入「另外 N 项」。
+	const toolActions = {
+		list_workspace: ["正在查看", "已查看", "查看", "个目录"],
+		read_text_file: ["正在读取", "已读取", "读取", "个文件"],
+		inspect_excel: ["正在检查", "已检查", "检查", "个工作簿"],
+		analyze_excel: ["正在分析", "已分析", "分析", "个工作簿"],
+		write_report: ["正在写入", "已写入", "写入", "份报告"],
+	};
+	const otherAction = ["正在调用工具", "已调用工具", "调用工具"];
+	const endings = {
+		succeeded: "已处理",
+		failed: "处理失败，耗时",
+		cancelled: "已取消，耗时",
+		denied: "未获授权，耗时",
+		interrupted: "运行已中断",
+	};
 
 	function orderChildren(parent, children) {
 		let cursor = parent.firstElementChild;
@@ -69,11 +96,14 @@ window.agentUI = (() => {
 
 		function showGroup(group, expanded) {
 			group.control.setAttribute("aria-expanded", String(expanded));
-			const badge = !expanded && group.waiting ? "，待批准" : "";
+			// 折叠时组上只显示最高优先级的状态，展开后由各会话行显示。
+			const indicator = expanded ? undefined : group.indicator;
+			const badge = indicator ? `，${indicators[indicator]}` : "";
 			group.control.setAttribute("aria-label", `${group.name.textContent}，${group.control.title}${badge}`);
 			group.control.dataset.current = String(!expanded && group.containsActive);
 			group.entries.hidden = !expanded;
-			group.badge.hidden = expanded || !group.waiting;
+			group.badge.hidden = indicator !== "approval";
+			showIndicator(group.dot, indicator);
 		}
 
 		function workspaceGroup(id) {
@@ -86,6 +116,7 @@ window.agentUI = (() => {
 			const caption = element("span", "workspace-group-caption");
 			caption.append(name, path);
 			const badge = element("span", "session-approval", "待批准");
+			const dot = element("span", "session-indicator");
 			const disclosure = element("span", "workspace-disclosure");
 			disclosure.setAttribute("aria-hidden", "true");
 			const control = button(
@@ -101,10 +132,10 @@ window.agentUI = (() => {
 				"workspace-group-toggle",
 			);
 			control.setAttribute("aria-controls", entries.id);
-			control.append(disclosure, caption, badge);
+			control.append(disclosure, caption, dot, badge);
 			const row = managedRow(control, "workspace", id);
 			elementRoot.append(row, entries);
-			const group = { elementRoot, entries, name, path, badge, control, row };
+			const group = { elementRoot, entries, name, path, badge, dot, control, row };
 			groups.set(id, group);
 			return group;
 		}
@@ -119,10 +150,14 @@ window.agentUI = (() => {
 				control.remove();
 				nodes.delete(id);
 			}
-			const rows = items.map(({ id, title, awaitingWrite, pinned }) => {
+			const rows = items.map(({ id, title, awaitingWrite, pinned, indicator }) => {
 				if (!nodes.has(id)) {
 					const control = button("", () => select(id), "session-row");
-					control.append(element("span"), element("span", "session-approval", "待批准"));
+					control.append(
+						element("span"),
+						element("span", "session-indicator"),
+						element("span", "session-approval", "待批准"),
+					);
 					nodes.set(id, managedRow(control, "session", id));
 				}
 				const row = nodes.get(id);
@@ -131,9 +166,11 @@ window.agentUI = (() => {
 				const control = row.firstElementChild;
 				control.firstElementChild.textContent = title;
 				control.lastElementChild.hidden = !awaitingWrite;
+				showIndicator(control.children[1], indicator);
 				control.title = title;
 				control.setAttribute("aria-current", String(id === active));
-				control.setAttribute("aria-label", awaitingWrite ? `${title}，待批准` : title);
+				const label = awaitingWrite ? "approval" : indicator;
+				control.setAttribute("aria-label", label ? `${title}，${indicators[label]}` : title);
 				return row;
 			});
 			if (!grouped) {
@@ -143,13 +180,14 @@ window.agentUI = (() => {
 			}
 
 			const entries = new Map(
-				spaces.map((space) => [space.workspaceId, { ...space, rows: [], waiting: false, containsActive: false }]),
+				spaces.map((space) => [space.workspaceId, { ...space, rows: [], indicator: undefined, containsActive: false }]),
 			);
 			for (const [index, item] of items.entries()) {
 				const { workspaceId, awaitingWrite, id } = item;
 				const entry = entries.get(workspaceId);
 				entry.rows.push(rows[index]);
-				entry.waiting ||= awaitingWrite;
+				const indicator = awaitingWrite ? "approval" : item.indicator;
+				if ((indicatorRank[indicator] ?? 0) > (indicatorRank[entry.indicator] ?? 0)) entry.indicator = indicator;
 				entry.containsActive ||= id === active;
 			}
 			const folds = query ? searchCollapsed : collapsed;
@@ -162,7 +200,7 @@ window.agentUI = (() => {
 				group.control.title = entry.path;
 				group.row.dataset.pinned = String(Boolean(entry.pinned));
 				group.row.lastElementChild.setAttribute("aria-label", `工作区操作：${entry.workspace}`);
-				group.waiting = entry.waiting;
+				group.indicator = entry.indicator;
 				group.containsActive = entry.containsActive;
 				orderChildren(group.entries, entry.rows);
 				showGroup(group, !folds.has(id));
@@ -175,8 +213,54 @@ window.agentUI = (() => {
 		};
 	}
 
-	/** 绑定任务输入快捷键并保留原生中文输入。@param {HTMLTextAreaElement} input 输入框 @param {HTMLButtonElement} submit 提交按钮 @returns {void} */
-	function bindComposer(input, submit) {
+	/**
+	 * 历史输入召回：空输入框按 ↑ 取出更早的已发输入，↓ 返回较新的一条，越过最新一条或 Esc 恢复原草稿。
+	 * 召回内容被修改后退出召回，方向键回到普通光标移动。
+	 * @returns {{key(key: string, value: string, entries: string[]): string | undefined}} 按键处理，返回新的输入内容或 undefined
+	 */
+	function inputRecall() {
+		let cursor = -1;
+		let saved = "";
+		let shown = "";
+		return {
+			key(key, value, entries) {
+				if (cursor >= 0 && value !== shown) cursor = -1;
+				if (key === "Escape") {
+					if (cursor < 0) return;
+					cursor = -1;
+					return saved;
+				}
+				if (key === "ArrowUp") {
+					if (cursor < 0) {
+						if (value || !entries.length) return;
+						saved = value;
+						cursor = entries.length;
+					}
+					cursor = Math.max(0, cursor - 1);
+					shown = entries[cursor];
+					return shown;
+				}
+				if (key !== "ArrowDown" || cursor < 0) return;
+				cursor += 1;
+				if (cursor >= entries.length) {
+					cursor = -1;
+					return saved;
+				}
+				shown = entries[cursor];
+				return shown;
+			},
+		};
+	}
+
+	/**
+	 * 绑定任务输入快捷键并保留原生中文输入。
+	 * @param {HTMLTextAreaElement} input 输入框
+	 * @param {HTMLButtonElement} submit 提交按钮
+	 * @param {() => string[]} [history] 当前会话已发输入，旧到新
+	 * @returns {void}
+	 */
+	function bindComposer(input, submit, history) {
+		const recall = inputRecall();
 		let composing = false;
 		input.addEventListener("compositionstart", () => {
 			composing = true;
@@ -188,6 +272,18 @@ window.agentUI = (() => {
 			composing = false;
 		});
 		input.addEventListener("keydown", (event) => {
+			const plain =
+				!event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.isComposing && !composing;
+			if (history && plain && event.keyCode !== 229 && ["ArrowUp", "ArrowDown", "Escape"].includes(event.key)) {
+				const next = recall.key(event.key, input.value, history());
+				if (next === undefined) return;
+				event.preventDefault();
+				input.value = next;
+				input.setSelectionRange(next.length, next.length);
+				// 与用户输入一致地通知发送按钮与草稿状态。
+				input.dispatchEvent(new Event("input", { bubbles: true }));
+				return;
+			}
 			if (
 				event.key !== "Enter" ||
 				event.shiftKey ||
@@ -204,25 +300,73 @@ window.agentUI = (() => {
 		});
 	}
 
+	/** 将毫秒耗时格式化为中文时长。@param {number} ms 毫秒 @returns {string} 如「2 分 13 秒」 */
+	function duration(ms) {
+		const seconds = Math.max(1, Math.round(ms / 1000));
+		if (seconds < 60) return `${seconds} 秒`;
+		const minutes = Math.floor(seconds / 60);
+		if (minutes < 60) return seconds % 60 ? `${minutes} 分 ${seconds % 60} 秒` : `${minutes} 分`;
+		return minutes % 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分` : `${Math.floor(minutes / 60)} 小时`;
+	}
+
+	/** 按工具统计摘要计数。@param {object[]} steps 工具步骤 @returns {string} 如「读取 3 个文件、分析 1 个工作簿」 */
+	function stepCounts(steps) {
+		const counts = new Map();
+		for (const { toolName } of steps) {
+			const key = toolActions[toolName] ? toolName : "";
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
+		return [...counts]
+			.map(([toolName, count]) => {
+				if (!toolName) return `另外 ${count} 项`;
+				const [, , action, unit] = toolActions[toolName];
+				return `${action} ${count} ${unit}`;
+			})
+			.join("、");
+	}
+
+	/** 展示用目标只保留最后一级，完整路径放在悬停提示。@param {object} step 工具步骤 @returns {string} 目标名 */
+	const targetName = ({ target }) => target?.split("/").at(-1) ?? "";
+
+	/** 渲染工具步骤：运行中展开显示当前动作，结束后折叠为耗时与动作计数。@returns {object} 节点与更新接口 */
 	function toolSteps() {
 		const node = element("details", "step-list");
 		const summary = element("summary");
 		const list = element("ol");
 		node.append(summary, list);
 		let previous = "";
+		let active;
 		return {
 			node,
-			update(steps) {
-				const key = JSON.stringify(steps);
+			update(steps, record) {
+				const key = JSON.stringify([steps, record.status, record.startedAt, record.endedAt]);
 				if (previous === key) return;
 				previous = key;
 				node.hidden = steps.length === 0;
-				const running = steps.some(({ state }) => state === "running");
-				summary.textContent = `工具步骤 · ${steps.length} 项${running ? " · 进行中" : ""}`;
+				const running = activeStatuses.has(record.status);
+				// 只在运行与结束之间切换时改变展开状态，保留用户手动展开或收起的选择。
+				if (active !== running) node.open = running;
+				active = running;
+				const current = steps.findLast(({ endedAt }) => !endedAt);
+				if (running) {
+					const [doing] = toolActions[current?.toolName] ?? otherAction;
+					summary.textContent = current ? `${doing} ${targetName(current)}`.trim() : `已执行 ${steps.length} 步`;
+				} else {
+					const ending = endings[record.status] ?? "已结束";
+					const spent = record.startedAt && record.endedAt ? ` ${duration(record.endedAt - record.startedAt)}` : "";
+					const label = ending.endsWith("耗时") && !spent ? ending.slice(0, -3) : `${ending}${spent}`;
+					summary.textContent = `${label} · ${stepCounts(steps)}`;
+				}
 				list.replaceChildren(
-					...steps.map(({ label, state }) => {
+					...steps.map((step) => {
+						const [doing, done, action] = toolActions[step.toolName] ?? otherAction;
+						const state = step.endedAt ? (step.isError ? "error" : "done") : running ? "running" : "stopped";
+						const verb = state === "running" ? doing : state === "done" ? done : action;
 						const line = element("li");
-						line.append(element("span", "", label), element("span", "", stepStates[state]));
+						line.dataset.state = state;
+						const what = element("span", "", `${verb} ${targetName(step)}`.trim());
+						if (step.target) what.title = step.target;
+						line.append(what, element("span", "", stepStates[state] ?? ""));
 						return line;
 					}),
 				);
@@ -230,7 +374,7 @@ window.agentUI = (() => {
 		};
 	}
 
-	function deliverables(open, preview) {
+	function deliverables(open, preview, menu) {
 		const node = element("section", "deliveries");
 		const files = element("div", "deliveries");
 		node.append(element("h3", "", "交付文件"), files);
@@ -261,6 +405,12 @@ window.agentUI = (() => {
 							workbook ? "预览汇总工作簿" : name === "核对报告.md" ? "预览核对报告" : "预览分析报告",
 						);
 						row.append(kind, title, inspect, control);
+						// 右键或菜单键提供预览、在文件夹中显示与复制路径。
+						row.addEventListener("contextmenu", (event) => {
+							if (!menu) return;
+							event.preventDefault();
+							menu(path, event.target.closest("button") ?? inspect);
+						});
 						return row;
 					}),
 				);
@@ -275,7 +425,11 @@ window.agentUI = (() => {
 		const input = element("p", "user-message-text");
 		const file = element("div", "message-file file-chips");
 		const showFiles = window.flowerAttachments.view(file, undefined, id, actions.previewAttachment);
-		prompt.append(input, file);
+		const copyInput = button("", () => actions.copyInput(id), "quiet copy-reply copy-input");
+		copyInput.title = "复制提问原文";
+		copyInput.setAttribute("aria-label", copyInput.title);
+		copyInput.append(icon("copy"));
+		prompt.append(input, file, copyInput);
 		const reply = element("section", "assistant-message");
 		const head = element("header", "assistant-head");
 		const status = element("span", "status");
@@ -286,13 +440,19 @@ window.agentUI = (() => {
 		copy.title = "复制回复原文";
 		copy.setAttribute("aria-label", copy.title);
 		copy.append(icon("copy"));
-		head.append(mark("small"), element("h2", "", "Flower"), status, cancel, copy);
+		// 未完成的请求没有进入模型上下文，可以原样重试，或放回输入框修改后再发。
+		const retry = button("重试", () => actions.retry(id), "quiet retry-task");
+		const edit = button("编辑", () => actions.edit(id), "quiet retry-task");
+		head.append(mark("small"), element("h2", "", "Flower"), status, cancel, retry, edit, copy);
+		// 推理只是运行中的瞬时提示，单独成行避免挤压状态与操作按钮。
+		const thought = element("p", "reasoning-preview");
+		thought.setAttribute("aria-live", "polite");
 		const text = element("div", "message-text markdown-reply");
-		const markdown = window.flowerMarkdown.view(text, actions.openLink);
+		const markdown = window.flowerMarkdown.view(text, actions.openLink, actions.paths);
 		const failure = element("p", "message-text message-error");
 		const steps = toolSteps();
-		const deliveries = deliverables((path) => actions.open(id, path), actions.preview);
-		reply.append(head, steps.node, text, failure, deliveries.node);
+		const deliveries = deliverables((path) => actions.open(id, path), actions.preview, actions.paths?.menu);
+		reply.append(head, thought, steps.node, text, failure, deliveries.node);
 		node.append(prompt, reply);
 		return {
 			node,
@@ -304,33 +464,72 @@ window.agentUI = (() => {
 				if (input.textContent !== (record.input ?? "")) input.textContent = record.input ?? "";
 				showFiles(record.attachments ?? (record.file ? [{ id: `file:${record.file}`, name: record.file }] : []));
 				const state = states[record.status] ?? record.status;
-				if (status.textContent !== state) status.textContent = state;
+				// 首个正文或工具步骤到达前给出等待提示，避免用户以为没有响应。
+				const waiting = record.status === "running" && !record.text && !record.steps?.length;
+				const label = waiting ? "正在思考" : state;
+				if (status.textContent !== label) status.textContent = label;
 				status.dataset.state = record.status;
+				status.toggleAttribute("data-thinking", waiting);
+				const reasoning = record.status === "running" && !record.text ? (record.reasoning ?? "") : "";
+				if (thought.textContent !== reasoning) thought.textContent = reasoning;
+				thought.hidden = !reasoning;
 				cancel.hidden = !["queued", "running"].includes(record.status);
+				const unfinished =
+					["failed", "cancelled", "interrupted", "denied"].includes(record.status) && Boolean(record.input);
+				retry.hidden = edit.hidden = !unfinished;
+				copyInput.hidden = !record.input;
 				copy.hidden = !record.text || !record.status || ["queued", "running", "cancelling"].includes(record.status);
 				markdown.update(record.text ?? "");
 				failure.hidden = !record.failure;
 				if (failure.textContent !== (record.failure ?? "")) failure.textContent = record.failure ?? "";
-				steps.update(record.tools ?? []);
+				steps.update(record.steps ?? [], record);
 				deliveries.update(record.artifacts ?? []);
 			},
 		};
 	}
 
-	/** 更新同一会话的消息，保留工具折叠、键盘焦点与阅读位置。@param {HTMLElement} root 消息列表 @param {HTMLElement} scroll 滚动区域 @param {object} actions 取消与打开交付物 @returns {object} 消息更新与重置接口 */
-	function thread(root, scroll, actions) {
+	/**
+	 * 更新同一会话的消息，保留工具折叠、键盘焦点与阅读位置；切换会话时记住并恢复各自的位置。
+	 * @param {HTMLElement} root 消息列表
+	 * @param {HTMLElement} scroll 滚动区域
+	 * @param {object} actions 取消与打开交付物
+	 * @param {HTMLButtonElement} bottom 回到底部按钮
+	 * @returns {object} 消息更新与重置接口
+	 */
+	function thread(root, scroll, actions, bottom) {
 		const views = new Map();
+		const positions = new Map();
+		let pending;
+		let unseen = false;
+		const distance = () => scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop;
+		function syncBottom() {
+			const away = !scroll.hidden && distance() >= 65;
+			if (!away) unseen = false;
+			bottom.hidden = !away;
+			bottom.toggleAttribute("data-unseen", unseen);
+			bottom.setAttribute("aria-label", unseen ? "回到底部，有新内容" : "回到底部");
+		}
+		scroll.addEventListener("scroll", syncBottom, { passive: true });
+		bottom.addEventListener("click", () => {
+			const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+			scroll.scrollTo({ top: scroll.scrollHeight, behavior: reduced ? "auto" : "smooth" });
+		});
 		return {
-			reset() {
+			/** 切换会话前记住旧会话的位置。@param {string} [previous] 旧会话 @param {string} [next] 新会话 @returns {void} */
+			reset(previous, next) {
+				if (previous && views.size) positions.set(previous, { offset: scroll.scrollTop, atBottom: distance() < 65 });
 				for (const view of views.values()) view.dispose();
 				root.replaceChildren();
 				views.clear();
 				scroll.scrollTop = 0;
+				pending = next ? positions.get(next) : undefined;
+				unseen = false;
 			},
 			update(records, forceFollow = false) {
 				// 紧凑会话刚出现滚动条时，停在顶部仍代表用户正在回看。
 				const offset = scroll.scrollTop;
-				const overflow = scroll.scrollHeight - scroll.clientHeight;
+				const height = scroll.scrollHeight;
+				const overflow = height - scroll.clientHeight;
 				const follow = forceFollow || overflow <= 0 || (offset > 0 && overflow - offset < 65);
 				let cursor = root.firstElementChild;
 				for (const record of records) {
@@ -340,10 +539,19 @@ window.agentUI = (() => {
 					if (view.node !== cursor) root.insertBefore(view.node, cursor);
 					cursor = view.node.nextElementSibling;
 				}
-				scroll.scrollTop = follow ? scroll.scrollHeight : offset;
+				if (pending && views.size) {
+					// 会话内容首次渲染后回到上次离开的位置，离开时贴底的会话继续跟随输出。
+					const max = scroll.scrollHeight - scroll.clientHeight;
+					scroll.scrollTop = pending.atBottom ? scroll.scrollHeight : Math.min(pending.offset, max);
+					pending = undefined;
+				} else {
+					if (!follow && scroll.scrollHeight > height) unseen = true;
+					scroll.scrollTop = follow ? scroll.scrollHeight : offset;
+				}
+				syncBottom();
 			},
 		};
 	}
 
-	return { sessionList, bindComposer, thread };
+	return { sessionList, bindComposer, thread, inputRecall };
 })();

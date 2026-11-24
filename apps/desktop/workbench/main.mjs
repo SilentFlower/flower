@@ -10,6 +10,7 @@ import {
 	dialog,
 	ipcMain,
 	Menu,
+	Notification,
 	nativeTheme,
 	safeStorage,
 	screen,
@@ -19,12 +20,15 @@ import {
 import {
 	importAttachmentFile,
 	importAttachmentImage,
+	importAttachmentText,
 	readStoredImage,
 	readStoredPreview,
 	removeStoredAttachment,
 } from "./attachment-assets.mjs";
 import { draftAttachments, fileReference, mergeAttachments } from "./attachment-drafts.mjs";
 import { historyReference, sentImage } from "./attachment-history.mjs";
+import { createAttention } from "./attention.mjs";
+import { contextMenuItems, revealLabel } from "./context-menu.mjs";
 import { listAvailableModels, openModelStream } from "./gateway.mjs";
 import {
 	describeEffortPreset,
@@ -41,6 +45,7 @@ import {
 import { createRuntimeHost } from "./runtime-host.mjs";
 import { readJson, writeJson } from "./storage.mjs";
 import { containsBounds, expandedBounds, restoredBounds, roundingCorrection } from "./window-fit.mjs";
+import { readWindowState, restorableBounds, savedBounds, writeWindowState } from "./window-state.mjs";
 import {
 	analysisFiles,
 	approveFile,
@@ -51,6 +56,7 @@ import {
 	previewWorkspaceFile,
 	reportFiles,
 	resolveArtifact,
+	workspaceEntryPath,
 } from "./workspace.mjs";
 import { gitChanges, gitDifference } from "./workspace-git.mjs";
 
@@ -88,12 +94,17 @@ export function launchWorkbench() {
 		mkdirSync(profile, { recursive: true });
 		app.setPath("userData", profile);
 	}
+	// Windows 通知按应用标识归属，标识不得含空格。
+	if (process.platform === "win32") app.setAppUserModelId("Flower.Desktop.Open");
 	if (!app.requestSingleInstanceLock()) {
 		app.quit();
 		return;
 	}
 
 	const directory = join(app.getPath("userData"), "local-workbench");
+	// 窗口外框需在创建窗口前同步读取，workbench.json 在页面加载后才读取，因此单独保存。
+	const windowStatePath = join(directory, "window-state.json");
+	let windowSave;
 	const workbenchPath = join(directory, "workbench.json");
 	const settingsPath = join(directory, "model.json");
 	let window;
@@ -114,6 +125,10 @@ export function launchWorkbench() {
 	let writes = Promise.resolve();
 	let taskChanges = Promise.resolve();
 	const activeRequests = new Map();
+	const attention = createAttention();
+	// 系统通知在被点击前需要保持引用，否则可能被回收而丢失点击回调。
+	const notices = new Set();
+	let closeConfirmed = false;
 	const sessionsDirectory = join(directory, "sessions");
 	let lastAttachmentDirectory;
 	// 侧栏扩展前后的窗口外框。open 为 false 表示最大化期间已收起，退出最大化后再还原。
@@ -164,6 +179,7 @@ export function launchWorkbench() {
 				attachments: draftAttachments(owner),
 				awaitingWrite: waitingSessions.has(owner.id),
 				busy: sessionBusy(owner.id),
+				indicator: attention.indicator(owner.id, waitingSessions.has(owner.id), sessionBusy(owner.id)),
 			})),
 			selected: workbench.selected,
 		};
@@ -336,7 +352,47 @@ export function launchWorkbench() {
 			approvals.set(id, { prompt, finish });
 			signal.addEventListener("abort", abort, { once: true });
 			announce();
+			remind(session, "需要你批准写入");
 		});
+	}
+
+	/**
+	 * 窗口不在前台时提醒用户：闪烁任务栏并发送系统通知，点击通知回到对应会话。
+	 * @param {string} session 会话 ID
+	 * @param {string} body 通知正文
+	 * @returns {void}
+	 */
+	function remind(session, body) {
+		if (!window || window.isDestroyed() || window.isFocused()) return;
+		window.flashFrame(true);
+		if (!Notification.isSupported()) return;
+		const title = workbench.sessions.find(({ id }) => id === session)?.title || "Flower Desktop";
+		const notice = new Notification({ title, body });
+		notices.add(notice);
+		notice.once("close", () => notices.delete(notice));
+		notice.once("click", () => {
+			notices.delete(notice);
+			if (!window || window.isDestroyed()) return;
+			if (window.isMinimized()) window.restore();
+			window.show();
+			window.focus();
+			send({ kind: "focus-session", id: session });
+		});
+		notice.show();
+	}
+
+	/**
+	 * 任务进入终态后标记未读并提醒。用户主动取消或拒绝授权的任务不提醒。
+	 * @param {string} session 会话 ID
+	 * @param {object} event 终态事件
+	 * @returns {void}
+	 */
+	function noticeTerminal(session, event) {
+		const viewing = session === workbench.selected && Boolean(window?.isFocused());
+		const mark = attention.terminal(session, event.status, viewing);
+		if (!mark) return;
+		const reason = event.failure?.message?.split(/(?<=[。！？])/)[0];
+		remind(session, mark === "done" ? "任务已完成" : `任务未完成${reason ? `：${reason}` : ""}`);
 	}
 
 	function prepare() {
@@ -358,7 +414,12 @@ export function launchWorkbench() {
 				if (type === "terminal" || type === "cancelling") dismissApprovals((prompt) => prompt.requestId === requestId);
 				const visible = event.type === "tool_result" ? { ...event, text: [] } : event;
 				send({ kind: "event", event: visible });
-				if (added || type === "terminal") announce();
+				if (type === "terminal") noticeTerminal(session, event);
+				if (added || type === "started" || type === "terminal") announce();
+			},
+			onReasoning(frame) {
+				if (host !== instance || !workbench.sessions.some(({ id }) => id === frame.sessionId)) return;
+				send({ kind: "reasoning", ...frame });
 			},
 			onExit() {
 				if (host !== instance) return;
@@ -517,6 +578,27 @@ export function launchWorkbench() {
 		);
 		return panelResult(restored.width - now.width);
 	}
+
+	/** 保存窗口位置、尺寸与最大化状态。全屏期间不更新。@returns {void} */
+	function saveWindowState() {
+		clearTimeout(windowSave);
+		windowSave = undefined;
+		if (!window || window.isDestroyed() || window.isFullScreen()) return;
+		const [minimumWidth] = window.getMinimumSize();
+		const bounds = savedBounds(window.getNormalBounds(), panelExpansion, minimumWidth, (target) => {
+			return screen.getDisplayMatching(target).workArea;
+		});
+		try {
+			mkdirSync(directory, { recursive: true });
+			writeWindowState(windowStatePath, { ...bounds, maximized: window.isMaximized() });
+		} catch {
+			// 窗口状态只是便利功能，写入失败时下次使用默认尺寸。
+		}
+	}
+	const scheduleWindowSave = () => {
+		clearTimeout(windowSave);
+		windowSave = setTimeout(saveWindowState, 500);
+	};
 
 	function restorePendingPanel() {
 		if (panelExpansion?.open === false) restoreFromPanel();
@@ -682,6 +764,7 @@ export function launchWorkbench() {
 			if (id !== "") findSession(id);
 			const previous = structuredClone(workbench);
 			selectWorkspaceSession(id);
+			attention.clear(id);
 			await persistChange(previous);
 		}),
 	);
@@ -754,6 +837,20 @@ export function launchWorkbench() {
 					attachable: entry.kind === "file" && canAttachWorkspaceFile(entry.name),
 				})),
 			};
+		}),
+	);
+	handle("show-path-menu", (id, path, preview) =>
+		readSelectedWorkspace(id, async (workspace) => {
+			const actual = await workspaceEntryPath(workspace, path);
+			// 菜单点击与关闭回调的先后因平台而异，先到者决定结果，「预览」交还渲染层在右栏打开。
+			return new Promise((resolve) => {
+				const items = [
+					...(preview === true ? [{ label: "预览", click: () => resolve("preview") }, { type: "separator" }] : []),
+					{ label: revealLabel, click: () => shell.showItemInFolder(actual) },
+					{ label: "复制路径", click: () => clipboard.writeText(actual) },
+				];
+				Menu.buildFromTemplate(items).popup({ window, callback: () => resolve("") });
+			});
 		}),
 	);
 	handle("preview-workspace-file", (id, path) =>
@@ -844,6 +941,27 @@ export function launchWorkbench() {
 		});
 	}
 	handle("paste-image", (id, bytes) => addImage(id, () => bytes));
+	handle("paste-text", (id, text) =>
+		serializeTaskChange(async () => {
+			const owner = draftOwner(id);
+			if (typeof text !== "string") throw new Error("粘贴的文本无效。");
+			const drafted = draftAttachments(owner);
+			if (drafted.length >= 8) throw new Error("每条消息最多添加 8 个附件。");
+			// 以行数命名便于辨认；同名时编号，避免模型按名称引用时出现歧义。
+			const lines = text.split(/\r\n|\r|\n/).length;
+			const names = new Set(drafted.map(({ name }) => name));
+			let name = `粘贴的文本（${lines} 行）.txt`;
+			for (let number = 2; names.has(name); number++) name = `粘贴的文本 ${number}（${lines} 行）.txt`;
+			const ref = await importAttachmentText(sessionsDirectory, id, text, name);
+			try {
+				draftOwner(id);
+				await writeDraft(owner, mergeAttachments(owner, [ref]));
+			} catch (error) {
+				await discardUnused(owner, [ref]);
+				throw error;
+			}
+		}),
+	);
 	handle("paste-clipboard-image", (id) =>
 		addImage(id, () => {
 			// 只在用户选择粘贴后读取系统图片，页面通过会话附件接口获取预览。
@@ -933,6 +1051,35 @@ export function launchWorkbench() {
 		clipboard.writeText(record.text);
 	});
 	handle("open-reply-link", (value) => shell.openExternal(replyLink(value).href));
+	/** 当前模型只支持文本时拒绝图片附件。@param {readonly {id: string, name: string}[]} refs 附件引用 @returns {void} */
+	function requireImageSupport(refs) {
+		if (
+			!model.input.includes("image") &&
+			refs.some((r) => r.id.startsWith("clip:") || /\.(png|jpe?g|jpe|jfif|webp)$/i.test(r.name))
+		)
+			throw new Error("当前模型只支持文本，请移除图片或切换到视觉模型。");
+	}
+
+	/**
+	 * 读取当前会话中可重试的请求。只允许未完成且未进入模型上下文的请求。
+	 * @param {string} id 会话 ID
+	 * @param {string} requestId 请求 ID
+	 * @returns {Promise<{runtime: object, record: object, refs: object[]}>} 运行时、历史行与原附件
+	 */
+	async function retryableRequest(id, requestId) {
+		if (typeof requestId !== "string" || !uid.test(requestId)) throw new Error("无效请求标识");
+		requireWritableWorkbench();
+		if (workbench.selected !== id) throw new Error("会话已切换，请在当前会话操作。");
+		findSession(id);
+		const runtime = await getSessionRuntime(id);
+		const record = (await runtime.call("history", { session: id })).find((entry) => entry.requestId === requestId);
+		if (!record || !["failed", "cancelled", "interrupted", "denied"].includes(record.status) || !record.input)
+			throw new Error("只能重试或编辑未完成的请求。");
+		// 早期记录只有单个工作区文件字段，按同样的引用格式恢复。
+		const refs = record.attachments?.length ? record.attachments : record.file ? [fileReference(record.file)] : [];
+		return { runtime, record, refs };
+	}
+
 	handle("submit", (id, text) =>
 		serializeTaskChange(async () => {
 			if (typeof text !== "string" || !text.trim() || text.length > 16000) {
@@ -943,11 +1090,7 @@ export function launchWorkbench() {
 			const owner = draftOwner(id);
 			const refs = draftAttachments(owner);
 			if (!refs.length) return runtime.call("submit", { session: id, input: text });
-			if (
-				!model.input.includes("image") &&
-				refs.some((r) => r.id.startsWith("clip:") || /\.(png|jpe?g|jpe|jfif|webp)$/i.test(r.name))
-			)
-				throw new Error("当前模型只支持文本，请移除图片或切换到视觉模型。");
+			requireImageSupport(refs);
 			await writeDraft(owner, []);
 			try {
 				const result = await runtime.call("submit", { session: id, input: text, attachments: refs });
@@ -958,6 +1101,26 @@ export function launchWorkbench() {
 			}
 		}),
 	);
+	handle("retry-request", (id, requestId) =>
+		serializeTaskChange(async () => {
+			const { runtime, record, refs } = await retryableRequest(id, requestId);
+			if (!model) throw new Error("请先配置模型。");
+			requireImageSupport(refs);
+			// 以原输入和原附件新建一轮，原记录保留在历史中，当前草稿不受影响。
+			return runtime.call("submit", { session: id, input: record.input, ...(refs.length && { attachments: refs }) });
+		}),
+	);
+	handle("restore-request-draft", (id, requestId) =>
+		serializeTaskChange(async () => {
+			const { record, refs } = await retryableRequest(id, requestId);
+			await writeDraft(draftOwner(id), refs);
+			return { input: record.input };
+		}),
+	);
+	handle("copy-text", (text) => {
+		if (typeof text !== "string" || !text || text.length > 200_000) throw new Error("无法复制这段内容。");
+		clipboard.writeText(text);
+	});
 	handle("cancel", async (id, requestId, runId) => {
 		if (
 			typeof requestId !== "string" ||
@@ -986,12 +1149,16 @@ export function launchWorkbench() {
 	app.once("ready", () => {
 		Menu.setApplicationMenu(null);
 		const palette = titlebarPalettes[nativeTheme.shouldUseDarkColors ? "dark" : "light"];
+		const savedWindow = readWindowState(windowStatePath);
+		const restored = restorableBounds(
+			savedWindow,
+			screen.getAllDisplays().map(({ workArea }) => workArea),
+		);
 		window = new BrowserWindow({
 			title: "Flower Desktop",
 			icon: fileURLToPath(new URL("./ui/flower-icon.png", import.meta.url)),
-			width: 1282,
-			height: 801,
-			useContentSize: true,
+			// 保存的是外框；首次启动沿用按内容区计算的默认尺寸。
+			...(restored ? { ...restored, useContentSize: false } : { width: 1282, height: 801, useContentSize: true }),
 			minWidth: 640,
 			minHeight: 560,
 			backgroundColor: palette.backgroundColor,
@@ -1010,9 +1177,43 @@ export function launchWorkbench() {
 		window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 		window.webContents.on("render-process-gone", () => dismissApprovals());
 		window.on("closed", () => dismissApprovals());
+		window.on("focus", () => {
+			window.flashFrame(false);
+			if (attention.clear(workbench.selected)) announce();
+		});
+		window.on("close", (event) => {
+			// 运行、排队和待批准的任务都在 activeRequests 中，关闭会中断它们，先请用户确认。
+			const pending = activeRequests.size;
+			if (closeConfirmed || !pending) {
+				saveWindowState();
+				return;
+			}
+			event.preventDefault();
+			void dialog
+				.showMessageBox(window, {
+					type: "warning",
+					buttons: ["仍然关闭", "取消"],
+					defaultId: 1,
+					cancelId: 1,
+					noLink: true,
+					message: `还有 ${pending} 个任务未完成`,
+					detail: "关闭后这些任务会被中断，下次打开时显示为已中断。",
+				})
+				.then(({ response }) => {
+					if (response !== 0 || !window || window.isDestroyed()) return;
+					closeConfirmed = true;
+					window.close();
+				});
+		});
+		if (restored && savedWindow.maximized === true) window.maximize();
+		for (const type of ["resize", "move", "maximize", "unmaximize"]) window.on(type, scheduleWindowSave);
 		window.on("unmaximize", restorePendingPanel);
 		window.on("leave-full-screen", restorePendingPanel);
 		window.webContents.on("will-navigate", (event) => event.preventDefault());
+		window.webContents.on("context-menu", (_event, params) => {
+			const items = contextMenuItems(params, window.webContents);
+			if (items.length) Menu.buildFromTemplate(items).popup({ window });
+		});
 		window.webContents.on("dom-ready", () => {
 			if (window.webContents.mainFrame?.url !== page.href) return;
 			// 重新加载的页面从收起状态开始，先撤销上一页留下的侧栏扩展。

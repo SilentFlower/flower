@@ -196,17 +196,34 @@ function relativeParts(path) {
 	return parts;
 }
 
+/**
+ * 解析工作区内的现有条目。
+ * @param workspace 已批准工作区
+ * @param path 相对路径
+ * @param directory true 只接受目录，false 只接受文件，"any" 两者皆可
+ * @returns 实际路径与文件信息
+ */
 async function locate(workspace, path, directory = false) {
 	const root = await checkRoot(workspace);
-	const chosen = path === "." && directory ? root : resolve(root, ...relativeParts(path));
+	const chosen = path === "." && directory === true ? root : resolve(root, ...relativeParts(path));
 	const actual = await realpath(chosen);
-	if (!same(actual, chosen) || !(isChild(root, actual) || (directory && same(root, actual)))) {
+	if (!same(actual, chosen) || !(isChild(root, actual) || (directory === true && same(root, actual)))) {
 		throw new Error("拒绝访问工作区外的文件及链接");
 	}
 	const info = await lstat(actual);
-	if (!(directory ? info.isDirectory() : info.isFile()) || info.isSymbolicLink())
-		throw new Error("预期的文件或目录不存在");
+	const kind =
+		directory === "any" ? info.isDirectory() || info.isFile() : directory ? info.isDirectory() : info.isFile();
+	if (!kind || info.isSymbolicLink()) throw new Error("预期的文件或目录不存在");
 	return { actual, info };
+}
+
+/** 校验工作区内已有文件或目录，返回实际路径，供系统文件管理器定位与复制路径。
+ * @param workspace 当前会话已批准的工作区
+ * @param path 工作区相对路径
+ * @returns 本机绝对路径
+ */
+export async function workspaceEntryPath(workspace, path) {
+	return (await locate(workspace, path, "any")).actual;
 }
 
 /** 将原生文件选择转成被批准的相对路径。
@@ -706,7 +723,7 @@ export function workspaceTools(workspace, authorizeWrite, resolveInput = (path) 
 		},
 		{
 			name: "analyze_excel",
-			label: "分析 Excel",
+			label: "分析工作簿",
 			description: "按工作表首行的确切列名分组与求和。用户明确要求交付时才设置 createOutputs 为 true。",
 			parameters: schema(
 				{

@@ -9,7 +9,7 @@ const protocol = 1;
  * @param options Electron 启动器、分区、模型代理和事件回调
  * @returns 启动、请求与关闭操作
  */
-export function createRuntimeHost({ fork, directory, model, onEvent, onExit, gateway, authorizeWrite }) {
+export function createRuntimeHost({ fork, directory, model, onEvent, onReasoning, onExit, gateway, authorizeWrite }) {
 	const env = Object.fromEntries(
 		Object.entries(process.env).filter(([key]) => /^(systemroot|windir|temp|tmp)$/i.test(key)),
 	);
@@ -122,6 +122,10 @@ export function createRuntimeHost({ fork, directory, model, onEvent, onExit, gat
 			}
 			case "event":
 				onEvent(frame.event);
+				break;
+			case "reasoning":
+				if (typeof frame.sessionId === "string" && typeof frame.requestId === "string" && typeof frame.text === "string")
+					onReasoning?.({ sessionId: frame.sessionId, requestId: frame.requestId, text: frame.text.slice(0, 120) });
 				break;
 			case "model":
 				if (typeof frame.id === "string") void modelRequest(frame);

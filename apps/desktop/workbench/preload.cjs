@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("flower", {
 	manageSidebar: (type, id, operation, value) => invoke("manage-sidebar", type, id, operation, value),
 	listWorkspaceEntries: (session, directory, offset) => invoke("list-workspace-entries", session, directory, offset),
 	previewWorkspaceFile: (session, path) => invoke("preview-workspace-file", session, path),
+	showPathMenu: (session, path, preview) => invoke("show-path-menu", session, path, preview),
 	chooseFile: (session) => invoke("choose-file", session),
 	referenceFile: (session, path) => invoke("reference-file", session, path),
 	dropFiles: (session, files) =>
@@ -31,6 +32,7 @@ contextBridge.exposeInMainWorld("flower", {
 		),
 	pasteClipboardImage: (session) => invoke("paste-clipboard-image", session),
 	pasteImage: (session, bytes) => invoke("paste-image", session, bytes),
+	pasteText: (session, text) => invoke("paste-text", session, text),
 	previewAttachment: (session, request, key) => invoke("attachment-preview", session, request, key),
 	attachmentImage: (session, request, key) => invoke("attachment-image", session, request, key),
 	removeAttachment: (session, key) => invoke("remove-attachment", session, key),
@@ -39,6 +41,9 @@ contextBridge.exposeInMainWorld("flower", {
 	copyReply: (session, request) => invoke("copy-reply", session, request),
 	openReplyLink: (url) => invoke("open-reply-link", url),
 	submit: (session, input) => invoke("submit", session, input),
+	retryRequest: (session, request) => invoke("retry-request", session, request),
+	restoreRequestDraft: (session, request) => invoke("restore-request-draft", session, request),
+	copyText: (text) => invoke("copy-text", text),
 	cancel: (session, request, run) => invoke("cancel", session, request, run),
 	openArtifact: (session, request, path) => invoke("open-artifact", session, request, path),
 	subscribe(callback) {

@@ -9,6 +9,7 @@ import Excel from "exceljs";
 import {
 	importAttachmentFile,
 	importAttachmentImage,
+	importAttachmentText,
 	readStoredEvidence,
 	readStoredImage,
 	removeStoredAttachment,
@@ -144,4 +145,17 @@ test("导入拒绝超限、无效类型和链接，伪造的存储记录无法�
 	await symlink(join(assets, session), join(assets, alias), "junction");
 	await assert.rejects(readStoredEvidence(directory, alias, ref), /附件目录无效/);
 	assert.match((await readStoredEvidence(directory, session, ref))[0].text, /只核对这份资料/);
+});
+
+test("长粘贴保存为文本附件，模型证据包含原文", async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), "flower-pasted-text-"));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const session = randomUUID();
+	const text = Array.from({ length: 25 }, (_, index) => `订单 ${index + 1}｜金额 ${index * 10}`).join("\n");
+	const ref = await importAttachmentText(directory, session, text, "粘贴的文本（25 行）.txt");
+	assert.equal(ref.name, "粘贴的文本（25 行）.txt");
+	assert.deepEqual(await importAttachmentText(directory, session, text, "粘贴的文本（25 行）.txt"), ref);
+	const evidence = await readStoredEvidence(directory, session, ref);
+	assert.match(evidence.map(({ text: part }) => part).join("\n"), /订单 25｜金额 240/);
+	await assert.rejects(importAttachmentText(directory, session, "\n ", "空.txt"), /为空/);
 });

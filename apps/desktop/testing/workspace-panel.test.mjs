@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
@@ -526,6 +527,7 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 	await writeFile(join(secondRoot, "note.md"), "会话乙");
 
 	const handlers = new Map();
+	const copied = [];
 	let sender;
 	let selectedPath;
 	let shell;
@@ -566,6 +568,12 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 			getBounds() {
 				return { ...this.bounds };
 			}
+			getNormalBounds() {
+				return { ...this.bounds };
+			}
+			maximize() {
+				this.maximized = true;
+			}
 			setBounds(bounds) {
 				this.bounds = { ...bounds, width: bounds.width + this.roundingBias };
 			}
@@ -577,17 +585,22 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 			}
 		},
 		ipcMain: { handle: (name, action) => handlers.set(name, action) },
+		clipboard: { writeText: (text) => copied.push(text) },
 		dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [selectedPath] }) },
 		Menu: { setApplicationMenu() {} },
+		Notification: { isSupported: () => false },
 		nativeTheme: { shouldUseDarkColors: false },
 		safeStorage: {},
-		screen: { getDisplayMatching: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1040 } }) },
+		screen: {
+			getDisplayMatching: () => ({ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1040 } }),
+			getAllDisplays: () => [{ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1040 } }],
+		},
 		utilityProcess: { fork: () => assert.fail("预览启动了模型进程") },
 		shell: { openPath: () => assert.fail("预览调用了系统打开文件") },
 	};
 	const fixture = Symbol.for("flower.workspace-panel.test.electron");
 	const moduleURL = `data:text/javascript,${encodeURIComponent(
-		`export const {app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, safeStorage, screen, shell, utilityProcess} = globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(fixture))})];`,
+		`export const {app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, nativeTheme, safeStorage, screen, shell, utilityProcess} = globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(fixture))})];`,
 	)}`;
 	globalThis[fixture] = electron;
 	const hooks = registerHooks({
@@ -638,6 +651,33 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 	await api.referenceFile(second, "note.md");
 	await api.referenceFile(second, "note.md");
 	assert.deepEqual((await api.state()).sessions.find(({ id }) => id === second).attachments, [fileReference("note.md")]);
+	// 重试与放回输入框只作用于当前会话的有效请求，校验在启动运行时之前完成。
+	assert.equal((await api.state()).selected, second);
+	await assert.rejects(api.retryRequest(second, "../请求"), /无效请求标识/);
+	await assert.rejects(api.retryRequest(first, randomUUID()), /会话已切换/);
+	await assert.rejects(api.restoreRequestDraft(first, randomUUID()), /会话已切换/);
+	await assert.rejects(api.copyText(""), /无法复制/);
+	await assert.rejects(api.copyText("长".repeat(200_001)), /无法复制/);
+	await api.copyText("核对二月预算");
+	assert.deepEqual(copied, ["核对二月预算"]);
+	// 长粘贴保存为会话附件，按行数命名，同名时编号。
+	const pasted = Array.from({ length: 30 }, (_, index) => `第 ${index + 1} 行`).join("\n");
+	await api.pasteText(second, pasted);
+	await api.pasteText(second, `${pasted}\n`.slice(0, -1).replace("第 1 行", "第一行"));
+	const pastedNames = (await api.state()).sessions
+		.find(({ id }) => id === second)
+		.attachments.filter(({ name }) => name.startsWith("粘贴的文本"))
+		.map(({ name }) => name);
+	assert.deepEqual(pastedNames, ["粘贴的文本（30 行）.txt", "粘贴的文本 2（30 行）.txt"]);
+	await assert.rejects(api.pasteText(second, "  "), /粘贴的文本为空/);
+	await assert.rejects(api.pasteText(second, "字".repeat(400_000)), /超过 1 MiB/);
+	await assert.rejects(api.pasteText(first, pasted), /会话已切换/);
+	for (const { id } of (await api.state()).sessions.find(({ id }) => id === second).attachments)
+		if (id.startsWith("asset:")) await api.removeAttachment(second, id);
+	// 路径菜单只接受当前会话工作区内已有的条目。
+	await assert.rejects(api.showPathMenu(first, "note.md", true), /只能读取当前会话的工作区/);
+	await assert.rejects(api.showPathMenu(second, "../first/note.md", false), /工作区路径无效/);
+	await assert.rejects(api.showPathMenu(second, "missing.md", false), /ENOENT|不存在/);
 	await assert.rejects(api.referenceFile(first, "note.md"), /会话已切换/);
 	await assert.rejects(api.referenceFile(second, "../note.md"), /工作区/);
 	await api.removeAttachment(second, "file:note.md");

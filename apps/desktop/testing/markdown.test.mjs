@@ -6,7 +6,7 @@ import * as marked from "marked";
 
 const source = readFileSync(new URL("../workbench/ui/markdown.js", import.meta.url), "utf8");
 
-function render(markdown) {
+function render(markdown, workspace) {
 	const window = { marked };
 	let html;
 	const document = {
@@ -21,8 +21,18 @@ function render(markdown) {
 	};
 	runInNewContext(source, { window, document, URL });
 	const root = { addEventListener() {} };
-	window.flowerMarkdown.view(root, () => assert.fail("渲染不得打开链接")).update(markdown);
+	const paths = workspace && {
+		resolve: (text) => window.flowerMarkdown.workspacePath(workspace, text),
+		hydrate() {},
+	};
+	window.flowerMarkdown.view(root, () => assert.fail("渲染不得打开链接"), paths).update(markdown);
 	return html;
+}
+
+function workspacePath(root, text) {
+	const window = { marked };
+	runInNewContext(source, { window, document: { createElement() {} }, URL });
+	return window.flowerMarkdown.workspacePath(root, text);
 }
 
 test("渲染中文强调、嵌套列表、引用、代码和 GFM 表格", () => {
@@ -52,4 +62,55 @@ test("HTML、图片和非网页地址以字面显示，网页地址只能通过�
 	assert.match(html, /!\[封面\]\(https:\/\/example\.test\/cover\.png\)/);
 	assert.match(html, /\[本机\]\(file:\/\/\/notes.txt\)/);
 	assert.match(html, /href="#" data-markdown-url="https:\/\/example\.test\/docs\?x=1&amp;y=2"/);
+});
+
+test("回复中的路径只解析为当前工作区内常见文件", () => {
+	const windows = "C:\\Users\\demo\\财务资料";
+	assert.equal(workspacePath(windows, "资料\\报价.pdf"), "资料/报价.pdf");
+	assert.equal(workspacePath(windows, "./报表/汇总.xlsx"), "报表/汇总.xlsx");
+	assert.equal(workspacePath(windows, "C:\\Users\\demo\\财务资料\\报表\\汇总.xlsx"), "报表/汇总.xlsx");
+	assert.equal(workspacePath(windows, "c:/users/demo/财务资料/核对报告.md"), "核对报告.md");
+	assert.equal(workspacePath(windows, "`预算.xlsx`"), "预算.xlsx");
+	for (const outside of [
+		"C:\\Users\\demo\\其他\\a.md",
+		"C:\\Users\\demo\\财务资料2\\a.md",
+		"../a.md",
+		"资料/../a.md",
+		"https://example.test/a.md",
+		"file:///C:/a.md",
+		"example.com",
+		"v1.2",
+		"npm test",
+		"资料/",
+	])
+		assert.equal(workspacePath(windows, outside), undefined, outside);
+	assert.equal(workspacePath("/home/demo/ws", "/home/demo/ws/x/y.csv"), "x/y.csv");
+	assert.equal(workspacePath("/home/demo/ws", "/home/demo/WS/y.csv"), undefined);
+	assert.equal(workspacePath(undefined, "a.md"), undefined);
+});
+
+test("工作区路径渲染为可激活的链接、行内代码与图片，越界路径保持原文", () => {
+	const html = render(
+		[
+			"[分析报告](Flower-分析-1/分析报告.md) 与 `预算.xlsx`、`npm test`",
+			"![趋势](图表/趋势.png) ![外部](../趋势.png) [越界](../a.md)",
+			"[文档](https://example.test/docs)",
+		].join("\n\n"),
+		"/home/demo/ws",
+	);
+	assert.match(
+		html,
+		/<a href="#" data-workspace-path="Flower-分析-1\/分析报告.md" title="Flower-分析-1\/分析报告.md">分析报告<\/a>/,
+	);
+	assert.match(
+		html,
+		/<code class="path-ref" data-workspace-path="预算.xlsx"[^>]*role="link" tabindex="0">预算\.xlsx<\/code>/,
+	);
+	assert.match(html, /<code>npm test<\/code>/);
+	assert.match(html, /<img class="markdown-image" data-workspace-image="图表\/趋势.png"[^>]*alt="趋势"/);
+	assert.match(html, /!\[外部\]\(\.\.\/趋势\.png\)/);
+	assert.match(html, /\[越界\]\(\.\.\/a\.md\)/);
+	assert.match(html, /data-markdown-url="https:\/\/example\.test\/docs"/);
+	// 未提供路径交互时（工作区面板预览）保持原有行为。
+	assert.doesNotMatch(render("`预算.xlsx` [a](a.md)"), /data-workspace-path/);
 });

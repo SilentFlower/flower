@@ -13,17 +13,67 @@ window.flowerMarkdown = (() => {
 		}
 	}
 
+	// 只认常见文件扩展名，避免把 example.com、v1.2 之类的行内代码当成文件。
+	const fileExtension =
+		/\.(?:md|mdx|txt|csv|tsv|xlsx|xlsm|xls|docx|doc|pdf|pptx|png|jpe?g|jpe|jfif|gif|webp|bmp|json|ya?ml|xml|html?|[cm]?[jt]sx?|py|css|sh|go|rs|java|sql|log|ini|toml)$/i;
+	/**
+	 * 把回复中提到的路径转成工作区相对路径。只接受常见扩展名的文件路径，工作区外与含 .. 的路径不解析。
+	 * @param {string | undefined} root 当前会话工作区的本机路径
+	 * @param {string} text 链接地址或行内代码
+	 * @returns {string | undefined} 以 / 分隔的相对路径
+	 */
+	function workspacePath(root, text) {
+		if (!root || typeof text !== "string") return;
+		let value = text.trim().replace(/^[<"'`]+|[>"'`]+$/g, "");
+		if (!value || value.length > 1024 || /\p{Cc}/u.test(value)) return;
+		// 带协议的地址（含 file:）不是工作区路径；盘符路径允许继续按绝对路径处理。
+		if (/^[a-z][a-z\d+.-]*:/i.test(value) && !/^[a-z]:[\\/]/i.test(value)) return;
+		value = value.replaceAll("\\", "/");
+		const base = root.replaceAll("\\", "/").replace(/\/+$/, "");
+		if (value.startsWith("/") || /^[a-z]:\//i.test(value)) {
+			const windows = /^[a-z]:\//i.test(base) || base.startsWith("//");
+			const head = value.slice(0, base.length);
+			if (value[base.length] !== "/" || (windows ? head.toLowerCase() !== base.toLowerCase() : head !== base)) return;
+			value = value.slice(base.length + 1);
+		}
+		const parts = value.replace(/^\.\//, "").split("/");
+		if (parts.some((part) => !part || part === "." || part === "..")) return;
+		const name = parts.at(-1);
+		if (!fileExtension.test(name) || Array.from(name).length > 255) return;
+		return parts.join("/");
+	}
+
+	// 解析器全局共用，路径按当前渲染的回复所属会话解析；parse 同步执行，渲染前后切换即可。
+	let resolvePath;
+	const imageFile = /\.(png|jpe?g|jpe|jfif|gif|webp|bmp)$/i;
+
 	function createParser(marked) {
 		const renderer = {
 			html({ raw, block }) {
 				const literal = escapeText(raw);
 				return block ? `<p class="markdown-literal">${literal}</p>` : literal;
 			},
-			image({ raw }) {
-				return `<span class="markdown-literal">${escapeText(raw)}</span>`;
+			image({ href, raw, text }) {
+				const path = resolvePath?.(href);
+				if (!path || !imageFile.test(path)) return `<span class="markdown-literal">${escapeText(raw)}</span>`;
+				const name = escapeText(path);
+				// 图片字节由宿主按工作区校验后读取，渲染后再填入 blob 地址。
+				return `<img class="markdown-image" data-workspace-image="${name}" data-markdown-raw="${escapeText(raw)}" alt="${escapeText(text || path)}" title="${name}" tabindex="0" role="button">`;
+			},
+			codespan({ text }) {
+				const code = escapeText(text);
+				const path = resolvePath?.(text);
+				if (!path) return `<code>${code}</code>`;
+				const name = escapeText(path);
+				return `<code class="path-ref" data-workspace-path="${name}" title="${name}" role="link" tabindex="0">${code}</code>`;
 			},
 			link({ href, raw, tokens }) {
 				const target = safeLink(href);
+				const path = target ? undefined : resolvePath?.(href);
+				if (path) {
+					const name = escapeText(path);
+					return `<a href="#" data-workspace-path="${name}" title="${name}">${this.parser.parseInline(tokens)}</a>`;
+				}
 				if (!target) return escapeText(raw);
 				const url = escapeText(target);
 				// 地址只交给 Host 处理。保留原生链接的键盘激活语义。
@@ -78,9 +128,15 @@ window.flowerMarkdown = (() => {
 	/** 将助手回复渲染成 Markdown，原始回复由会话继续保存。
 	 * @param {HTMLElement} root 单条回复的内容节点
 	 * @param {(url: string) => void} openLink 可信链接交互
+	 * @param {object} [paths] 工作区路径交互，只在聊天回复中提供
+	 * @param {(text: string) => string | undefined} paths.resolve 把回复中的路径转成工作区相对路径
+	 * @param {(path: string, trigger: HTMLElement) => void} paths.open 在右栏预览
+	 * @param {(path: string, trigger: HTMLElement) => void} paths.menu 打开路径菜单
+	 * @param {(root: HTMLElement) => void} paths.hydrate 为工作区图片填入内容
+	 * @param {(image: HTMLImageElement) => void} paths.openImage 放大查看图片
 	 * @returns {{update: (source: string) => void}} 流式和历史共用的更新接口
 	 */
-	function view(root, openLink) {
+	function view(root, openLink, paths) {
 		let previous;
 		const render = (source) => {
 			if (source === previous) return;
@@ -90,8 +146,14 @@ window.flowerMarkdown = (() => {
 				try {
 					const template = document.createElement("template");
 					// 标记由固定的 Marked 渲染器生成，HTML、图片、代码和地址在各自的入口处理。
-					template.innerHTML = parser.parse(source);
+					resolvePath = paths?.resolve;
+					try {
+						template.innerHTML = parser.parse(source);
+					} finally {
+						resolvePath = undefined;
+					}
 					updateBlocks(root, template.content);
+					paths?.hydrate(root);
 					return;
 				} catch {
 					// 极端文档仍可阅读并复制原文。
@@ -100,11 +162,37 @@ window.flowerMarkdown = (() => {
 			root.textContent = source;
 		};
 
+		const pathTarget = (event) => {
+			const target = event.target.closest?.("[data-workspace-path], img[data-workspace-image]");
+			return target && root.contains(target) ? target : undefined;
+		};
 		root.addEventListener("click", (event) => {
+			const target = paths && pathTarget(event);
+			if (target) {
+				event.preventDefault();
+				if (!event.isTrusted) return;
+				if (target.dataset.workspaceImage) paths.openImage(target);
+				else paths.open(target.dataset.workspacePath, target);
+				return;
+			}
 			const link = event.target.closest("a[data-markdown-url]");
 			if (!link || !root.contains(link)) return;
 			event.preventDefault();
 			if (event.isTrusted) openLink(link.dataset.markdownUrl);
+		});
+		// 行内代码与图片不是原生可激活元素，补上回车与空格键。
+		root.addEventListener("keydown", (event) => {
+			const target = paths && pathTarget(event);
+			if (!target || target.tagName === "A" || (event.key !== "Enter" && event.key !== " ")) return;
+			event.preventDefault();
+			if (target.dataset.workspaceImage) paths.openImage(target);
+			else paths.open(target.dataset.workspacePath, target);
+		});
+		root.addEventListener("contextmenu", (event) => {
+			const target = paths && pathTarget(event);
+			if (!target) return;
+			event.preventDefault();
+			paths.menu(target.dataset.workspacePath ?? target.dataset.workspaceImage, target);
 		});
 		ready?.then(() => {
 			if (parser && previous) {
@@ -116,5 +204,5 @@ window.flowerMarkdown = (() => {
 		return { update: render };
 	}
 
-	return { view };
+	return { view, workspacePath };
 })();

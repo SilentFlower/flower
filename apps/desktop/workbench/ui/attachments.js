@@ -85,6 +85,20 @@
 		}
 	}
 
+	/**
+	 * 判断粘贴的文本是否应转为附件：超过 2000 字或 20 行，或粘贴后会超出输入框上限。
+	 * @param {string} text 粘贴的文本
+	 * @param {HTMLTextAreaElement | undefined} input 接收粘贴的输入框
+	 * @returns {boolean} 是否转为附件
+	 */
+	function longPaste(text, input) {
+		if (!text) return false;
+		if (text.length > 2000 || text.split(/\r\n|\r|\n/).length > 20) return true;
+		// 输入框的 maxlength 会静默截断，替换选区后仍超限时同样转为附件。
+		if (!input || !(input.maxLength > 0)) return false;
+		return input.value.length - (input.selectionEnd - input.selectionStart) + text.length > input.maxLength;
+	}
+
 	/** 绑定输入卡的文件拖入和图片粘贴。@param composer 输入卡 @param host 桌面接口 @param workspace 取得或选择当前会话 @param action 操作与错误反馈包装 @returns 无 */
 	function bind(composer, host, workspace, action) {
 		const files = (event) => event.dataTransfer?.types.includes("Files");
@@ -113,7 +127,17 @@
 		});
 		composer.addEventListener("paste", (event) => {
 			const images = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/"));
-			if (!images.length) return;
+			if (!images.length) {
+				const text = event.clipboardData?.getData("text/plain") ?? "";
+				const input = event.target instanceof HTMLTextAreaElement ? event.target : undefined;
+				if (!longPaste(text, input)) return;
+				event.preventDefault();
+				void action(async () => {
+					const id = await workspace();
+					if (id) await host.pasteText(id, text);
+				})();
+				return;
+			}
 			event.preventDefault();
 			void action(async () => {
 				const id = await workspace();
@@ -123,5 +147,5 @@
 		});
 	}
 
-	window.flowerAttachments = { view, bind };
+	window.flowerAttachments = { view, bind, longPaste };
 })();

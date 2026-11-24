@@ -1446,7 +1446,37 @@ summary:focus-visible {
 }
 .composition {
 	flex: none;
+	position: relative;
 	padding-block: 5px 14px;
+}
+/* 回到底部按钮浮在输入区上方，不占用消息区的版面。 */
+.button.back-to-bottom:not([hidden]) {
+	position: absolute;
+	bottom: 100%;
+	left: 50%;
+	z-index: 2;
+	translate: -50% -6px;
+	width: 32px;
+	min-height: 32px;
+	padding: 0;
+	border: 1px solid var(--line);
+	border-radius: 50%;
+	background: var(--surface);
+	color: var(--ink);
+	box-shadow: 0 2px 10px rgb(0 0 0 / 10%);
+}
+.back-to-bottom .icon {
+	rotate: 180deg;
+}
+.back-to-bottom[data-unseen]::after {
+	content: "";
+	position: absolute;
+	top: 1px;
+	right: 1px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--accent);
 }
 .workbench[data-home="true"] .composition {
 	--gutter: clamp(20px, calc(3.51 * var(--layout-vw, 1vw)), 46px);
@@ -1609,7 +1639,8 @@ summary:focus-visible {
 	min-width: 144px;
 }
 #sidebar-options,
-#sidebar-dialog {
+#sidebar-dialog,
+#confirm-dialog {
 	border: 1px solid var(--line);
 	border-radius: 10px;
 	background: var(--surface);
@@ -1628,15 +1659,18 @@ summary:focus-visible {
 .sidebar-menu-item[data-operation="delete"] {
 	color: var(--danger);
 }
-#sidebar-dialog {
+#sidebar-dialog,
+#confirm-dialog {
 	width: min(360px, 86vw);
 	padding: 20px;
 }
-#sidebar-dialog h2 {
+#sidebar-dialog h2,
+#confirm-dialog h2 {
 	font-size: 17px;
 	margin: 0 0 14px;
 }
-#sidebar-detail {
+#sidebar-detail,
+#confirm-detail {
 	color: var(--muted);
 	line-height: 1.65;
 	font-size: 13px;
@@ -1648,7 +1682,8 @@ summary:focus-visible {
 #sidebar-name {
 	width: 100%;
 }
-#sidebar-dialog footer {
+#sidebar-dialog footer,
+#confirm-dialog footer {
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;

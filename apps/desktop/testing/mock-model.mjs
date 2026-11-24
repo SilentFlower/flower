@@ -101,6 +101,11 @@ export async function startMockModel({
 			const filename = "orders.xlsx";
 			if (attachmentReply) {
 				const answer = attachmentReply(messages);
+				// 兼容网关以 reasoning_content 分片返回推理，先于正文或工具调用。
+				for (const [index, chunk] of (answer.reasoning ?? []).entries()) {
+					if (index) await setTimeout(answer.reasoningDelay ?? 0);
+					sse({ role: "assistant", reasoning_content: chunk });
+				}
 				if (answer.toolCall) tool(answer.toolCall.name, answer.toolCall.args);
 				else if (answer.markdown) tool("write_report", { markdown: answer.markdown, input: answer.source });
 				else {

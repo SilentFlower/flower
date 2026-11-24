@@ -204,6 +204,13 @@
 				}
 				const row = element("li");
 				row.append(control);
+				// 右键或菜单键在系统文件管理器中定位，或复制本机路径；单击本身已负责预览。
+				const entryPath = [...folders, entry.name].join("/");
+				control.addEventListener("contextmenu", (event) => {
+					event.preventDefault();
+					const owner = selected?.id;
+					if (owner) void host.showPathMenu(owner, entryPath, false).catch(() => {});
+				});
 				if (entry.attachable) {
 					const add = button("", (event) => void addReference(event.currentTarget), "icon-button panel-add");
 					add.append(icon("plus"));

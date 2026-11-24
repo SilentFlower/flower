@@ -1,13 +1,6 @@
 const ui = window.flower;
 const { agentUI, flowerUI } = window;
 const by = (id) => document.getElementById(id);
-const toolLabels = {
-	list_workspace: "查看目录",
-	read_text_file: "读取文件",
-	inspect_excel: "检查工作簿",
-	analyze_excel: "汇总工作簿",
-	write_report: "写入核对报告",
-};
 const activeStatuses = new Set(["queued", "running", "cancelling"]);
 let state;
 let session;
@@ -192,20 +185,151 @@ const showDraftFiles = window.flowerAttachments.view(
 );
 
 window.flowerAttachments.bind(by("composer"), ui, () => session || ui.chooseWorkspace(), action);
-const thread = agentUI.thread(by("timeline"), by("thread-scroll"), {
-	cancel: (id, runId) => action(() => ui.cancel(session, id, runId))(),
-	open: (id, path) => action(() => ui.openArtifact(session, id, path))(),
-	previewAttachment: workspacePanel.previewAttachment,
-	preview: (path, trigger) => workspacePanel.preview(path, trigger),
-	openLink: (url) => action(() => ui.openReplyLink(url))(),
-	copy: (id) =>
-		action(async () => {
-			await ui.copyReply(session, id);
-			flowerUI.feedback(by("feedback"), "已复制回复原文。");
-		})(),
-});
+// 回复中的工作区图片按会话缓存，流式更新重建节点时同步填回，避免反复读取和闪烁。
+const replyImages = new Map();
+function hydrateReplyImages(root) {
+	const owner = session;
+	for (const image of root.querySelectorAll("img[data-workspace-image]:not([src])")) {
+		const path = image.dataset.workspaceImage;
+		const key = JSON.stringify([owner, path]);
+		let entry = replyImages.get(key);
+		if (!entry) {
+			entry = { owner, url: "", blob: undefined };
+			entry.ready = ui
+				.previewWorkspaceFile(owner, path)
+				.then((result) => {
+					if (result?.kind !== "image") return;
+					entry.blob = new Blob([result.bytes], { type: result.mime });
+					entry.url = URL.createObjectURL(entry.blob);
+				})
+				.catch(() => {});
+			replyImages.set(key, entry);
+		}
+		const show = () => {
+			if (!image.isConnected || image.src) return;
+			if (entry.url) image.src = entry.url;
+			else image.replaceWith(document.createTextNode(image.dataset.markdownRaw ?? path));
+		};
+		if (entry.url) show();
+		else void entry.ready.then(show);
+	}
+}
+function releaseReplyImages(owner) {
+	for (const [key, entry] of replyImages) {
+		if (entry.owner !== owner) continue;
+		if (entry.url) URL.revokeObjectURL(entry.url);
+		replyImages.delete(key);
+	}
+}
+
+const thread = agentUI.thread(
+	by("timeline"),
+	by("thread-scroll"),
+	{
+		paths: {
+			resolve: (text) => flowerMarkdown.workspacePath(state?.sessions.find((entry) => entry.id === session)?.path, text),
+			open: (path, trigger) => workspacePanel.preview(path, trigger),
+			menu: (path, trigger) =>
+				action(async () => {
+					if ((await ui.showPathMenu(session, path, true)) === "preview") workspacePanel.preview(path, trigger);
+				})(),
+			hydrate: hydrateReplyImages,
+			openImage(image) {
+				const entry = replyImages.get(JSON.stringify([session, image.dataset.workspaceImage]));
+				if (entry?.blob) void window.flowerImages.open(image.alt, async () => entry.blob, image);
+			},
+		},
+		cancel: (id, runId) => action(() => ui.cancel(session, id, runId))(),
+		open: (id, path) => action(() => ui.openArtifact(session, id, path))(),
+		previewAttachment: workspacePanel.previewAttachment,
+		preview: (path, trigger) => workspacePanel.preview(path, trigger),
+		openLink: (url) => action(() => ui.openReplyLink(url))(),
+		copy: (id) =>
+			action(async () => {
+				await ui.copyReply(session, id);
+				flowerUI.feedback(by("feedback"), "已复制回复原文。");
+			})(),
+		copyInput: (id) =>
+			action(async () => {
+				const input = timelines.get(session)?.requests.get(id)?.input;
+				if (!input) return;
+				await ui.copyText(input);
+				flowerUI.feedback(by("feedback"), "已复制提问原文。");
+			})(),
+		retry: (id) =>
+			action(async () => {
+				const selected = session;
+				const original = timelines.get(selected)?.requests.get(id);
+				const record = await ui.retryRequest(selected, id);
+				const timeline = timelines.get(selected);
+				if (!timeline) return;
+				const current = timeline.requests.get(record.requestId);
+				timeline.requests.set(record.requestId, {
+					...record,
+					...current,
+					input: record.input ?? original?.input,
+					attachments: record.attachments,
+					steps: current?.steps ?? [],
+				});
+				if (session === selected) renderRequests(true);
+			})(),
+		edit: (id) =>
+			action(async () => {
+				const selected = session;
+				const prompt = by("prompt");
+				const draft = state?.sessions.find((entry) => entry.id === selected)?.attachments?.length;
+				// 编辑会替换输入框与草稿附件，先确认不会丢掉用户尚未发送的内容。
+				if (
+					(prompt.value.trim() || draft) &&
+					!(await confirmAction("用原请求替换当前草稿？", "输入框中未发送的文字和附件将被替换。", "替换"))
+				)
+					return;
+				const { input } = await ui.restoreRequestDraft(selected, id);
+				if (session !== selected) return;
+				prompt.value = input;
+				syncSend();
+				prompt.focus();
+				prompt.setSelectionRange(input.length, input.length);
+			})(),
+	},
+	by("back-to-bottom"),
+);
+
+/**
+ * 打开通用确认框。
+ * @param {string} title 标题
+ * @param {string} detail 说明
+ * @param {string} apply 确认按钮文字
+ * @returns {Promise<boolean>} 用户是否确认
+ */
+function confirmAction(title, detail, apply) {
+	const dialog = by("confirm-dialog");
+	by("confirm-title").textContent = title;
+	by("confirm-detail").textContent = detail;
+	by("confirm-apply").textContent = apply;
+	const trigger = document.activeElement;
+	dialog.returnValue = "";
+	dialog.showModal();
+	return new Promise((resolve) => {
+		dialog.addEventListener(
+			"close",
+			() => {
+				trigger?.focus?.();
+				resolve(dialog.returnValue === "apply");
+			},
+			{ once: true },
+		);
+	});
+}
 for (const node of document.querySelectorAll("[data-flower]")) node.append(flowerUI.mark(node.dataset.flower));
-agentUI.bindComposer(by("prompt"), by("send"));
+agentUI.bindComposer(by("prompt"), by("send"), () => {
+	const inputs = [];
+	for (const { input } of timelines.get(session)?.requests.values() ?? []) {
+		// 连续重复的提问只保留一次，翻找时不原地停留。
+		if (input && input !== inputs.at(-1)) inputs.push(input);
+	}
+	return inputs;
+});
 
 function action(fn) {
 	return async () => {
@@ -562,7 +686,7 @@ async function reloadHistory(id) {
 				row.requestId,
 				newer
 					? { ...row, ...current, input: row.input, file: row.file, attachments: row.attachments, artifacts: row.artifacts }
-					: { ...row, tools: current?.tools ?? [] },
+					: row,
 			);
 		}
 		for (const [requestId, current] of timeline.requests) {
@@ -701,7 +825,8 @@ function update(next) {
 			drafts.set(session, prompt.value);
 			drafts.delete("");
 		}
-		thread.reset();
+		thread.reset(old, session);
+		releaseReplyImages(old);
 		prompt.value = drafts.get(session) ?? "";
 		renderRequests();
 		if (!moving && !by("model-dialog").open) prompt.focus();
@@ -803,7 +928,7 @@ function receive(event) {
 		requestId: event.requestId,
 		text: "",
 		status: "queued",
-		tools: [],
+		steps: [],
 	};
 	requests.set(event.requestId, record);
 	record.eventRevision = ++eventRevision;
@@ -814,6 +939,7 @@ function receive(event) {
 			break;
 		case "started":
 			record.status = "running";
+			record.startedAt = event.at;
 			break;
 		case "cancelling":
 			record.status = "cancelling";
@@ -822,20 +948,23 @@ function receive(event) {
 			record.text += event.delta;
 			break;
 		case "tool_started":
-			record.tools.push({ id: event.toolCallId, label: toolLabels[event.toolName] ?? "调用工具", state: "running" });
+			record.steps.push({
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				target: event.target,
+				startedAt: event.at,
+			});
 			break;
 		case "tool_result": {
-			const step = record.tools.find(({ id }) => id === event.toolCallId);
-			if (step) step.state = event.isError ? "error" : "done";
+			const step = record.steps.find(({ toolCallId, endedAt }) => toolCallId === event.toolCallId && !endedAt);
+			if (step) Object.assign(step, { endedAt: event.at, isError: event.isError });
 			break;
 		}
 		case "terminal":
 			timeline.active.delete(requestId);
 			record.status = event.status;
 			record.failure = event.failure?.message;
-			for (const step of record.tools) {
-				if (step.state === "running") step.state = "stopped";
-			}
+			record.endedAt = event.at;
 			// 后台终态已经落盘。下次打开时读取，避免在后台为整段历史再分配内存。
 			invalidateHistory(timeline);
 			pruneTimelines();
@@ -851,6 +980,14 @@ function receive(event) {
 			renderRequests();
 		}
 	}
+}
+
+/** 记录运行中请求的最新一句推理。只放在内存时间线，不随历史保存或复制。@param {{sessionId: string, requestId: string, text: string}} message 推理预览 @returns {void} */
+function receiveReasoning({ sessionId, requestId, text }) {
+	const record = timelines.get(sessionId)?.requests.get(requestId);
+	if (!record || record.status !== "running" || record.text) return;
+	record.reasoning = text;
+	if (sessionId === session) renderRequests();
 }
 
 function modelIcon(id = "") {
@@ -1499,7 +1636,7 @@ by("send").addEventListener(
 				input: record.input,
 				file: record.file,
 				attachments: record.attachments,
-				tools: current?.tools ?? [],
+				steps: current?.steps ?? [],
 			});
 			if (session === selected) renderRequests(true);
 		} catch (error) {
@@ -1517,8 +1654,11 @@ by("send").addEventListener(
 );
 renderRequests();
 syncSend();
-const unsubscribe = ui.subscribe(({ kind, state, event }) => {
-	if (kind === "state") update(state);
-	else if (kind === "event") receive(event);
+const unsubscribe = ui.subscribe((message) => {
+	if (message.kind === "state") update(message.state);
+	else if (message.kind === "event") receive(message.event);
+	else if (message.kind === "reasoning") receiveReasoning(message);
+	// 点击系统通知后回到对应会话，与侧栏点击走同一路径。
+	else if (message.kind === "focus-session" && message.id !== session) action(() => ui.selectSession(message.id))();
 });
 window.addEventListener("unload", unsubscribe, { once: true });

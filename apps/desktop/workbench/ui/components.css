@@ -96,6 +96,35 @@
 	font-size: 11px;
 	font-weight: 500;
 }
+/* 侧栏状态点：运行中、完成未读、失败未读。待批准沿用文字徽标。 */
+.session-indicator {
+	flex: none;
+	width: 7px;
+	height: 7px;
+	margin-inline-start: auto;
+	border-radius: 50%;
+	background: var(--accent);
+}
+.session-indicator[data-indicator="running"] {
+	background: transparent;
+	box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.session-indicator[data-indicator="failed"] {
+	background: var(--danger);
+}
+.session-indicator:not([hidden]) + .session-approval {
+	margin-inline-start: 6px;
+}
+@media (prefers-reduced-motion: no-preference) {
+	.session-indicator[data-indicator="running"] {
+		animation: session-running 1.6s ease-in-out infinite;
+	}
+}
+@keyframes session-running {
+	50% {
+		opacity: 0.35;
+	}
+}
 
 .composer {
 	display: grid;
@@ -312,6 +341,32 @@
 .status[data-state="denied"] {
 	color: var(--danger);
 }
+/* 首包前的等待提示：扫光只在允许动效时出现，减弱动效时保留静态文字。 */
+@media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+	.status[data-thinking] {
+		background: linear-gradient(90deg, var(--accent) 35%, var(--muted) 50%, var(--accent) 65%) 0 0 / 300% 100%;
+		background-clip: text;
+		color: transparent;
+		animation: status-thinking 4s linear infinite;
+	}
+}
+@keyframes status-thinking {
+	from {
+		background-position: 100% 0;
+	}
+	25%,
+	to {
+		background-position: 0 0;
+	}
+}
+.reasoning-preview {
+	margin: -2px 0 0;
+	overflow: hidden;
+	color: var(--muted);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 .cancel-task {
 	margin-left: auto;
 	white-space: nowrap;
@@ -334,6 +389,33 @@
 .copy-reply .icon {
 	width: 15px;
 	height: 15px;
+}
+/* 提问的复制按钮在悬停或键盘聚焦时出现，避免每条提问常驻图标。 */
+.user-message {
+	position: relative;
+}
+.user-message .copy-input:not([hidden]) {
+	position: absolute;
+	inset-inline-end: 100%;
+	top: 4px;
+	margin-inline: 0 4px;
+	opacity: 0;
+}
+.user-message:hover .copy-input,
+.user-message:focus-within .copy-input {
+	opacity: 1;
+}
+.retry-task:not([hidden]) {
+	white-space: nowrap;
+}
+.retry-task:not([hidden]) + .retry-task {
+	margin-inline-start: -6px;
+}
+.cancel-task[hidden] + .retry-task:not([hidden]) {
+	margin-inline-start: auto;
+}
+.retry-task:not([hidden]) ~ .copy-reply {
+	margin-inline-start: 0;
 }
 .message-error {
 	color: var(--danger);
@@ -381,6 +463,26 @@
 	color: var(--accent);
 	text-underline-offset: 0.2em;
 }
+/* 回复中的工作区路径：可点击预览，右键定位或复制路径。 */
+.markdown-reply .path-ref {
+	cursor: pointer;
+	color: var(--accent);
+	text-decoration: underline dotted;
+	text-underline-offset: 3px;
+}
+.markdown-reply .path-ref:hover {
+	text-decoration-style: solid;
+}
+.markdown-reply .markdown-image {
+	display: block;
+	max-width: min(100%, 520px);
+	max-height: 360px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--wash);
+	cursor: zoom-in;
+	object-fit: contain;
+}
 .markdown-reply code {
 	font:
 		0.92em / 1.55 Consolas,
@@ -425,7 +527,7 @@
 	white-space: pre-wrap;
 }
 .step-list {
-	width: min(100%, 334px);
+	width: min(100%, 460px);
 	background: var(--wash);
 	border-radius: var(--radius);
 	color: var(--muted);
@@ -450,6 +552,15 @@
 }
 .step-list li span:last-child {
 	flex: none;
+}
+.step-list li span:first-child {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.step-list li[data-state="error"] span:last-child {
+	color: var(--danger);
 }
 .deliveries {
 	display: grid;

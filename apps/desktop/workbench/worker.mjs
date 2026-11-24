@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { createAssistantMessageEventStream, PI_AI_VERSION } from "@earendil-works/pi-ai";
 import { createAgentRuntime, RuntimeError } from "@flower-ai/agent-runtime";
 import { readStoredEvidence, resolveStoredSource } from "./attachment-assets.mjs";
+import { createReasoningPreview } from "./reasoning-preview.mjs";
 import { createRequestHistory } from "./request-history.mjs";
+import { describeToolCall } from "./tool-display.mjs";
 import { readAttachmentEvidence, workspaceTools } from "./workspace.mjs";
 
 const port = process.parentPort;
@@ -12,6 +14,13 @@ const sessions = new Map();
 const streams = new Map();
 const running = new Map();
 const writes = new Map();
+// 工具步骤在运行时同步描述，附件名需要提前缓存；本轮附件在读取时登记，历史附件在读取会话历史时登记。
+const attachmentNames = new Map();
+// 推理只作运行中的瞬时提示，不经共享核心落盘，按会话节流后直接交给 Host。
+const reasoning = createReasoningPreview((session, text) => {
+	const run = running.get(session);
+	if (run) send({ kind: "reasoning", sessionId: session, requestId: run.requestId, text });
+});
 let sessionsDirectory;
 let runtime;
 let requestHistory;
@@ -38,7 +47,7 @@ function approveWrite(session, workspaceId, plan, signal) {
 	});
 }
 
-function streamModel(model, context, options) {
+function streamModel(model, context, options, session) {
 	const id = randomUUID();
 	const stream = createAssistantMessageEventStream();
 	const signal = options?.signal;
@@ -46,7 +55,9 @@ function streamModel(model, context, options) {
 		send({ kind: "cancel-model", id });
 		fail(id, "aborted");
 	};
-	streams.set(id, { stream, model, signal, abort, terminal: false });
+	// 摘要请求关闭推理，也不属于用户可见的任务进度。
+	const preview = options?.purpose === "summary" ? undefined : session;
+	streams.set(id, { stream, model, signal, abort, terminal: false, session: preview });
 	if (signal?.aborted) abort();
 	else {
 		signal?.addEventListener("abort", abort, { once: true });
@@ -96,6 +107,7 @@ function fail(id, reason = "error", overflow = false) {
 async function attachmentContent(session, workspace, refs, signal) {
 	const blocks = [];
 	running.get(session).refs = refs;
+	rememberAttachments(session, refs);
 	let imageSize = 0;
 	for (const ref of refs) {
 		signal.throwIfAborted();
@@ -129,6 +141,22 @@ async function attachmentContent(session, workspace, refs, signal) {
 	return blocks;
 }
 
+/**
+ * 登记会话附件的编号与名称，供工具步骤展示。
+ * @param {string} session 会话 ID
+ * @param {readonly {id: string, name: string}[]} refs 附件引用
+ * @returns {void}
+ */
+function rememberAttachments(session, refs) {
+	if (!refs?.length) return;
+	let names = attachmentNames.get(session);
+	if (!names) {
+		names = new Map();
+		attachmentNames.set(session, names);
+	}
+	for (const { id, name } of refs) if (id.startsWith("asset:")) names.set(id, name);
+}
+
 function init(frame) {
 	if (runtime || typeof frame.directory !== "string") throw new Error("无法初始化本机运行时。");
 	model = frame.model;
@@ -152,7 +180,9 @@ function init(frame) {
 			return {
 				workspaceId: workspace.id,
 				model,
-				streamFn: streamModel,
+				streamFn: (current, context, options) => streamModel(current, context, options, scope.sessionId),
+				describeTool: (toolName, args) =>
+					describeToolCall(toolName, args, (id) => attachmentNames.get(scope.sessionId)?.get(id)),
 				readAttachments: (refs, signal) => attachmentContent(scope.sessionId, workspace, refs, signal),
 				tools: workspaceTools(
 					workspace,
@@ -190,8 +220,10 @@ function init(frame) {
 	runtime = host.bindSubject(localService, (event) => {
 		const { sessionId, requestId, runId, type } = event;
 		if (type === "started") running.set(sessionId, { requestId, runId, refs: [] });
-		if ((type === "cancelling" || type === "terminal") && running.get(sessionId)?.requestId === requestId)
+		if ((type === "cancelling" || type === "terminal") && running.get(sessionId)?.requestId === requestId) {
 			running.delete(sessionId);
+			reasoning.clear(sessionId);
+		}
 		send({ kind: "event", event });
 	});
 	return { pi: PI_AI_VERSION, pid: process.pid };
@@ -211,7 +243,21 @@ function history(session) {
 				}
 			}
 			const { input, file, attachments, requestId, runId, status, text } = requestHistory.display(session, record);
-			return { input, file, attachments, requestId, runId, status, text, failure: record.failure?.message, artifacts };
+			rememberAttachments(session, record.attachments);
+			return {
+				input,
+				file,
+				attachments,
+				requestId,
+				runId,
+				status,
+				text,
+				failure: record.failure?.message,
+				artifacts,
+				steps: record.steps ?? [],
+				startedAt: record.startedAt,
+				endedAt: record.endedAt,
+			};
 		}),
 	);
 }
@@ -222,6 +268,8 @@ port.on("message", async ({ data: frame }) => {
 		const entry = streams.get(frame.id);
 		if (entry) {
 			if (frame.event.type === "done" || frame.event.type === "error") entry.terminal = true;
+			if (entry.session && frame.event.type === "thinking_delta") reasoning.push(entry.session, frame.event.delta);
+			if (entry.session && frame.event.type === "text_delta") reasoning.clear(entry.session);
 			entry.stream.push(frame.event);
 		}
 		return;
