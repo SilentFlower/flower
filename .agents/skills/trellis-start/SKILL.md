@@ -41,13 +41,12 @@ Index files list the specific guideline docs to read when you actually start cod
 ## Step 4: Decide next action
 From Step 1 you know the current task and status. Check the task directory:
 
-- **Active task status `planning` + no `prd.md`** → Phase 1.1. Load the `trellis-brainstorm` skill.
-- **Active task status `planning` + `prd.md` exists** → stay in Phase 1. Lightweight tasks can be PRD-only; complex tasks need `design.md` + `implement.md`. Load the relevant Phase 1 step detail before `task.py start`.
-- **Active task status `in_progress`** → Phase 2 step 2.1. Load the step detail:
-  ```bash
-  python3 ./.trellis/scripts/get_context.py --mode phase --step 2.1 --platform codex
-  ```
-- **No active task** → classify first. For simple conversation / small task, ask only whether this turn should create a Trellis task. For complex work, ask whether you may create a Trellis task and enter planning. If the user says no, skip Trellis for this session.
+<!-- BEGIN skill-garden patch start-active-task-recovery-codex v0.6 -->
+- **Active task exists** -> first resolve any selected Check-All repair through workflow `Request Triage`; otherwise load `trellis-continue` and follow its recovery rules to decide the next step.
+<!-- END skill-garden patch start-active-task-recovery-codex v0.6 -->
+<!-- BEGIN skill-garden patch start-no-task-routing v0.6 -->
+- **No active task** -> first resolve any selected Check-All repair through workflow `Request Triage`; recover the inspected work item instead of creating a task. Otherwise run `python3 ./.trellis/scripts/untracked_flow.py status`. On `hit`, resume the reported stage through the matching `[workflow-state:untracked*]` breadcrumb; on `miss`, follow the workflow `Request Triage` contract before acting. Use `task_intent.py create` for inferred complex planning, `task.py create` for explicit task planning, and ask only for material ambiguity or an independent safety boundary.
+<!-- END skill-garden patch start-no-task-routing v0.6 -->
 
 ---
 
@@ -57,7 +56,7 @@ From Step 1 you know the current task and status. Check the task directory:
 |---|---|
 | New feature / unclear requirements | `trellis-brainstorm` |
 | About to write code | `trellis-before-dev` |
-| Done coding / quality check | `trellis-check` |
+| Done coding / quality check | `trellis-route(target=check)` → `trellis-check-all` |
 | Stuck / fixed same bug multiple times | `trellis-break-loop` |
 | Learned something worth capturing | `trellis-update-spec` |
 

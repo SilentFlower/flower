@@ -34,3 +34,10 @@ tmp/
 # Python 字节码缓存(Codex hook 等运行时自动生成)
 __pycache__/
 *.pyc
+# BEGIN Flower shared records
+!/.flower/
+/.flower/*
+!/.flower/.gitignore
+!/.flower/plugins.json
+!/.flower/plugin-lock.json
+# END Flower shared records

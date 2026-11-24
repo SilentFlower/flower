@@ -33,12 +33,12 @@ if sys.platform.startswith("win"):
             try:
                 _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
             except Exception:
-                pass
+                pass  # Optional Windows stream setup; keep hook startup non-fatal.
         elif hasattr(_stream, "detach"):
             try:
                 setattr(sys, _stream_name, _io.TextIOWrapper(_stream.detach(), encoding="utf-8", errors="replace"))
             except Exception:
-                pass
+                pass  # Optional Windows stream setup; keep hook startup non-fatal.
 
 
 def _normalize_windows_shell_path(path_str: str) -> str:
@@ -92,10 +92,11 @@ def _normalize_windows_shell_path(path_str: str) -> str:
 warnings.filterwarnings("ignore")
 
 FIRST_REPLY_NOTICE = """<first-reply-notice>
-On the first visible assistant reply in this session, begin with exactly one short Chinese sentence:
-Trellis SessionStart 已注入：workflow、当前任务状态、开发者身份、git 状态、active tasks、spec 索引已加载。
-Then continue directly with the user's request. This notice is one-shot: do not repeat it after the first assistant reply in the same session.
+On your first visible reply in this session, briefly acknowledge that Trellis SessionStart context loaded, then answer the user.
+Use the request's language, else the established project language; if neither is clear, say `Trellis SessionStart ✓`.
+Do not repeat the acknowledgment or change the answer's language.
 </first-reply-notice>"""
+
 
 def should_skip_injection() -> bool:
     if os.environ.get("TRELLIS_HOOKS") == "0":
@@ -116,7 +117,7 @@ def configure_project_encoding(project_dir: Path) -> None:
 
         configure_encoding()
     except Exception:
-        pass
+        pass  # Optional encoding helper; host defaults are still usable.
 
 
 def _has_curated_jsonl_entry(jsonl_path: Path) -> bool:
@@ -223,19 +224,26 @@ def _resolve_task_dir(trellis_dir: Path, task_ref: str) -> Path:
 def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     active = _resolve_active_task(trellis_dir, hook_input)
     if not active.task_path:
+# BEGIN skill-garden patch codex-session-start-no-task v0.6
         return (
             "Status: NO ACTIVE TASK\n"
-            "Next: Classify the current turn and ask for task-creation consent "
-            "before creating any Trellis task."
+            "Next: Infer discuss, inspect, direct_edit, task_plan, or workflow_action. "
+            "Proceed with high-confidence reversible routing; ask only for material ambiguity "
+            "or independent safety gates."
         )
+# END skill-garden patch codex-session-start-no-task v0.6
 
     task_ref = active.task_path
     task_dir = _resolve_task_dir(trellis_dir, task_ref)
     if active.stale or not task_dir.is_dir():
+# BEGIN skill-garden patch codex-session-start-missing-task v0.6
         return (
-            f"Status: STALE POINTER\nTask: {task_ref}\n"
-            "Next: Task directory not found. Run: python3 ./.trellis/scripts/task.py finish"
+            f"Status: MISSING TASK POINTER\nTask: {task_ref}\n"
+            "Next: Run python3 ./.trellis/scripts/task.py finish. If cleanup fails, report it and stop. "
+            "If cleanup succeeds, treat the current request as NO ACTIVE TASK in the same turn and "
+            "follow no_task Request Intent Routing before any edit, task creation, or task start."
         )
+# END skill-garden patch codex-session-start-missing-task v0.6
 
     task_json_path = task_dir / "task.json"
     task_data: dict = {}
@@ -243,17 +251,19 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
         try:
             task_data = json.loads(task_json_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, PermissionError):
-            pass
+            pass  # Optional task metadata; fall back to generic status.
 
     task_title = task_data.get("title", task_ref)
     task_status = task_data.get("status", "unknown")
 
+# BEGIN skill-garden patch codex-session-start-completed-closeout v0.6
     if task_status == "completed":
         return (
             f"Status: COMPLETED\nTask: {task_title}\n"
-            f"Next: Archive with `python3 ./.trellis/scripts/task.py archive {task_dir.name}` "
-            "or start a new task."
+            "Next: Load trellis-continue. It routes incomplete publication through trellis-push "
+            "and retries deterministic Close only after structured blockers are resolved."
         )
+# END skill-garden patch codex-session-start-completed-closeout v0.6
 
     has_prd = (task_dir / "prd.md").is_file()
     has_design = (task_dir / "design.md").is_file()
@@ -386,10 +396,39 @@ def _build_compact_current_state(
                 if isinstance(data, dict):
                     status = str(data.get("status") or "unknown")
             except (json.JSONDecodeError, OSError):
-                pass
+                pass  # Optional task metadata; fall back to generic status.
+# BEGIN skill-garden patch codex-session-start-pre-check-hold v0.6
         lines.append(f"Current task: {_repo_relative(repo_root, task_dir)}; status={status}.")
     else:
         lines.append("Current task: none.")
+
+    try:
+        from untracked_flow import session_start_hint as untracked_start_hint  # type: ignore[import-not-found]
+
+        untracked_hint = untracked_start_hint(
+            repo_root,
+            hook_input,
+            platform="codex",
+        )
+    except Exception:
+        untracked_hint = None
+    if untracked_hint:
+        lines.append(untracked_hint)
+
+    try:
+        from pre_check_state import session_start_hint  # type: ignore[import-not-found]
+
+        pre_check_hint = session_start_hint(
+            repo_root,
+            hook_input,
+            platform="codex",
+            active=active,
+        )
+    except Exception:
+        pre_check_hint = None
+    if pre_check_hint:
+        lines.append(pre_check_hint)
+# END skill-garden patch codex-session-start-pre-check-hold v0.6
 
     if get_tasks_dir and iter_active_tasks:
         try:
@@ -398,7 +437,7 @@ def _build_compact_current_state(
                 f"Active tasks: {task_count} total. Use `python3 ./.trellis/scripts/task.py list --mine` only if needed."
             )
         except Exception:
-            pass
+            pass  # Optional task summary; keep compact state available.
 
     if get_active_journal_file and count_lines:
         journal = get_active_journal_file(repo_root)
@@ -407,8 +446,7 @@ def _build_compact_current_state(
                 f"Journal: {_repo_relative(repo_root, journal)}, {count_lines(journal)} / 2000 lines."
             )
 
-    if spec_index_paths:
-        lines.append(f"Spec indexes: {len(spec_index_paths)} available.")
+    lines.append(f"Spec indexes: {len(spec_index_paths)} available.")
 
     return "\n".join(lines)
 
@@ -446,7 +484,33 @@ def _strip_breadcrumb_tag_blocks(content: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", stripped).strip()
 
 
-def _build_workflow_toc(workflow_path: Path) -> str:
+# BEGIN skill-garden patch codex-session-start-platform-dispatch-helper v0.6
+_ALL_PLATFORM_DISPATCH = "Sub-agent dispatch protocol applies to all platforms and all sub-agents, including native Codex `SubagentStart` context injection with child-side pull fallback, class-2 Gemini/Qoder/Copilot/Reasonix/Trae/Grok/Kimi Code, hook-backed ZCode/Snow, and `trellis-research`: every dispatch prompt starts with `Active task: <task path from task.py current>` before role-specific instructions. On Grok Build, use `spawn_subagent` with `subagent_type` set to the Trellis agent name (e.g. `trellis-implement`). On Kimi Code, dispatch the built-in `coder` / `explore` sub-agent with the matching `.kimi-code/skills/trellis-<role>/SKILL.md` instructions."
+_COMMON_PLATFORM_DISPATCH = "Every sub-agent dispatch prompt, including `trellis-research`, must start with `Active task: <task path from task.py current>` before role-specific instructions. For implementation/check, enter `trellis-route` first and follow its execution-mode decision."
+_PLATFORM_DISPATCH_DETAILS = {
+    "codex": " Codex uses native `SubagentStart` context injection with child-side pull fallback.",
+    "grok": " On Grok Build, use `spawn_subagent` with `subagent_type` set to the Trellis agent name (e.g. `trellis-implement`).",
+    "kimi": " On Kimi Code, dispatch the built-in `coder` / `explore` sub-agent with the matching `.kimi-code/skills/trellis-<role>/SKILL.md` instructions.",
+}
+_SESSION_START_DISPATCH_PLATFORMS = {
+    "claude", "codebuddy", "codex", "copilot", "cursor", "droid", "gemini",
+    "grok", "kimi", "kiro", "qoder", "trae", "zcode",
+}
+
+
+def _platform_dispatch_summary(summary: str, platform: str | None) -> str:
+    """Return dispatch guidance for the detected platform, retaining a full fallback."""
+    # Missing or unknown host evidence must retain the complete contract instead of guessing.
+    if platform not in _SESSION_START_DISPATCH_PLATFORMS:
+        return summary
+    if summary.count(_ALL_PLATFORM_DISPATCH) != 1:
+        return summary
+    return summary.replace(
+        _ALL_PLATFORM_DISPATCH,
+        _COMMON_PLATFORM_DISPATCH + _PLATFORM_DISPATCH_DETAILS.get(platform, ""),
+    )
+# END skill-garden patch codex-session-start-platform-dispatch-helper v0.6
+def _build_workflow_toc(workflow_path: Path, platform: str | None = None) -> str:
     """Inject only the compact Phase Index summary for SessionStart."""
     content = read_file(workflow_path)
     if not content:
@@ -460,6 +524,7 @@ def _build_workflow_toc(workflow_path: Path) -> str:
 
     phases = _extract_range(content, "Phase Index", "Phase 1: Plan")
     if phases:
+        phases = _platform_dispatch_summary(phases, platform)
         out_lines.append(_strip_breadcrumb_tag_blocks(phases).rstrip())
 
     return "\n".join(out_lines).rstrip()
@@ -499,7 +564,7 @@ Trellis compact SessionStart context. Use it to orient the session; load details
     output.write("\n</current-state>\n\n")
 
     output.write("<trellis-workflow>\n")
-    output.write(_build_workflow_toc(trellis_dir / "workflow.md"))
+    output.write(_build_workflow_toc(trellis_dir / "workflow.md", "codex"))
     output.write("\n</trellis-workflow>\n\n")
 
     output.write("<guidelines>\n")
@@ -509,11 +574,15 @@ Trellis compact SessionStart context. Use it to orient the session; load details
         "are skipped for lightweight tasks.\n\n"
     )
 
-    if spec_index_paths:
-        output.write("## Available indexes (read on demand)\n")
-        for p in spec_index_paths:
-            output.write(f"- {p}\n")
-        output.write("\n")
+    if ".trellis/spec/guides/index.md" in spec_index_paths:
+        output.write("## Shared guidelines\n")
+        output.write("- .trellis/spec/guides/index.md\n\n")
+
+    output.write(
+        "Read the active task's `implement.jsonl` or `check.jsonl` for task-specific guidelines. "
+        "Find other relevant specs with "
+        "`python3 ./.trellis/scripts/spec_router.py \"<task keywords>\"`.\n\n"
+    )
 
     output.write(
         "Discover more via: "
@@ -524,9 +593,7 @@ Trellis compact SessionStart context. Use it to orient the session; load details
     task_status = _get_task_status(trellis_dir, hook_input)
     output.write(f"<task-status>\n{task_status}\n</task-status>\n\n")
 
-    output.write("""<ready>
-Context loaded. Follow <task-status>. Load workflow/spec/task details only when needed.
-</ready>""")
+
 
     context = output.getvalue()
     result = {

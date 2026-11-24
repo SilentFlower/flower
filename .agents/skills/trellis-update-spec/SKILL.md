@@ -28,121 +28,26 @@ Apply code-spec depth when the change includes any of:
 - Database schema/migration change
 - Infra integration (storage, queue, cache, secrets, env wiring)
 
-### Mandatory Output (7 Sections)
+<!-- BEGIN skill-garden patch trellis-update-spec-examples-output v0.6 -->
+### Mandatory Output (6 Sections)
 
 For triggered tasks, include all sections below:
 1. Scope / Trigger
 2. Signatures (command/API/DB)
 3. Contracts (request/response/env)
 4. Validation & Error Matrix
-5. Good/Base/Bad Cases
+5. Scenarios and Examples (normal/base cases and at least one incorrect use with its correction)
 6. Tests Required (with assertion points)
-7. Wrong vs Correct (at least one pair)
+<!-- END skill-garden patch trellis-update-spec-examples-output v0.6 -->
 
 ---
 
-## When to Update Code-Specs
-
-| Trigger | Example | Target Spec |
-|---------|---------|-------------|
-| **Implemented a feature** | Added a new integration or module | Relevant spec file |
-| **Made a design decision** | Chose extensibility pattern over simplicity | Relevant spec + "Design Decisions" section |
-| **Fixed a bug** | Found a subtle issue with error handling | Relevant spec (e.g., error-handling docs) |
-| **Discovered a pattern** | Found a better way to structure code | Relevant spec file |
-| **Hit a gotcha** | Learned that X must be done before Y | Relevant spec + "Common Mistakes" section |
-| **Established a convention** | Team agreed on naming pattern | Quality guidelines |
-| **New thinking trigger** | "Don't forget to check X before doing Y" | `guides/*.md` (as a checklist item) |
-
-**Key Insight**: Code-spec updates are NOT just for problems. Every feature implementation contains design decisions and contracts that future AI/developers need to execute safely.
-
----
-
-## Spec Structure Overview
-
-```
-.trellis/spec/
-├── <layer>/           # Per-layer coding standards (e.g., backend/, frontend/, api/)
-│   ├── index.md       # Overview and links
-│   └── *.md           # Topic-specific guidelines
-└── guides/            # Thinking checklists (NOT coding specs!)
-    ├── index.md       # Guide index
-    └── *.md           # Topic-specific guides
-```
-
-### CRITICAL: Code-Spec vs Guide - Know the Difference
-
-| Type | Location | Purpose | Content Style |
-|------|----------|---------|---------------|
-| **Code-Spec** | `<layer>/*.md` | Tell AI "how to implement safely" | Signatures, contracts, matrices, cases, test points |
-| **Guide** | `guides/*.md` | Help AI "what to think about" | Checklists, questions, pointers to specs |
-
-**Decision Rule**: Ask yourself:
-
-- "This is **how to write** the code" → Put in a spec layer directory
-- "This is **what to consider** before writing" → Put in `guides/`
-
-**Example**:
-
-| Learning | Wrong Location | Correct Location |
-|----------|----------------|------------------|
-| "Use API X not API Y for this task" | ❌ `guides/` (too specific for a thinking guide) | ✅ Relevant spec file (concrete convention) |
-| "Remember to check X when doing Y" | ❌ Spec file (too abstract for a spec) | ✅ `guides/` (thinking checklist) |
-
-**Guides should be short checklists that point to specs**, not duplicate the detailed rules.
-
----
-
-## Update Process
-
-### Step 1: Identify What You Learned
-
-Answer these questions:
-
-1. **What did you learn?** (Be specific)
-2. **Why is it important?** (What problem does it prevent?)
-3. **Where does it belong?** (Which spec file?)
-
-### Step 2: Classify the Update Type
-
-| Type | Description | Action |
-|------|-------------|--------|
-| **Design Decision** | Why we chose approach X over Y | Add to "Design Decisions" section |
-| **Project Convention** | How we do X in this project | Add to relevant section with examples |
-| **New Pattern** | A reusable approach discovered | Add to "Patterns" section |
-| **Forbidden Pattern** | Something that causes problems | Add to "Anti-patterns" or "Don't" section |
-| **Common Mistake** | Easy-to-make error | Add to "Common Mistakes" section |
-| **Convention** | Agreed-upon standard | Add to relevant section |
-| **Gotcha** | Non-obvious behavior | Add warning callout |
-
-### Step 3: Read the Target Code-Spec
-
-Before editing, read the current code-spec to:
-- Understand existing structure
-- Avoid duplicating content
-- Find the right section for your update
-
-```bash
-cat .trellis/spec/<category>/<file>.md
-```
-
-### Step 4: Make the Update
-
-Follow these principles:
-
-1. **Be Specific**: Include concrete examples, not just abstract rules
-2. **Explain Why**: State the problem this prevents
-3. **Show Contracts**: Add signatures, payload fields, and error behavior
-4. **Show Code**: Add code snippets for key patterns
-5. **Keep it Short**: One concept per section
-
-### Step 5: Update the Index (if needed)
-
-If you added a new section or the code-spec status changed, update the category's `index.md`.
-
----
+<!-- BEGIN skill-garden patch trellis-update-spec-prune-learning-guidance v0.6 -->
+<!-- END skill-garden patch trellis-update-spec-prune-learning-guidance v0.6 -->
 
 ## Update Templates
 
+<!-- BEGIN skill-garden patch trellis-update-spec-examples-template v0.6 -->
 ### Mandatory Template for Infra/Cross-Layer Work
 
 ```markdown
@@ -162,157 +67,84 @@ If you added a new section or the code-spec status changed, update the category'
 ### 4. Validation & Error Matrix
 - <condition> -> <error>
 
-### 5. Good/Base/Bad Cases
-- Good: ...
-- Base: ...
-- Bad: ...
+### 5. Scenarios and Examples
+- Normal: ...
+- Base/boundary: ...
+- Incorrect use: ...
+- Correct handling: ...
 
 ### 6. Tests Required
 - Unit/Integration/E2E with assertion points
+```
+<!-- END skill-garden patch trellis-update-spec-examples-template v0.6 -->
 
-### 7. Wrong vs Correct
-#### Wrong
-...
-#### Correct
-...
+<!-- BEGIN skill-garden patch trellis-update-spec-prune-writing-examples v0.6 -->
+<!-- END skill-garden patch trellis-update-spec-prune-writing-examples v0.6 -->
+
+<!-- BEGIN skill-garden patch trellis-update-spec-autonomous-evaluation v0.6 -->
+## Autonomous Spec Evaluation
+
+This section replaces the interactive “whether to update” decision. The Code-Spec First Rule remains authoritative when an update is necessary. Package/layer code-specs hold executable contracts; shared guides hold short thinking checklists and pointers, not duplicate contract details.
+
+### Result Contract
+
+Every invocation must evaluate the available evidence autonomously and return exactly one result:
+
+```yaml
+spec_update_result:
+  status: no-op | written | needs-review
+  reason: string
+  evidence: [string]
+  changed_files: [path]
+  validation: [string]
 ```
 
-### Adding a Design Decision
+- `no-op`: no reusable executable contract was learned, the existing specs already cover it, the change is only a one-off implementation/copy/formatting detail, or the user explicitly asked to skip spec updates in the current request.
+- `written`: code or test evidence supports a new executable contract, one authoritative target spec is unambiguous, and the minimal write plus focused validation completed successfully.
+- `needs-review`: the target spec, business semantics, conflict resolution, or a validation failure cannot be resolved uniquely from repository evidence.
 
-```markdown
-### Design Decision: [Decision Name]
+Do not enter the upstream Interactive Mode and do not ask whether a spec should be updated. Only `needs-review` may stop the workflow, and it may ask only one question that is necessary to resolve the current ambiguity.
 
-**Context**: What problem were we solving?
+### Evidence Order
 
-**Options Considered**:
-1. Option A - brief description
-2. Option B - brief description
+Reuse already-read, unchanged evidence in this order; read missing or changed material. Do not decide from the chat summary, task title, or intuition alone:
 
-**Decision**: We chose Option X because...
+1. For task context, the current task's `implement.jsonl` / `check.jsonl` and every file they reference.
+2. For task context, the current task's `prd.md`, `design.md`, and `implement.md`.
+3. For untracked context, `untracked_flow.py status --verbose` for work id, summary, and stage; obtain validation evidence from the current Check-All result and current change set rather than the cursor helper.
+4. The final Check-All conclusion and its actual validation evidence, or, for an eligible quick direct edit, the actual successful focused validation commands, results, and covered scope.
+5. The current subject's actual diff, source code, tests, and commit evidence.
+6. Existing specs and their indexes returned by `spec_router.py`.
 
-**Example**:
-\`\`\`typescript
-// How it's implemented
-code example
-\`\`\`
+When there is no active task, use a valid current-session untracked state when present; otherwise accept an explicit Update-Spec invocation, a passed Check-All continuation authorized by its owner, or the quick direct edit completion authorized by `workflow-state:no_task`. For quick entry, verify that the actual diff still meets `Request Triage` eligibility and that current successful focused validation covers it; missing, failed, or stale evidence cannot substitute for this handoff. Use the current request, actual diff, source/tests, and existing specs. Do not invent task evidence or a Check-All pass.
 
-**Extensibility**: How to extend this in the future...
+### Minimal Write Boundary
+
+Capture the current dirty baseline before writing. `written` requires all of the following:
+
+- Every change made by this Update-Spec invocation is under `.trellis/spec/**`. Do not modify business code, tests, workflow, skills, task artifacts, or any other file.
+- Modify the smallest required section in the fewest files. Do not opportunistically rewrite, expand, reorganize, or format unrelated content.
+- Prefer an existing authoritative spec. Create a new file only when no suitable spec exists, and update the corresponding index in the same invocation.
+- Do not write a generic principle merely to avoid `no-op`. New content must provide a concrete executable contract such as signatures, fields, boundaries, error matrices, examples, or test assertions, while following the Code-Spec First Rule.
+
+After writing, reread the spec diff and reverse-check it against source code and tests. At minimum run:
+
+```bash
+git diff --check -- .trellis/spec
 ```
 
-### Adding a Project Convention
+When applicable, also validate indexes/links, code signatures, or project-specific spec checks. Fix uniquely resolvable validation failures inside this skill and rerun validation. Return `needs-review` for failures that cannot be resolved uniquely. If this invocation creates changes outside `.trellis/spec/**`, return `needs-review` with `reason=boundary-violation`, stop immediately, and do not proceed to Push. A completed `written` result does not trigger another manual Check-All.
 
-```markdown
-### Convention: [Convention Name]
+### Workflow Disposition
 
-**What**: Brief description of the convention.
+- Interactive: follow the continuation decision made by Check-All's `Interactive Post-Check Stop Gate`, including strict pass and accepted-risk pass. A passed check defaults to this skill in the same turn after the Check-All report or brief acceptance acknowledgment; an explicit check-only or stop-after-check request keeps the chain stopped. When the user later says “下一步”, “继续”, `next`, `continue`, or an equivalent continuation intent, resume the deliberately stopped chain. Reuse a currently valid `spec_update_result` instead of evaluating again.
+- Quick direct edit: accept the eligible no-task handoff above without requiring a Check-All report, task, or untracked cursor. Evaluate the focused validation and actual diff, then use the same result and Push continuation contract; an explicit user instruction to stop or defer completion keeps the chain stopped.
+- Interactive completion, including direct Git: when the gate permits continuation, a `no-op` or `written` result must load `trellis-push` in the same turn and present its single confirmation plan; if there are no deliverable changes, report that no commit is needed instead of manufacturing an empty commit. Only `no-op` or `written` may proceed to `trellis-push`; `needs-review` stops and must not generate a Push plan. Reuse valid acceptance evidence internally without repeating unchanged risks. Default continuation does not authorize Git writes; do not infer risk acceptance or Git write authorization from unrelated history, summaries, dirty state, or an auto-loop internal `commit-only`. Do not treat an agent-authored "no commit/push" restriction in task artifacts or ordinary implementation-plan approval as an explicit user stop instruction; stopping this handoff requires an explicit user instruction, and pending Git write authorization does not block presenting the Push plan.
+- Validated auto-loop: for `no-op` or `written`, execute `record --action run_spec_update --result ok`; only after a successful record immediately run `next`. If record returns `status=retryable` with an artifact recovery diagnosis, follow `trellis-auto-loop` recovery instructions in the same turn, then resubmit the original truthful record; do not advance or request user continuation. For `needs-review`, execute `record --action run_spec_update --result blocked --failure-type spec-needs-review`; never disguise it as `no-op`.
+- Untracked: keep the cursor at `spec` for `needs-review`. For `no-op` or `written`, run `untracked_flow.py advance --stage push`. Any later product edit returns the cursor to `implement`; the helper does not validate or preserve owner evidence.
 
-**Why**: Why we do it this way in this project.
-
-**Example**:
-\`\`\`typescript
-// How to follow this convention
-code example
-\`\`\`
-
-**Related**: Links to related conventions or specs.
-```
-
-### Adding a New Pattern
-
-```markdown
-### Pattern Name
-
-**Problem**: What problem does this solve?
-
-**Solution**: Brief description of the approach.
-
-**Example**:
-\`\`\`
-// Good
-code example
-
-// Bad
-code example
-\`\`\`
-
-**Why**: Explanation of why this works better.
-```
-
-### Adding a Forbidden Pattern
-
-```markdown
-### Don't: Pattern Name
-
-**Problem**:
-\`\`\`
-// Don't do this
-bad code example
-\`\`\`
-
-**Why it's bad**: Explanation of the issue.
-
-**Instead**:
-\`\`\`
-// Do this instead
-good code example
-\`\`\`
-```
-
-### Adding a Common Mistake
-
-```markdown
-### Common Mistake: Description
-
-**Symptom**: What goes wrong
-
-**Cause**: Why this happens
-
-**Fix**: How to correct it
-
-**Prevention**: How to avoid it in the future
-```
-
-### Adding a Gotcha
-
-```markdown
-> **Warning**: Brief description of the non-obvious behavior.
->
-> Details about when this happens and how to handle it.
-```
-
----
-
-## Interactive Mode
-
-If you're unsure what to update, answer these prompts:
-
-1. **What did you just finish?**
-   - [ ] Fixed a bug
-   - [ ] Implemented a feature
-   - [ ] Refactored code
-   - [ ] Had a discussion about approach
-
-2. **What did you learn or decide?**
-   - Design decision (why X over Y)
-   - Project convention (how we do X)
-   - Non-obvious behavior (gotcha)
-   - Better approach (pattern)
-
-3. **Would future AI/developers need to know this?**
-   - To understand how the code works → Yes, update spec
-   - To maintain or extend the feature → Yes, update spec
-   - To avoid repeating mistakes → Yes, update spec
-   - Purely one-off implementation detail → Maybe skip
-
-4. **Which area does it relate to?**
-   - [ ] Backend code
-   - [ ] Frontend code
-   - [ ] Cross-layer data flow
-   - [ ] Code organization/reuse
-   - [ ] Quality/testing
-
----
-
+Do not ask again or rerun when a currently valid `no-op` or `written` result already exists. Re-evaluate after the actual diff, Check-All or focused validation conclusion, or the user's spec intent changes.
+<!-- END skill-garden patch trellis-update-spec-autonomous-evaluation v0.6 -->
 ## Quality Checklist
 
 Before finishing your code-spec update:
@@ -322,7 +154,9 @@ Before finishing your code-spec update:
 - [ ] Did you explain WHY, not just WHAT?
 - [ ] Did you include executable signatures/contracts?
 - [ ] Did you include validation and error matrix?
-- [ ] Did you include Good/Base/Bad cases?
+<!-- BEGIN skill-garden patch trellis-update-spec-examples-checklist v0.6 -->
+- [ ] Did Scenarios and Examples cover normal/base cases and incorrect use with its correction?
+<!-- END skill-garden patch trellis-update-spec-examples-checklist v0.6 -->
 - [ ] Did you include required tests with assertion points?
 - [ ] Is it in the right code-spec file?
 - [ ] Does it duplicate existing content?
@@ -330,27 +164,20 @@ Before finishing your code-spec update:
 
 ---
 
-## Relationship to Other Commands
+<!-- BEGIN skill-garden patch trellis-update-spec-command-relationship v0.6 -->
+## Relationship to Other Capabilities
 
 ```
 Development Flow:
-  Learn something → `update-spec` (Trellis command) → Knowledge captured
+  Learn something → `update-spec` (Trellis capability) → Knowledge captured
        ↑                                  ↓
-  `break-loop` (Trellis command) ←──────────────────── Future sessions benefit
+  `break-loop` (Trellis capability) ←──────────────────── Future sessions benefit
   (deep bug analysis)
 ```
 
-- ``break-loop` (Trellis command)` - Analyzes bugs deeply, often reveals spec updates needed
-- ``update-spec` (Trellis command)` - Actually makes the updates
-- ``finish-work` (Trellis command)` - Reminds you to check if specs need updates
-
----
-
-## Core Philosophy
-
-> **Code-specs are living documents. Every debugging session, every "aha moment" is an opportunity to make the implementation contract clearer.**
-
-The goal is **institutional memory**:
-- What one person learns, everyone benefits from
-- What AI learns in one session, persists to future sessions
-- Mistakes become documented guardrails
+- `break-loop` analyzes bugs deeply and often reveals spec updates needed.
+- `update-spec` evaluates and writes durable project guidance.
+- Check-All decides whether the current result may continue to Update-Spec and Push.
+<!-- END skill-garden patch trellis-update-spec-command-relationship v0.6 -->
+<!-- BEGIN skill-garden patch trellis-update-spec-prune-philosophy v0.6 -->
+<!-- END skill-garden patch trellis-update-spec-prune-philosophy v0.6 -->

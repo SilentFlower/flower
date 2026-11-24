@@ -4,18 +4,23 @@
 
 A bundled skill is a directory under `packages/cli/src/templates/common/bundled-skills/<skill>/` that already contains its own `SKILL.md` (with YAML frontmatter) plus optional `references/`, assets, or other supporting files. Trellis copies the whole directory tree as-is into each platform's skill root, so references stay lazy-loadable instead of being flattened into one oversized `SKILL.md`.
 
+<!-- BEGIN skill-garden patch trellis-meta-managed-skill-taxonomy v0.6 -->
 ## What Counts As Bundled (vs. Adjacent Concepts)
 
-| Source path | Type | How it ships |
+Directory shape alone does not determine ownership:
+
+| Ownership class | Evidence | Durable source |
 | --- | --- | --- |
-| `templates/common/bundled-skills/<name>/` | Bundled skill (multi-file) | Whole directory copied to every platform skill root |
-| `templates/common/skills/<name>.md` | Single-file workflow skill | Wrapped with frontmatter, written as `<root>/<name>/SKILL.md` |
-| `templates/common/commands/<name>.md` | Slash command / prompt | Written to each platform's command directory (`.claude/commands/trellis/`, `.cursor/commands/trellis-*.md`, `.gemini/commands/trellis/*.toml`, etc.) |
-| `templates/<platform>/skills/` | Platform-specific skill | Written only into that platform's directory (e.g. `.codex/skills/`) |
-| User skills under `.claude/skills/<my-skill>/` etc. | Marketplace or user-authored | Not managed by Trellis at all |
+| Upstream bundled | Trellis template hashes and bundled-skill distribution | Trellis bundled template source or an explicitly local supplement |
+| Skill-Garden managed | `flower/skill-garden` lock/state entries or `skill-garden patch` markers | `vendor/skill-garden/.trellis/0.6/` in the Flower source checkout |
+| Flower managed | Flower Plugin state paths/patches and owner IDs | The owning Flower Plugin source, adapter, or `src/patches/` catalog |
+| Shared common | Plugin state entry with shared ownership | The common source retained across dependent capabilities |
+| Project-local | No upstream template or Plugin ownership claim, plus project intent | The project file itself |
 
-The Trellis CLI never touches anything that is not produced by one of its own template loaders. Anything a user drops into a platform skill root by hand is left alone.
+For managed 0.6 changes, Patch leaves own `insert`/`replace`/`remove` transformations; selectors and full baselines fail closed on upstream drift; content files own replacement bytes; explicit targets and `each-existing` prevent accidental platform creation; Bundles own full/selected aliases; required preflight prevents partial writes; markers and first backups support migration/recovery; Patch application records identify the selected operations; compatibility and conflict policies audit the final result; canonical compiled targets prove the pinned upstream output. These responsibilities must stay in the shared Patch Engine instead of being reimplemented by a skill-specific injector.
 
+Discover what is active from the local skill roots, `.trellis/workflow.md`, available `overrides/bundles/`, and `.flower/state.json`. Do not infer ownership from a skill name or maintain a fixed Skill-Garden capability list in this document.
+<!-- END skill-garden patch trellis-meta-managed-skill-taxonomy v0.6 -->
 ## Current Bundled Skills (v0.6.0)
 
 The set is discovered at runtime by listing directories under `templates/common/bundled-skills/`:
@@ -29,32 +34,39 @@ The set is discovered at runtime by listing directories under `templates/common/
 
 The list is discovered at runtime, so adding a new directory under `bundled-skills/` is the only step required to register a new skill (see "Adding a New Bundled Skill" below).
 
+<!-- BEGIN skill-garden patch trellis-meta-managed-platform-skill-roots v0.6 -->
 ## Where Bundled Skills Land Per Platform
 
-Each platform configurator calls `writeSkills(<root>, <workflowSkills>, resolveBundledSkills(ctx))` during `trellis init`. `resolveBundledSkills` reads every directory under `templates/common/bundled-skills/`, resolves placeholders, and returns a flat list of `{relativePath, content}` entries. `writeSkills` then mirrors them under the platform's skill root.
+A platform's whole file set is described exactly once by `collect<Platform>Templates()` in `packages/cli/src/configurators/<platform>.ts`. `resolveBundledSkills(ctx)` loads the upstream bundled-skill tree, and `collectSkillTemplates(<skillsRoot>, <workflowSkills>, <bundledSkills>)` places it in the platform's `Map<filePath, content>`. `trellis init` writes that map through `writeTemplateMap`; `trellis update` reads the same map through `collectPlatformTemplates(platformId)` for drift detection and `.trellis/.template-hashes.json`.
 
-| Platform | Bundled skill root | Notes |
+| Platform | Bundled skill root | Flower ownership note |
 | --- | --- | --- |
-| Claude Code | `.claude/skills/<skill>/` | `configureClaude` |
-| Cursor | `.cursor/skills/<skill>/` | `configureCursor` |
-| Codex | `.agents/skills/<skill>/` | `configureCodex` writes the shared `.agents/skills/` root, which Gemini CLI 0.40+ also reads |
-| Gemini CLI | `.agents/skills/<skill>/` | Same shared root as Codex; the two configurators are required to produce byte-identical output |
-| Kiro | `.kiro/skills/<skill>/` | `configureKiro` (skills-based platform — no commands) |
-| Qoder | `.qoder/skills/<skill>/` | `configureQoder` |
-| Codebuddy | `.codebuddy/skills/<skill>/` | `configureCodebuddy` |
-| Copilot | `.github/skills/<skill>/` | `configureCopilot` |
-| Droid | `.factory/skills/<skill>/` | `configureDroid` |
-| Antigravity | `.agent/skills/<skill>/` | `configureAntigravity` |
-| Devin | `.devin/skills/<skill>/` | `configureDevin` |
-| Kilo | `.kilocode/skills/<skill>/` | `configureKilo` |
-| OpenCode | (handled by `collectOpenCodeTemplates`) | Uses the same `resolveBundledSkills(ctx)` output |
-| Pi, Reasonix | (their own collectors) | Same `resolveBundledSkills(ctx)` output |
+| Claude Code | `.claude/skills/<skill>/` | Private platform root |
+| Cursor | `.cursor/skills/<skill>/` | Private platform root |
+| OpenCode | `.opencode/skills/<skill>/` | Private platform root |
+| Codex | `.agents/skills/<skill>/` | Shared neutral root |
+| Gemini CLI | `.agents/skills/<skill>/` | Shared neutral root |
+| Pi Agent | `.agents/skills/<skill>/` | Shared neutral root; `.pi/` keeps prompts, agents, extensions, and settings |
+| Kimi Code | `.agents/skills/<skill>/` | Shared neutral root; `.kimi-code/skills/` keeps commands and agent prompts |
+| Kilo | `.kilocode/skills/<skill>/` | Private platform root |
+| Kiro | `.kiro/skills/<skill>/` | Private platform root |
+| Antigravity | `.agent/skills/<skill>/` | Private platform root |
+| Devin | `.devin/skills/<skill>/` | Private platform root |
+| Qoder | `.qoder/skills/<skill>/` | Private platform root |
+| CodeBuddy | `.codebuddy/skills/<skill>/` | Private platform root |
+| GitHub Copilot | `.github/skills/<skill>/` | Private platform root |
+| Factory Droid | `.factory/skills/<skill>/` | Private platform root |
+| Reasonix | `.reasonix/skills/<skill>/` | Private platform root; agent behavior also uses skill frontmatter |
+| ZCode | `.zcode/skills/<skill>/` | Private platform root |
+| Trae | `.trae/skills/<skill>/` | Private platform root |
+| Oh My Pi | `.omp/skills/<skill>/` | Private platform root |
+| Grok Build | `.grok/skills/<skill>/` | Private platform root |
+| Snow CLI | `.snow/skills/<skill>/` | Private platform root |
 
-Two paths exercise the same data:
+The physical roots are the platform-private roots above plus one shared `.agents/skills/` tree. `.pi/skills/` is not a current target, and `.kimi-code/skills/` must not receive a second bundled copy. Codex, Gemini CLI, Pi Agent, and Kimi Code must receive byte-identical neutral content whenever they share a path.
 
-1. `configureX(cwd)` writes files during `trellis init`.
-2. `collectPlatformTemplates(platformId)` (in `configurators/index.ts`) returns a `Map<filePath, content>` that `trellis update` uses to detect drift and to populate `.trellis/.template-hashes.json`. Both must produce byte-identical output, so they both call `resolveBundledSkills(ctx)` and `collectSkillTemplates(root, …, resolveBundledSkills(ctx))`.
-
+Flower does not maintain a second platform file map. It discovers enabled logical platforms from their native entry points, projects managed additions only to those platforms, and applies declared Skill-Garden Patches after the upstream map exists. A shared physical root is never evidence that every logical consumer is enabled.
+<!-- END skill-garden patch trellis-meta-managed-platform-skill-roots v0.6 -->
 ## Dispatch Wiring (Code Path)
 
 The mechanism that auto-dispatches bundled skills to platform skill roots lives in two files:
@@ -66,10 +78,10 @@ The mechanism that auto-dispatches bundled skills to platform skill roots lives 
 
 2. `packages/cli/src/configurators/shared.ts`
    - `resolveBundledSkills(ctx)` flattens that list into `ResolvedSkillFile[]` with `<skill>/<relativePath>` paths and resolved placeholders.
-   - `writeSkills(skillsRoot, workflowSkills, bundledSkills)` writes both workflow skills and bundled skill files under `skillsRoot`.
-   - `collectSkillTemplates(skillsRoot, workflowSkills, bundledSkills)` returns the same shape as a `Map<filePath, content>` for the update / hash pipeline.
+   - `collectSkillTemplates(skillsRoot, workflowSkills, bundledSkills)` returns workflow skills and bundled skill files together as a `Map<filePath, content>` rooted at `skillsRoot`.
+   - `writeTemplateMap(cwd, files)` is the single writer that puts a collected map on disk.
 
-Every platform configurator that supports skills imports both helpers (see `claude.ts`, `cursor.ts`, `codex.ts`, `gemini.ts`, `kiro.ts`, `qoder.ts`, `codebuddy.ts`, `copilot.ts`, `droid.ts`, `antigravity.ts`, `devin.ts`, `kilo.ts`). The `index.ts` `PLATFORM_FUNCTIONS` registry also calls `resolveBundledSkills(ctx)` inside each `collectTemplates` closure so `trellis update` tracking stays consistent.
+Every platform that supports skills reaches those two helpers from its own `collect<Platform>Templates()` — either directly (`claude.ts`, `codex.ts`, `copilot.ts`, `gemini.ts`, `grok.ts`, `kimi.ts`, `kiro.ts`, `omp.ts`, `opencode.ts`, `pi.ts`, `reasonix.ts`, `snow.ts`, `zcode.ts`) or through `collectBothTemplates(ctx, cmdPath, skillRoot)` in `shared.ts`, which makes the same two calls on behalf of platforms that have both a commands directory and a skills root (`antigravity.ts`, `codebuddy.ts`, `cursor.ts`, `devin.ts`, `droid.ts`, `kilo.ts`, `qoder.ts`, `trae.ts`).
 
 ## Adding a New Bundled Skill
 
@@ -105,29 +117,24 @@ The shape and dispatch wiring are already generic, so adding a skill requires on
    - Source files exist on the branch being tagged.
    - `pnpm --filter @mindfoldhq/trellis build` copies the asset into `dist/templates/common/bundled-skills/<skill>/`.
    - `npm pack --dry-run --json` includes the expected `dist/**` paths.
-   - In a fresh temp project, `trellis init` writes `.claude/skills/<skill>/SKILL.md`, `.agents/skills/<skill>/SKILL.md`, etc.
+   - In a fresh temp project, `trellis init` writes `.claude/skills/<skill>/SKILL.md`, `.agents/skills/<skill>/SKILL.md`, `.zcode/skills/<skill>/SKILL.md`, etc.
    - `.trellis/.template-hashes.json` lists the generated files.
    - `trellis update --dry-run` in that temp project reports "Already up to date!".
 
 6. **Add a migration manifest entry** if the skill is added in a release that other projects will upgrade into. Without an explicit manifest entry the file will land via the standard "missing file" branch of `trellis update`, but a manifest makes the change visible in the changelog.
 
+<!-- BEGIN skill-garden patch trellis-meta-managed-bundled-overrides v0.6 -->
 ## Overriding a Bundled Skill Locally
 
-There is no formal "project-local skill" mechanism (e.g. `.trellis/skills/`). Bundled skills are platform-rooted, so any override is platform-rooted too.
+First determine whether the deployed bundled skill is only Trellis-managed or also owned by Flower/Skill-Garden.
 
-The supported pattern relies on the existing template-hash diff in `trellis update`:
+- In a native Trellis project, template-hash conflict handling still permits a local divergence, with the normal cross-platform and future-update caveats.
+- In a Flower-managed project, do not directly edit a target recorded in `.flower/state.json`. Change the owning Plugin/Patch source and let preflight plus the transaction writer update every existing platform target consistently.
+- In the Flower source checkout, Skill-Garden 0.6 modifications belong under `vendor/skill-garden/.trellis/0.6/overrides/`; run `npm run sync`, refresh/check compiled targets, then apply the Plugin to dogfood targets.
+- For project-private behavior, prefer `.trellis/spec/` or a differently named project-local skill that has no upstream or Plugin ownership claim.
 
-1. Edit the local file directly. Example: `.claude/skills/trellis-meta/SKILL.md`.
-2. The file's hash now diverges from the entry in `.trellis/.template-hashes.json`.
-3. The next `trellis update` detects the user modification and leaves the file untouched (Trellis never overwrites user-modified files without an explicit `--force`).
-
-Caveats:
-
-- The override only applies to the one platform whose directory you edited. To override the same skill across, for example, Claude Code and Codex, you must edit both `.claude/skills/<name>/` and `.agents/skills/<name>/`.
-- A future `trellis update --force` will overwrite local edits. Keep the override under version control so it can be reapplied if needed.
-- Marketplace skills installed under the same platform skill root with a different folder name (e.g. `.claude/skills/my-custom-meta/`) are untouched by Trellis and are the cleaner option when the goal is to add behavior, not to mutate the bundled skill.
-- Team-private conventions belong in `.trellis/spec/` or in a separate marketplace-style local skill, not in modifications to `trellis-meta` itself. See `customize-local/add-project-local-conventions.md`.
-
+If Skill-Garden is removed and its state ownership is cleanly released, the remaining bundled skill returns to native Trellis update semantics. Do not leave managed prose behind after uninstall or freeze assumptions into this reference.
+<!-- END skill-garden patch trellis-meta-managed-bundled-overrides v0.6 -->
 ## Removing a Bundled Skill From a Project
 
 There is no per-project opt-out flag for bundled skills. Two options:
@@ -136,7 +143,7 @@ There is no per-project opt-out flag for bundled skills. Two options:
 
 2. **Pin a Trellis version that did not ship the skill.** The bundled-skill set is determined at build time, so installing an older release of the CLI is the only way to permanently exclude a skill that the current release ships.
 
-A third option — globally disabling all bundled skills — is not supported. The dispatch is unconditional in every configurator. Adding such a flag would require changing `PLATFORM_FUNCTIONS` in `configurators/index.ts` and every `configureX` function.
+A third option — globally disabling all bundled skills — is not supported. The dispatch is unconditional: `collect<Platform>Templates()` takes no arguments, so there is nowhere for a flag to enter. Adding one would mean changing that signature across all 21 platforms plus `collectPlatformTemplates` in `configurators/index.ts`.
 
 ## Operating Rules
 

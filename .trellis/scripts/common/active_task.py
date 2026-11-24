@@ -23,8 +23,15 @@ DIR_WORKFLOW = ".trellis"
 DIR_TASKS = "tasks"
 DIR_RUNTIME = ".runtime"
 DIR_SESSIONS = "sessions"
-DIR_CURSOR_SHELL = "cursor-shell"
-CURSOR_SHELL_TICKET_TTL_SECONDS = 30
+DIR_SHELL_TICKETS = "shell-tickets"
+# Pre-0.6.13 name, when the bridge was Cursor-only. Still read so a session that
+# was mid-command across an upgrade does not silently degrade; never written.
+# Tickets are 30-second ephemera, so the old directory ages out by itself —
+# there is nothing to migrate, only a glob on a directory that is normally
+# absent. The alternative (ignore it) would land its one lost command on the
+# platform that works today.
+DIR_LEGACY_CURSOR_SHELL_TICKETS = "cursor-shell"
+SHELL_TICKET_TTL_SECONDS = 30
 TASK_SESSION_COMMANDS = {"start", "current", "finish"}
 
 _SESSION_KEYS = ("session_id", "sessionId", "sessionID")
@@ -44,29 +51,81 @@ _KNOWN_PLATFORMS = {
     "copilot",
     "pi",
     "trae",
+    "grok",
+    "kimi",
+    "zcode",
+    "snow",
 }
 
+# Every name below records how it was checked. Do NOT add a name by analogy
+# with a neighbour: a 2026-08-05 audit of all 21 platforms found 12 of the 21
+# declared names had never existed anywhere — they were pattern-guessed from a
+# `<PLATFORM>_SESSION_ID` shape no vendor agreed to, and the uniformity was the
+# only "evidence" behind them. A platform with no verified name belongs in no
+# table; it resolves through TRELLIS_CONTEXT_ID or its hook/plugin bridge.
 _ENV_SESSION_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("claude", ("CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID")),
-    ("codex", ("CODEX_SESSION_ID", "CODEX_THREAD_ID")),
-    ("cursor", ("CURSOR_SESSION_ID",)),
-    ("opencode", ("OPENCODE_SESSION_ID", "OPENCODE_SESSIONID", "OPENCODE_RUN_ID")),
+    # REAL, undocumented (verified 2026-08-05 in a live Claude Code 2.1.221 bash
+    # child; absent from code.claude.com/docs/en/env-vars). CLAUDE_SESSION_ID
+    # was removed here — verified absent from that same live environment.
+    ("claude", ("CLAUDE_CODE_SESSION_ID",)),
+    # REAL, undocumented (verified 2026-08-05: injected by codex-cli 0.146.0
+    # into shell children, absent from the parent env; openai/codex#19937).
+    # CODEX_SESSION_ID was removed — absent from a live `codex exec` env.
+    ("codex", ("CODEX_THREAD_ID",)),
+    # REAL but HOOK-SCOPE ONLY (verified 2026-08-05): set by Gemini's
+    # hookRunner.ts. Its shell tool builds the child env in
+    # shellExecutionService.ts and adds only GEMINI_CLI/TERM/PAGER/GIT_PAGER, so
+    # this never reaches a bash child — it resolves only inside a hook process.
     ("gemini", ("GEMINI_SESSION_ID",)),
-    ("droid", ("FACTORY_SESSION_ID", "DROID_SESSION_ID")),
+    # REAL but HOOK-SCOPE ONLY (verified 2026-08-05): docs.qoder.com/zh/
+    # extensions/hooks documents it as injected during hook execution by the
+    # Qoder *IDE plugin*. Absent from the Qoder CLI hook docs and from Lingma.
     ("qoder", ("QODER_SESSION_ID",)),
-    ("codebuddy", ("CODEBUDDY_SESSION_ID",)),
+    # UNVERIFIED (2026-08-05): absent from kiro.dev/docs/hooks/, but Dynatrace
+    # dtctl, oh-my-agent and gastown all key agent detection on it and one notes
+    # it is "set in both interactive and --no-interactive". Kept because that is
+    # absence of evidence, not evidence of absence. To settle: run
+    # `env | grep KIRO` from a Kiro shell-tool call on a machine with Kiro.
     ("kiro", ("KIRO_SESSION_ID",)),
+    # UNVERIFIED (2026-08-05): absent from docs.github.com/en/copilot/reference/
+    # hooks-reference and from the CLI programmatic reference. To settle: run
+    # `copilot help environment` (the authoritative list per those docs) — not
+    # runnable here, the CLI is not installed and copilot-cli ships no source.
     ("copilot", ("COPILOT_SESSION_ID", "COPILOT_SESSIONID")),
-    ("pi", ("PI_SESSION_ID", "PI_SESSIONID")),
-    ("trae", ("TRAE_SESSION_ID",)),
+    # REASONED, UNVERIFIED (2026-08-05): ZCode is closed-source and not
+    # installable here. It mirrors Claude's naming elsewhere (CLAUDE_PLUGIN_ROOT
+    # / CLAUDE_PLUGIN_DATA compat aliases are in its docs), and the previously
+    # declared CLAUDE_SESSION_ID does not exist on Claude Code either — so the
+    # name ZCode would actually reuse is CLAUDE_CODE_SESSION_ID. Try that first,
+    # keep the historical name as a fallback: if neither exists nothing changes.
+    # Platform-scoped lookup (_iter_env_keys filters by platform name), so the
+    # entry only fires once the resolver detected "zcode" — no collision with
+    # the claude entry above.
+    ("zcode", ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")),
+    # REAL by vendor design (verified 2026-08-05): Snow's sessionIdentityEnv.ts
+    # exports SNOW_SESSION_ID into hook/terminal/sub-agent children and names
+    # Trellis in its source header. TRELLIS_CONTEXT_ID stays the preferred
+    # override — Snow sets that too.
+    ("snow", ("SNOW_SESSION_ID",)),
 )
 _ENV_CONVERSATION_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # REAL in cursor-agent (CLI), undocumented (verified 2026-08-05: the value
+    # matches ~/.cursor/chats/<ws>/<id>). The Cursor *IDE* is unverified — a
+    # 2026-05 forum request for it drew no staff reply. The invented
+    # CURSOR_SESSION_ID was removed from the session table: empty in a live
+    # cursor-agent shell. Cursor's other path is the shell ticket below
+    # (_lookup_shell_ticket_context_key), which is not Cursor-specific.
     ("cursor", ("CURSOR_CONVERSATION_ID", "CURSOR_CONVERSATIONID")),
 )
 _ENV_TRANSCRIPT_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("claude", ("CLAUDE_TRANSCRIPT_PATH",)),
-    ("codex", ("CODEX_TRANSCRIPT_PATH",)),
+    # REAL but HOOK-SCOPE ONLY (verified 2026-08-05): documented for Cursor hook
+    # scripts; empty in the agent's own shell env.
     ("cursor", ("CURSOR_TRANSCRIPT_PATH",)),
+    # UNVERIFIED — never researched. The 2026-08-05 audit covered the session
+    # table only, so do not infer these are real *or* fake from that work
+    # (CLAUDE_/CODEX_TRANSCRIPT_PATH were removed because those two *were*
+    # checked: absent from docs and from live envs). To settle each: run
+    # `env | grep _TRANSCRIPT_PATH` inside a hook and inside a shell-tool call.
     ("gemini", ("GEMINI_TRANSCRIPT_PATH",)),
     ("droid", ("FACTORY_TRANSCRIPT_PATH", "DROID_TRANSCRIPT_PATH")),
     ("qoder", ("QODER_TRANSCRIPT_PATH",)),
@@ -77,6 +136,16 @@ _ENV_PLATFORM_ALIASES = {
     "factory": "droid",
     "factory-ai": "droid",
     "github-copilot": "copilot",
+}
+# ZCode intentionally reuses Claude's session env var name. Hooks know the host
+# is ZCode, while later shell commands see only the shared env name and resolve
+# it through the claude entry. Canonicalize both paths to one runtime filename.
+_CONTEXT_KEY_PLATFORM_ALIASES = {
+    "zcode": "claude",
+    # Factory Droid's config directory is `.factory/`, so a hook that names its
+    # platform after the directory it was installed in reports "factory". Its
+    # sibling hooks report "droid". One runtime filename either way.
+    "factory": "droid",
 }
 
 
@@ -97,6 +166,50 @@ class ActiveTask:
         if self.source_type == "session-fallback" and self.context_key:
             return f"session-fallback:{self.context_key}"
         return self.source_type
+# BEGIN skill-garden patch active-task-clear-read-result v0.6
+
+
+def _read_json_result(path: Path) -> dict[str, Any]:
+    """Read runtime JSON while preserving missing/corrupt/I/O distinctions."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"status": "missing", "data": None, "error": None}
+    except json.JSONDecodeError as error:
+        return {"status": "corrupt", "data": None, "error": str(error)}
+    except OSError as error:
+        return {"status": "io_error", "data": None, "error": str(error)}
+    if not isinstance(data, dict):
+        return {"status": "corrupt", "data": None, "error": "JSON root is not an object"}
+    return {"status": "ok", "data": data, "error": None}
+# END skill-garden patch active-task-clear-read-result v0.6
+# BEGIN skill-garden patch active-task-clear-result-type v0.6
+
+
+@dataclass(frozen=True)
+class ClearActiveTaskResult:
+    """Result of clearing a session-scoped active task.
+
+    Args:
+        active: Task resolved before cleanup.
+        cleared: Whether the target session state is absent after the operation.
+        error: Stable diagnostic when cleanup failed.
+    """
+
+    active: ActiveTask
+    cleared: bool
+    error: str | None = None
+
+    @property
+    def task_path(self) -> str | None:
+        """Return the task path resolved before cleanup."""
+        return self.active.task_path
+
+    @property
+    def source(self) -> str:
+        """Return the human-readable source resolved before cleanup."""
+        return self.active.source
+# END skill-garden patch active-task-clear-result-type v0.6
 
 
 def normalize_task_ref(task_ref: str) -> str:
@@ -191,6 +304,7 @@ def _detect_platform(platform_input: dict[str, Any] | None, platform: str | None
 
 
 def _context_key(platform_name: str, kind: str, value: str) -> str:
+    platform_name = _CONTEXT_KEY_PLATFORM_ALIASES.get(platform_name, platform_name)
     if kind == "transcript":
         return f"{platform_name}_transcript_{_hash_value(value)}"
     safe_value = _sanitize_key(value)
@@ -203,6 +317,12 @@ def _iter_env_keys(
     env_keys: tuple[tuple[str, tuple[str, ...]], ...],
     platform_name: str | None,
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Narrow an env-key table to one platform, or return all of it.
+
+    A platform with no entry yields an empty tuple, and the caller's `for` loop
+    simply does not run. That is the normal case, not an error: platforms with
+    no verified env var name are deliberately absent from these tables.
+    """
     if not platform_name:
         return env_keys
     matched = tuple((name, keys) for name, keys in env_keys if name == platform_name)
@@ -215,6 +335,7 @@ def _env_platform_name(platform_name: str | None) -> str | None:
     return _ENV_PLATFORM_ALIASES.get(platform_name, platform_name)
 
 
+# BEGIN skill-garden patch active-task-host-identity v0.6
 def _lookup_env_context_key(platform_name: str | None) -> str | None:
     """Resolve a context key from platform-provided environment variables.
 
@@ -224,6 +345,20 @@ def _lookup_env_context_key(platform_name: str | None) -> str | None:
     are present, there is no session-scoped active task.
     """
     env_platform_name = _env_platform_name(platform_name)
+    if env_platform_name is None:
+        candidates = {
+            _CONTEXT_KEY_PLATFORM_ALIASES.get(name, name)
+            for table in (_ENV_SESSION_KEYS, _ENV_CONVERSATION_KEYS, _ENV_TRANSCRIPT_KEYS)
+            for name, keys in table
+            if any(_string_value(os.environ.get(key)) for key in keys)
+        }
+        if len(candidates) > 1:
+            # Inherited variables may describe an outer tool; use the nearest host.
+            try:
+                from flower_session_host import select_platform
+            except ImportError as error:
+                raise ValueError("Multiple platform identities require an explicit platform or TRELLIS_CONTEXT_ID") from error
+            env_platform_name = select_platform(candidates)
 
     for name, keys in _iter_env_keys(_ENV_SESSION_KEYS, env_platform_name):
         for key in keys:
@@ -244,6 +379,7 @@ def _lookup_env_context_key(platform_name: str | None) -> str | None:
                 return _context_key(name, "transcript", value)
 
     return None
+# END skill-garden patch active-task-host-identity v0.6
 
 
 def _find_repo_root_from_cwd() -> Path | None:
@@ -256,8 +392,12 @@ def _find_repo_root_from_cwd() -> Path | None:
         current = current.parent
 
 
-def _cursor_shell_ticket_dir(repo_root: Path) -> Path:
-    return repo_root / DIR_WORKFLOW / DIR_RUNTIME / DIR_CURSOR_SHELL
+def _shell_ticket_dirs(repo_root: Path) -> tuple[Path, ...]:
+    runtime_dir = repo_root / DIR_WORKFLOW / DIR_RUNTIME
+    return (
+        runtime_dir / DIR_SHELL_TICKETS,
+        runtime_dir / DIR_LEGACY_CURSOR_SHELL_TICKETS,
+    )
 
 
 def _remove_file(path: Path) -> bool:
@@ -315,7 +455,7 @@ def _ticket_is_fresh(ticket: dict[str, Any], ticket_path: Path, now: float) -> b
 
     created_at = ticket.get("created_at_epoch")
     if isinstance(created_at, (int, float)):
-        if now - created_at <= CURSOR_SHELL_TICKET_TTL_SECONDS:
+        if now - created_at <= SHELL_TICKET_TTL_SECONDS:
             return True
         _remove_file(ticket_path)
         return False
@@ -333,13 +473,18 @@ def _ticket_cwd_matches_repo(ticket: dict[str, Any], repo_root: Path) -> bool:
     return True
 
 
-def _matching_cursor_ticket_context_key(
+def _matching_ticket_context_key(
     ticket_path: Path,
     repo_root: Path,
     now: float,
 ) -> str | None:
+    """Accept a ticket on its merits, never on which platform wrote it.
+
+    The `platform` field a ticket carries is debugging metadata; gating on it
+    was what kept this bridge invisible to every platform but Cursor.
+    """
     ticket = _read_json(ticket_path)
-    if ticket is None or ticket.get("platform") != "cursor":
+    if ticket is None:
         return None
     if not _ticket_is_fresh(ticket, ticket_path, now):
         return None
@@ -350,29 +495,30 @@ def _matching_cursor_ticket_context_key(
     return _string_value(ticket.get("context_key"))
 
 
-def _lookup_cursor_shell_ticket_context_key() -> str | None:
-    """Resolve Cursor conversation identity from a short-lived shell ticket.
+def _lookup_shell_ticket_context_key() -> str | None:
+    """Resolve session identity from a short-lived shell ticket.
 
-    Cursor exposes `conversation_id` to `beforeShellExecution`, but does not
-    export it into the shell command environment. The Cursor hook writes a
-    short-lived ticket just before `task.py` runs. We accept a ticket only when
-    the current `task.py` subcommand matches and exactly one fresh context key
-    matches, which avoids cross-window pointer contamination.
+    No researched platform exports its session id into a shell child, but every
+    hook-capable one hands that id to a hook. So the hook that runs just before
+    a shell command writes a ticket, and this reads it back. A ticket counts
+    only when it is fresh, was written for this repo, and matches the `task.py`
+    subcommand now running — and only when exactly one fresh context key
+    matches. Two concurrent windows therefore both degrade rather than one
+    inheriting the other's pointer.
     """
     repo_root = _find_repo_root_from_cwd()
     if repo_root is None:
         return None
 
-    ticket_dir = _cursor_shell_ticket_dir(repo_root)
-    if not ticket_dir.is_dir():
-        return None
-
     now = time.time()
     candidates: set[str] = set()
-    for ticket_path in ticket_dir.glob("*.json"):
-        context_key = _matching_cursor_ticket_context_key(ticket_path, repo_root, now)
-        if context_key:
-            candidates.add(context_key)
+    for ticket_dir in _shell_ticket_dirs(repo_root):
+        if not ticket_dir.is_dir():
+            continue
+        for ticket_path in ticket_dir.glob("*.json"):
+            context_key = _matching_ticket_context_key(ticket_path, repo_root, now)
+            if context_key:
+                candidates.add(context_key)
 
     if len(candidates) == 1:
         return next(iter(candidates))
@@ -382,15 +528,18 @@ def _lookup_cursor_shell_ticket_context_key() -> str | None:
 def resolve_context_key(
     platform_input: dict[str, Any] | None = None,
     platform: str | None = None,
+    *,
+    allow_environment_context: bool = True,
 ) -> str | None:
     """Resolve a stable session/window context key, if one is available.
 
     `TRELLIS_CONTEXT_ID` is an explicit context-key override used by CLI
     scripts and subprocesses. It does not store the task itself.
     """
-    override = _string_value(os.environ.get("TRELLIS_CONTEXT_ID"))
-    if override:
-        return _sanitize_key(override) or _hash_value(override)
+    if allow_environment_context:
+        override = _string_value(os.environ.get("TRELLIS_CONTEXT_ID"))
+        if override:
+            return _sanitize_key(override) or _hash_value(override)
 
     data = _as_dict(platform_input)
     platform_name = _detect_platform(data, platform) if data or platform else None
@@ -408,41 +557,59 @@ def resolve_context_key(
         if transcript_path:
             return _context_key(platform_name or "session", "transcript", transcript_path)
 
-    env_context_key = _lookup_env_context_key(platform_name)
-    if env_context_key:
-        return env_context_key
+    if allow_environment_context:
+        env_context_key = _lookup_env_context_key(platform_name)
+        if env_context_key:
+            return env_context_key
 
-    if platform_name in (None, "session", "cursor"):
-        return _lookup_cursor_shell_ticket_context_key()
+    # Last in the chain on purpose: a platform that genuinely exports identity
+    # into the shell outranks a ticket, and no platform name gates the lookup.
+    if allow_environment_context:
+        return _lookup_shell_ticket_context_key()
     return None
 
 
+# BEGIN skill-garden patch active-task-runtime-json-io v0.6
 def _read_json(path: Path) -> dict[str, Any] | None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
+    """Return a parsed JSON object for compatibility callers."""
+    result = _read_json_result(path)
+    data = result.get("data")
     return data if isinstance(data, dict) else None
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> bool:
+    """Atomically replace runtime JSON after flushing file contents."""
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        with temp_path.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
         return True
     except OSError:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
         return False
+# END skill-garden patch active-task-runtime-json-io v0.6
 
 
 def _canonical_task_ref(task_path: str, repo_root: Path) -> str | None:
+    """Resolve only a top-level task that still belongs to the active view."""
     normalized = normalize_task_ref(task_path)
     if not normalized:
         return None
     full_path = resolve_task_ref(normalized, repo_root)
     if full_path is None or not full_path.is_dir():
+        return None
+    from .tasks import is_closed_task, load_task
+
+    task = load_task(full_path)
+    tasks_dir = repo_root / DIR_WORKFLOW / DIR_TASKS
+    if task is None or is_closed_task(task, tasks_dir):
         return None
     try:
         return full_path.relative_to(repo_root).as_posix()
@@ -456,53 +623,67 @@ def _active_from_ref(
     source_type: str,
     context_key: str | None = None,
 ) -> ActiveTask | None:
+    """Resolve a stored pointer, preserving missing identity while hiding closed tasks."""
     if not task_ref:
         return None
     resolved = resolve_task_ref(task_ref, repo_root)
-    stale = resolved is None or not resolved.is_dir()
-    return ActiveTask(task_ref, source_type, context_key, stale)
+    if resolved is None or not resolved.is_dir():
+        return ActiveTask(normalize_task_ref(task_ref), source_type, context_key, True)
+    from .tasks import is_closed_task, load_task
 
-
+    task = load_task(resolved)
+    tasks_dir = repo_root / DIR_WORKFLOW / DIR_TASKS
+    try:
+        canonical = resolved.relative_to(repo_root).as_posix()
+    except ValueError:
+        canonical = str(resolved)
+    if task is None:
+        return ActiveTask(canonical, source_type, context_key, True)
+    if is_closed_task(task, tasks_dir):
+        return ActiveTask(None, source_type, context_key, True)
+    return ActiveTask(canonical, source_type, context_key, False)
 def _context_path(repo_root: Path, context_key: str) -> Path:
     return _runtime_sessions_dir(repo_root) / f"{context_key}.json"
 
 
+# BEGIN skill-garden patch active-task-runtime-resolution v0.6
 def resolve_active_task(
     repo_root: Path,
     platform_input: dict[str, Any] | None = None,
     platform: str | None = None,
+    *,
+    allow_single_session_fallback: bool = True,
+    allow_environment_context: bool = True,
 ) -> ActiveTask:
-    """Resolve the active task from session runtime state only.
-
-    A stale session task is returned as stale. Missing context identity or a
-    missing/empty session context falls back to single-session inference: if
-    exactly one session file exists in the runtime, return its task with
-    source_type="session-fallback" — covers class-2 platform sub-agents (codex,
-    copilot, gemini, qoder) that don't inherit the parent's session id. ≥2
-    files or 0 files yield ActiveTask(None) — refuses to guess across windows.
-    """
-    context_key = resolve_context_key(platform_input, platform)
+    """Resolve the active task without crossing a known session boundary."""
+    context_key = resolve_context_key(
+        platform_input,
+        platform,
+        allow_environment_context=allow_environment_context,
+    )
     if context_key:
-        context = _read_json(_context_path(repo_root, context_key)) or {}
+        result = _read_json_result(_context_path(repo_root, context_key))
+        if result["status"] in {"corrupt", "io_error"}:
+            return ActiveTask(None, f"session-{result['status']}", context_key)
+        context = result["data"] if isinstance(result.get("data"), dict) else {}
         task_ref = _string_value(context.get("current_task"))
         active = _active_from_ref(task_ref, repo_root, "session", context_key)
         if active:
             return active
+        return ActiveTask(None, "session", context_key)
 
-    fallback = _resolve_single_session_fallback(repo_root)
-    if fallback is not None:
-        return fallback
+    if allow_single_session_fallback:
+        fallback = _resolve_single_session_fallback(repo_root)
+        if fallback is not None:
+            return fallback
 
     return ActiveTask(None, "none", context_key)
+# END skill-garden patch active-task-runtime-resolution v0.6
 
 
+# BEGIN skill-garden patch active-task-runtime-fallback v0.6
 def _resolve_single_session_fallback(repo_root: Path) -> ActiveTask | None:
-    """Return the task pointed at by the sole session file, if exactly one exists.
-
-    Used when context-key resolution fails (typical for class-2 platform
-    sub-agents). Returns None if 0 or ≥2 session files are present — refuses
-    to pick across windows so 04-21's multi-session isolation contract holds.
-    """
+    """Return the sole healthy session task without crossing corrupt state."""
     sessions_dir = _runtime_sessions_dir(repo_root)
     if not sessions_dir.is_dir():
         return None
@@ -512,13 +693,16 @@ def _resolve_single_session_fallback(repo_root: Path) -> ActiveTask | None:
         return None
 
     session_file = session_files[0]
-    context = _read_json(session_file) or {}
+    result = _read_json_result(session_file)
+    fallback_key = session_file.stem
+    if result["status"] in {"corrupt", "io_error"}:
+        return ActiveTask(None, f"session-{result['status']}", fallback_key)
+    context = result["data"] if isinstance(result.get("data"), dict) else {}
     task_ref = _string_value(context.get("current_task"))
     if not task_ref:
         return None
-
-    fallback_key = session_file.stem
     return _active_from_ref(task_ref, repo_root, "session-fallback", fallback_key)
+# END skill-garden patch active-task-runtime-fallback v0.6
 
 
 def _utc_now() -> str:
@@ -547,17 +731,14 @@ def _context_metadata(
     return metadata
 
 
+# BEGIN skill-garden patch active-task-runtime-set v0.6
 def set_active_task(
     task_path: str,
     repo_root: Path,
     platform_input: dict[str, Any] | None = None,
     platform: str | None = None,
 ) -> ActiveTask | None:
-    """Set the active task in session scope.
-
-    Returns None when no context key is available; callers should surface a
-    user-facing error that explains how to provide session identity.
-    """
+    """Set the active task without overwriting corrupt session runtime state."""
     canonical = _canonical_task_ref(task_path, repo_root)
     if canonical is None:
         return None
@@ -567,30 +748,57 @@ def set_active_task(
         return None
 
     context_path = _context_path(repo_root, context_key)
-    context = _read_json(context_path) or {}
+    result = _read_json_result(context_path)
+    if result["status"] in {"corrupt", "io_error"}:
+        return None
+    context = result["data"] if isinstance(result.get("data"), dict) else {}
     context.update(_context_metadata(platform_input, platform, context_key))
     context["current_task"] = canonical
     context.setdefault("current_run", None)
     if not _write_json(context_path, context):
         return None
     return ActiveTask(canonical, "session", context_key)
+# END skill-garden patch active-task-runtime-set v0.6
 
 
+# BEGIN skill-garden patch active-task-clear-session-fallback v0.6
 def clear_active_task(
     repo_root: Path,
     platform_input: dict[str, Any] | None = None,
     platform: str | None = None,
-) -> ActiveTask:
-    """Clear the active task by deleting the current session context file."""
-    context_key = resolve_context_key(platform_input, platform)
-    if not context_key:
-        return ActiveTask(None, "none")
+) -> ClearActiveTaskResult:
+    """Clear the active task for the current or sole fallback session.
 
+    Args:
+        repo_root: Repository root.
+        platform_input: Platform hook input.
+        platform: Explicit platform name.
+
+    Returns:
+        Structured cleanup result with the previously resolved task and deletion status.
+    """
+    context_key = resolve_context_key(platform_input, platform)
     previous = resolve_active_task(repo_root, platform_input, platform)
+
+    # Fallback resolution is safe only when the runtime contains exactly one session file.
+    if previous.source_type in {"session-fallback", "session-corrupt", "session-io_error"} and previous.context_key:
+        context_key = previous.context_key
+    if not context_key:
+        return ClearActiveTaskResult(ActiveTask(None, "none"), True)
+
     context_path = _context_path(repo_root, context_key)
+    context_result = _read_json_result(context_path)
+    if context_result["status"] in {"corrupt", "io_error"}:
+        return ClearActiveTaskResult(
+            previous,
+            False,
+            f"session-runtime-{context_result['status']}:{context_result.get('error') or ''}",
+        )
     if context_path.is_file():
-        _remove_file(context_path)
-    return previous
+        if not _remove_file(context_path):
+            return ClearActiveTaskResult(previous, False, "session-file-delete-failed")
+    return ClearActiveTaskResult(previous, True)
+# END skill-garden patch active-task-clear-session-fallback v0.6
 
 
 def clear_task_from_sessions(task_path: str, repo_root: Path) -> int:

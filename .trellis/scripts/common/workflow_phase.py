@@ -94,7 +94,17 @@ def get_phase_index() -> str:
         r"\[workflow-state:([A-Za-z0-9_-]+)\]\s*\n.*?\n\s*\[/workflow-state:\1\]\n?",
         _re.DOTALL,
     )
-    return tag_re.sub("", section).rstrip() + "\n"
+# BEGIN skill-garden patch workflow-phase-index-output-cleanup v0.6
+    section = tag_re.sub("", section)
+    # Keep ownership markers in workflow.md; omit only their standalone output lines.
+    section = _re.sub(
+        r"^<!-- (?:BEGIN|END) skill-garden patch [^<>\r\n]+ -->(?:\r?\n|$)",
+        "",
+        section,
+        flags=_re.MULTILINE,
+    )
+    return section.rstrip() + "\n"
+# END skill-garden patch workflow-phase-index-output-cleanup v0.6
 
 
 def get_step(step_id: str) -> str:
@@ -144,27 +154,34 @@ def _platform_matches(platform: str, block_names: list[str]) -> bool:
 def resolve_effective_platform(platform: str, config: dict) -> str:
     """Map ``codex`` to a dispatch-mode-namespaced virtual platform name.
 
-    When ``--platform codex`` is passed, return ``"codex-inline"`` (default)
-    or ``"codex-sub-agent"`` based on ``.trellis/config.yaml`` ``codex.dispatch_mode``.
+    When ``--platform codex`` is passed, return ``"codex-sub-agent"`` by
+    default or ``"codex-inline"`` when explicitly configured in
+    ``.trellis/config.yaml``. ``sub-agent`` remains an alias for ``auto``.
     ``filter_platform`` then surfaces blocks whose marker lists include the
     namespaced name (e.g. ``[codex-sub-agent, ...]`` or ``[codex-inline, Kilo,
     Antigravity, Devin]``).
 
-    Default is ``inline`` because Codex sub-agents run with ``fork_turns="none"``
-    isolation and can't inherit the parent session's task context — inline
-    keeps the main agent in charge so context isn't lost. Invalid / missing
-    values also fall back to inline.
+    Native Codex context injection supports the ``auto`` default. Invalid
+    explicit values fall back to ``inline`` safely; this renderer deliberately
+    does not warn because it can run in normal CLI output flows.
 
     Other platforms are returned unchanged.
     """
     if platform == "codex":
-        mode = "inline"
+        mode = "auto"
         codex_cfg = config.get("codex") if isinstance(config, dict) else None
-        if isinstance(codex_cfg, dict):
-            cfg_mode = codex_cfg.get("dispatch_mode")
-            if cfg_mode in ("inline", "sub-agent"):
-                mode = cfg_mode
-        return f"codex-{mode}"
+        if codex_cfg is not None:
+            if not isinstance(codex_cfg, dict):
+                mode = "inline"
+            else:
+                cfg_mode = str(codex_cfg.get("dispatch_mode", mode)).strip().lower()
+                if cfg_mode == "inline":
+                    mode = "inline"
+                elif cfg_mode in ("auto", "sub-agent"):
+                    mode = "auto"
+                else:
+                    mode = "inline"
+        return "codex-sub-agent" if mode == "auto" else "codex-inline"
     return platform
 
 

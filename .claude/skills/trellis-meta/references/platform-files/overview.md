@@ -5,7 +5,7 @@ Trellis connects the same local architecture to different AI tools. `.trellis/` 
 When a local AI modifies Trellis, it should distinguish two file categories first:
 
 - **Shared files**: `.trellis/workflow.md`, `.trellis/tasks/`, `.trellis/spec/`, `.trellis/scripts/`.
-- **Platform files**: `.claude/`, `.codex/`, `.cursor/`, `.opencode/`, `.kiro/`, `.gemini/`, `.qoder/`, `.codebuddy/`, `.github/`, `.factory/`, `.pi/`, `.trae/`, `.kilocode/`, `.agent/`, `.devin/`, `.reasonix/`, `.zcode/`, and similar directories.
+- **Platform files**: `.claude/`, `.snow/`, `.codex/`, `.cursor/`, `.opencode/`, `.kiro/`, `.gemini/`, `.qoder/`, `.codebuddy/`, `.github/`, `.factory/`, `.pi/`, `.trae/`, `.kilocode/`, `.agent/`, `.devin/`, `.reasonix/`, `.zcode/`, `.kimi-code/`, and similar directories.
 
 Platform files do not store business state. They let the corresponding AI tool read Trellis state, call Trellis scripts, and load Trellis skills/agents/hooks.
 
@@ -15,9 +15,9 @@ Platform files do not store business state. They let the corresponding AI tool r
 | --- | --- | --- |
 | settings/config | `.claude/settings.json`, `.codex/hooks.json`, `.qoder/settings.json`, `.trae/hooks.json` | Register hooks, plugins, extensions, or platform behavior. |
 | hooks/plugins/extensions | `.claude/hooks/`, `.opencode/plugins/`, `.pi/extensions/` | Inject context at session start, user input, agent startup, shell execution, and similar events. |
-| agents | `.claude/agents/`, `.codex/agents/`, `.kiro/agents/` | Define `trellis-research`, `trellis-implement`, and `trellis-check`. |
-| skills | `.claude/skills/`, `.agents/skills/`, `.qoder/skills/` | Capability descriptions that auto-trigger or can be read on demand. |
-| commands/prompts/workflows | `.cursor/commands/`, `.github/prompts/`, `.devin/workflows/` | Entry points explicitly invoked by the user. |
+| agents | `.claude/agents/`, `.codex/agents/`, `.kiro/agents/`, `.zcode/agents/` | Define `trellis-research`, `trellis-implement`, and `trellis-check`. |
+| skills | `.claude/skills/`, `.agents/skills/`, `.qoder/skills/`, `.zcode/skills/` | Capability descriptions that auto-trigger or can be read on demand. |
+| commands/prompts/workflows | `.cursor/commands/`, `.github/prompts/`, `.devin/workflows/`, `.zcode/commands/` | Entry points explicitly invoked by the user. |
 
 ## Three Platform Integration Modes
 
@@ -46,14 +46,16 @@ Some platforms do not have Trellis sub-agent or hook capabilities. They rely on 
 
 To change behavior, inspect platform workflows/skills/commands and `.trellis/workflow.md`.
 
+<!-- BEGIN skill-garden patch trellis-meta-managed-platform-edit-route v0.6 -->
 ## Local Modification Order
 
-When the user asks to customize behavior for a platform, the AI should inspect files in this order:
+When customizing a platform:
 
-1. Read `.trellis/workflow.md` to confirm the shared flow.
-2. Read the target platform's settings/config to see which hooks/agents/skills/commands are registered.
-3. Read the target platform's agents/skills/commands/hooks.
-4. Modify the local file closest to the user's need.
-5. If the change affects the shared flow, synchronize `.trellis/workflow.md` or `.trellis/spec/`.
+1. Read `.trellis/workflow.md` and the target platform's settings, hooks, agents, skills, commands, prompts, or workflows.
+2. Inspect `.flower/plugin-lock.json`, `.flower/state.json`, template hashes, and managed markers for every candidate target.
+3. For project-local files, modify the narrow local source and keep shared workflow semantics aligned.
+4. For managed files, modify the owning Plugin/Patch source and preserve explicit platform targets with `each-existing`/`missing: skip`; do not create roots for platforms that are not enabled.
+5. Apply the lifecycle and compare final bytes across all existing platform roots. Shared `.agents/skills` consumers must remain byte-consistent, while platform-specific frontmatter may retain its native differences.
 
-Do not modify only platform files and forget the shared workflow. Do not modify only `.trellis/workflow.md` and forget that platform entry points may still contain old descriptions.
+Never claim cross-platform support after changing only one deployed copy.
+<!-- END skill-garden patch trellis-meta-managed-platform-edit-route v0.6 -->

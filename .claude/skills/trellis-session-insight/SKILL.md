@@ -1,20 +1,23 @@
 ---
 name: trellis-session-insight
-description: "Reach into past AI conversation history through the `trellis mem` CLI. Use whenever the user asks 'how did we solve X last time', 'have we discussed this before', 'what was the decision on X', 'remind me what we did in this task', '上次怎么解的', '之前讨论过吗', '想起一段对话', or when starting a brainstorm that overlaps prior work, debugging a familiar bug, continuing a task across sessions, or doing a finish-work review. Returns raw past dialogue; decide for the moment whether to update spec, append to task notes, quote inline in the answer, or just internalize."
+description: "Reach into past AI conversation history through the `trellis mem` CLI. Use whenever the user asks 'how did we solve X last time', 'have we discussed this before', 'what was the decision on X', 'remind me what we did in this task', '上次怎么解的', '之前讨论过吗', '想起一段对话', or when starting a brainstorm that overlaps prior work, debugging a familiar bug, continuing a task across sessions, or reviewing a completed task. Returns raw past dialogue; decide for the moment whether to update spec, append to task notes, quote inline in the answer, or just internalize."
 ---
 
 # Trellis Session Insight
 
 This skill teaches an AI **how to call `trellis mem`** — the project's cross-session memory feedstock — and **when reaching for it is the right move**.
 
-It is intentionally a **capability skill, not a workflow**. There is no fixed output file, no required write-back step, no "always run after finish-work" rule. What to do with what `mem` returns is a judgement call made in the moment of the conversation. The skill exists so the AI knows the capability is there and can decide.
+It is intentionally a **capability skill, not a workflow**. There is no fixed output file, no required write-back step, and no automatic invocation after Close. What to do with what `mem` returns is a judgement call made in the moment of the conversation. The skill exists so the AI knows the capability is there and can decide.
 
 ## What `trellis mem` is
 
-A local CLI that indexes the user's past Claude Code, Codex, and Pi Agent conversation logs (the JSONL files each platform stores under `~/.claude/projects/`, `~/.codex/sessions/`, and `~/.pi/agent/sessions/`) and lets you list, search, slice by Trellis task boundaries, and dump cleaned dialogue from them. OpenCode logs are not yet indexable (provider adapter pending) — when an OpenCode session is the obvious target, surface that limitation rather than guessing.
+<!-- BEGIN skill-garden patch session-insight-grok-overview v0.6 -->
+A local CLI that indexes the user's past Claude Code, Codex, Grok Build, Pi Agent, and ZCode conversation logs and lets you list, search, slice by Trellis task boundaries, and dump cleaned dialogue from them. Claude and Codex use `~/.claude/projects/` and `~/.codex/sessions/`. Grok uses URL-encoded project directories under `~/.grok/sessions/`. Pi uses its default or environment-configured session root, global `~/.pi/agent/settings.json`, and the scoped project's `.pi/settings.json`; relative `sessionDir` values resolve from the settings file directory. Project-local Pi settings require project-scoped lookup through the current cwd or `--cwd`. ZCode uses `~/.zcode/cli/db/db.sqlite`. OpenCode logs are not yet indexable (provider adapter pending) — when an OpenCode session is the obvious target, surface that limitation rather than guessing.
+<!-- END skill-garden patch session-insight-grok-overview v0.6 -->
 
 Nothing in `mem` is uploaded. All reads are local.
 
+<!-- BEGIN skill-garden patch session-insight-closeout-language-triggers v0.6 -->
 ## When to reach for it
 
 The bar is "would a senior teammate ask 'didn't we already talk about this?'" — those are the moments. Some concrete patterns:
@@ -23,11 +26,11 @@ The bar is "would a senior teammate ask 'didn't we already talk about this?'" �
 - **Familiar-bug debugging.** The current bug pattern feels like one the user reported / fixed before. Pulling the relevant past session can save a full debugging loop.
 - **Cross-session continuation.** The user resumes work after a gap and says "where were we" / "继续上次的" without being specific.
 - **Decision retrieval.** The user references "the decision we made about X" but the decision lives in an old brainstorm, not in any `prd.md` / `spec/`.
-- **Finish-work retrospective.** When the user explicitly asks for a wrap-up of what was decided / what hurt / what surprised them in this task — not as a forced step on every finish-work.
+- **Task retrospective.** The user explicitly asks for a wrap-up of what was decided, what hurt, or what surprised them in a completed task. This is an on-demand reflection, not a forced completion step.
 - **Pattern-spotting across past work.** The user asks "do I keep making the same mistake on X" / "我每次都踩这个坑吗" — search across sessions answers that.
 
 If none of these apply, don't call `mem`. It is a tool, not a ceremony.
-
+<!-- END skill-garden patch session-insight-closeout-language-triggers v0.6 -->
 ## When NOT to reach for it
 
 - The relevant context is already in the current turn, `prd.md`, `design.md`, recent `git log`, or the open files. `mem` is for stuff that has fallen out of immediate reach.
@@ -68,7 +71,7 @@ trellis mem list --cwd <project-path>
 trellis mem projects   # → list active project cwds, then narrow
 ```
 
-Phase slicing (`--phase brainstorm|implement|all`) cuts the session at `task.py create` and `task.py start` boundaries. For a finish-work review of the current task, `--phase brainstorm` recovers the planning discussion and `--phase implement` recovers the execution loop. Default is `all`.
+Phase slicing (`--phase brainstorm|implement|all`) cuts the session at `task.py create` and `task.py start` boundaries. For an on-demand retrospective of the current task, `--phase brainstorm` recovers the planning discussion and `--phase implement` recovers the execution loop. Default is `all`.
 
 ## Triggering patterns
 

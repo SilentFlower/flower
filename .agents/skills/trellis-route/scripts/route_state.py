@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,11 +17,12 @@ from typing import Any
 VALID_SOURCES = {"trellis-route", "numbered-fallback", "route-prefs", "auto-loop"}
 VALID_MODES = {
     "implement": {"inline", "subagent"},
+    "check": {"check-all-inline", "check-all-subagent"},
+}
+LEGACY_MODE_ALIASES = {
     "check": {
-        "check-all-inline",
-        "check-all-subagent",
-        "check-inline",
-        "check-subagent",
+        "check-inline": "check-all-inline",
+        "check-subagent": "check-all-subagent",
     },
 }
 PREF_MODES = {
@@ -49,22 +52,45 @@ def _utc_now() -> str:
     )
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    """读取 JSON 对象，失败时返回空对象。"""
+def _read_json_result(path: Path) -> dict[str, Any]:
+    """读取 runtime JSON，并区分缺失、损坏和 I/O 错误。"""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
+    except FileNotFoundError:
+        return {"status": "missing", "data": None, "error": None}
+    except json.JSONDecodeError as exc:
+        return {"status": "corrupt", "data": None, "error": str(exc)}
+    except OSError as exc:
+        return {"status": "io_error", "data": None, "error": str(exc)}
+    if not isinstance(data, dict):
+        return {"status": "corrupt", "data": None, "error": "JSON 根节点不是对象"}
+    return {"status": "ok", "data": data, "error": None}
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    """兼容非关键扫描；仅返回成功解析的 JSON 对象。"""
+    result = _read_json_result(path)
+    data = result.get("data")
     return data if isinstance(data, dict) else {}
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
-    """原子性要求不高的 runtime 状态写入。"""
+    """使用同目录临时文件原子写入 runtime 状态。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    except Exception:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _print(data: dict[str, Any]) -> int:
@@ -89,13 +115,31 @@ def _decision_summary(decision: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_mode(target: str, mode: Any) -> str | None:
+    """把历史 route mode 归一为当前统一入口，非法值返回 None。"""
+    aliases = LEGACY_MODE_ALIASES.get(target, {})
+    normalized = aliases.get(mode, mode)
+    return str(normalized) if normalized in VALID_MODES[target] else None
+
+
+def _inline_default(target: str) -> dict[str, str]:
+    """返回不持久化的内置缺省，避免把默认执行伪装成人工选择。"""
+    return {
+        "status": "hit",
+        "origin": "builtin-default",
+        "source": "builtin-default",
+        "mode": "inline" if target == "implement" else "check-all-inline",
+    }
+
+
 def _current_task(repo_root: Path) -> tuple[str | None, str | None, str | None]:
     """通过 task.py current --source 获取当前任务和 session key。"""
     result = subprocess.run(
-        ["python3", str(repo_root / ".trellis/scripts/task.py"), "current", "--source"],
+        [sys.executable, "-X", "utf8", str(repo_root / ".trellis/scripts/task.py"), "current", "--source"],
         cwd=repo_root,
         check=False,
         text=True,
+        encoding="utf-8",
         capture_output=True,
     )
     current = None
@@ -155,8 +199,10 @@ def _read_prefs(repo_root: Path) -> dict[str, str]:
         key, value = raw.split("=", 1)
         key = key.strip()
         value = value.strip()
-        if key in PREF_MODES and value in PREF_MODES[key]:
-            prefs[key] = value
+        if key in PREF_MODES:
+            normalized = _normalize_mode(key, value)
+            if normalized in PREF_MODES[key]:
+                prefs[key] = normalized
     return prefs
 
 
@@ -177,7 +223,27 @@ def _auto_state_path(repo_root: Path, run_id: Any) -> Path | None:
     return _auto_loop_dir(repo_root) / f"{run_id.strip()}.json"
 
 
-def _auto_route_mode(repo_root: Path, context_key: str, target: str) -> tuple[str | None, Path | None, str | None]:
+def _run_contains_task(state: dict[str, Any], current_task: str) -> bool:
+    """判断当前任务是否属于 run 的未完成队列。"""
+    queue = state.get("queue")
+    if not isinstance(queue, list):
+        return False
+    normalized = current_task.replace("\\", "/")
+    for item in queue:
+        if not isinstance(item, dict) or item.get("status") not in {"pending", "running"}:
+            continue
+        task = item.get("task")
+        if isinstance(task, str) and task.replace("\\", "/") == normalized:
+            return True
+    return False
+
+
+def _auto_route_mode(
+    repo_root: Path,
+    context_key: str,
+    current_task: str,
+    target: str,
+) -> tuple[str | None, Path | None, str | None]:
     """读取当前 running auto-loop run 的临时 route 授权。
 
     auto 授权低于个人 `.route-prefs.tmp`，只在当前 session runtime 绑定了
@@ -185,15 +251,26 @@ def _auto_route_mode(repo_root: Path, context_key: str, target: str) -> tuple[st
     如果这些指针 stale，则忽略 stale pointer，并 fallback 到唯一 running run。
     """
     session_path = _session_path(repo_root, context_key)
-    session = _read_json(session_path)
+    session_result = _read_json_result(session_path)
+    if session_result["status"] in {"corrupt", "io_error"}:
+        return None, session_path, f"session-runtime-{session_result['status']}"
+    session = session_result["data"] if isinstance(session_result.get("data"), dict) else {}
     candidate_paths: list[Path] = []
     stale_paths: list[Path] = []
 
-    for run_id in (session.get("current_auto_run"), _read_json(_auto_loop_pointer(repo_root)).get("run_id")):
+    pointer_result = _read_json_result(_auto_loop_pointer(repo_root))
+    pointer = pointer_result["data"] if isinstance(pointer_result.get("data"), dict) else {}
+    for source, run_id in (
+        ("session", session.get("current_auto_run")),
+        ("pointer", pointer.get("run_id")),
+    ):
         path = _auto_state_path(repo_root, run_id)
         if path is None:
             continue
-        state = _read_json(path)
+        result = _read_json_result(path)
+        if source == "session" and result["status"] in {"corrupt", "io_error"}:
+            return None, path, f"session-auto-run-{result['status']}"
+        state = result["data"] if isinstance(result.get("data"), dict) else {}
         if state.get("status") == "running":
             candidate_paths.append(path)
         else:
@@ -210,19 +287,23 @@ def _auto_route_mode(repo_root: Path, context_key: str, target: str) -> tuple[st
         seen.add(key)
         unique_paths.append(path)
     if len(unique_paths) != 1:
-        reason = "no-unique-auto-run"
+        reason = "no-unique-auto-run" if unique_paths else "no-auto-run"
         if stale_paths and not unique_paths:
             reason = "stale-auto-run-pointer"
         return None, stale_paths[0] if stale_paths else None, reason
 
     path = unique_paths[0]
     state = _read_json(path)
+    if not _run_contains_task(state, current_task):
+        return None, path, "auto-run-task-mismatch"
 
     auth = state.get("route_authorization")
-    if not isinstance(auth, dict):
+    if auth is None or isinstance(auth, dict) and target not in auth:
         return None, path, "no-route-authorization"
+    if not isinstance(auth, dict):
+        return None, path, "invalid-auto-route-mode"
 
-    mode = auth.get(target)
+    mode = _normalize_mode(target, auth.get(target))
     if mode in PREF_MODES[target]:
         return mode, path, None
     return None, path, "invalid-auto-route-mode"
@@ -249,20 +330,38 @@ def _write_prefs(repo_root: Path, prefs: dict[str, str]) -> None:
         if value:
             lines.append(f"{target}={value}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    except Exception:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
-def _valid_decision(decision: Any, target: str, current_task: str) -> bool:
-    """校验 runtime 中的 route 决策是否能复用。"""
+def _normalized_decision(decision: Any, target: str, current_task: str) -> dict[str, Any] | None:
+    """校验并归一化 runtime route 决策，非法时返回 None。"""
     if not isinstance(decision, dict):
-        return False
-    return (
+        return None
+    mode = _normalize_mode(target, decision.get("mode"))
+    if not (
         decision.get("target") == target
-        and decision.get("mode") in VALID_MODES[target]
+        and mode is not None
         and decision.get("source") in VALID_SOURCES
         and decision.get("scope") == "task"
         and decision.get("task") == current_task
-    )
+    ):
+        return None
+    normalized = dict(decision)
+    normalized["mode"] = mode
+    return normalized
 
 
 def _decision(target: str, mode: str, source: str, current_task: str) -> dict[str, str]:
@@ -287,7 +386,10 @@ def _write_runtime_decision(
 ) -> tuple[Path, dict[str, str]]:
     """写入 session runtime 文件中的 route_decisions 字段。"""
     path = _session_path(repo_root, context_key)
-    context = _read_json(path)
+    context_result = _read_json_result(path)
+    if context_result["status"] in {"corrupt", "io_error"}:
+        raise ValueError(f"session-runtime-{context_result['status']}")
+    context = context_result["data"] if isinstance(context_result.get("data"), dict) else {}
     now = _utc_now()
     context.setdefault("platform", context_key.split("_", 1)[0] if "_" in context_key else "session")
     context["last_seen_at"] = now
@@ -334,17 +436,25 @@ def read_runtime(args: argparse.Namespace) -> int:
     assert current_task is not None and context_key is not None
 
     path = _session_path(repo_root, context_key)
-    context = _read_json(path)
+    context_result = _read_json_result(path)
+    if context_result["status"] in {"corrupt", "io_error"}:
+        return _output(
+            args,
+            {"status": "miss", "reason": f"session-runtime-{context_result['status']}"},
+            {"path": _rel_path(repo_root, path), "error": context_result.get("error")},
+        )
+    context = context_result["data"] if isinstance(context_result.get("data"), dict) else {}
     decision = context.get("route_decisions", {}).get(args.target)
-    if _valid_decision(decision, args.target, current_task):
+    normalized = _normalized_decision(decision, args.target, current_task)
+    if normalized is not None:
         return _output(
             args,
             {
                 "status": "hit",
-                **_decision_summary(decision),
+                **_decision_summary(normalized),
             },
             {
-                "decision": decision,
+                "decision": normalized,
                 "path": _rel_path(repo_root, path),
                 "context_key": context_key,
                 "task": current_task,
@@ -366,46 +476,100 @@ def read_runtime(args: argparse.Namespace) -> int:
 
 
 def resolve_route(args: argparse.Namespace) -> int:
-    """按 runtime → prefs → auto-loop 的优先级解析 route 决策。"""
+    """按相同优先级解析执行路由或只读预检，不在预检时切换任务。
+
+    Args:
+        args: 路由目标、只读任务路径和 runner 提供的临时候选模式。
+
+    Returns:
+        JSON 输出的退出码；缺失或非法上下文通过结构化状态表达。
+    """
     repo_root = _repo_root()
     if repo_root is None:
         return _print({"status": "miss", "reason": "not-trellis-project"})
 
-    current_task, _, context_key, miss = _current_context_or_miss(repo_root)
-    if miss:
-        return _print(miss)
-    assert current_task is not None and context_key is not None
+    read_only = getattr(args, "read_only", False)
+    task_ref = getattr(args, "task", None)
+    fallback_mode = getattr(args, "auto_mode", None)
+    if (task_ref or fallback_mode) and not read_only:
+        return _print({"status": "error", "reason": "preview-requires-read-only"})
+    if fallback_mode is not None:
+        fallback_mode = _normalize_mode(args.target, fallback_mode)
+        if fallback_mode is None:
+            return _print({"status": "error", "reason": "invalid-auto-route-mode"})
 
-    path = _session_path(repo_root, context_key)
-    context = _read_json(path)
-    decision = context.get("route_decisions", {}).get(args.target)
-    if _valid_decision(decision, args.target, current_task):
+    current_task, _, context_key, miss = _current_context_or_miss(repo_root)
+    if read_only and task_ref:
+        # 只接受项目内明确的任务路径，避免预检把任意目录当作任务或跟随软链。
+        relative = Path(task_ref)
+        task_path = repo_root / relative
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or relative.parts[:2] != (".trellis", "tasks")
+            or len(relative.parts) < 3
+            or any(path.is_symlink() for path in (task_path, *task_path.parents) if path != repo_root)
+            or not (task_path / "task.json").is_file()
+            or (task_path / "task.json").is_symlink()
+        ):
+            return _print({"status": "error", "reason": "invalid-task-path"})
+        current_task = relative.as_posix()
+    elif miss:
+        return _print(miss)
+    assert current_task is not None
+
+    path = _session_path(repo_root, context_key) if context_key else None
+    context_result = _read_json_result(path) if path else {"status": "missing", "data": None}
+    if context_result["status"] in {"corrupt", "io_error"}:
+        return _output(
+            args,
+            {"status": "miss", "reason": f"session-runtime-{context_result['status']}"},
+            {"path": _rel_path(repo_root, path), "error": context_result.get("error")},
+        )
+    context = context_result["data"] if isinstance(context_result.get("data"), dict) else {}
+    decisions = context.get("route_decisions")
+    decision = decisions.get(args.target) if isinstance(decisions, dict) else None
+    normalized = _normalized_decision(decision, args.target, current_task)
+    if normalized is not None:
+        written_path = path
+        if not read_only and normalized.get("mode") != decision.get("mode"):
+            written_path, normalized = _write_runtime_decision(
+                repo_root,
+                context_key,
+                current_task,
+                args.target,
+                str(normalized["mode"]),
+                str(normalized["source"]),
+            )
         return _output(
             args,
             {
                 "status": "hit",
                 "origin": "runtime",
-                **_decision_summary(decision),
+                **_decision_summary(normalized),
             },
             {
-                "decision": decision,
-                "path": _rel_path(repo_root, path),
+                "decision": normalized,
+                "path": _rel_path(repo_root, written_path) if written_path else None,
                 "context_key": context_key,
                 "task": current_task,
+                "normalized_legacy_mode": normalized.get("mode") != decision.get("mode"),
             }
         )
 
     prefs = _read_prefs(repo_root)
     pref_mode = prefs.get(args.target)
     if pref_mode in PREF_MODES[args.target]:
-        written_path, pref_decision = _write_runtime_decision(
-            repo_root,
-            context_key,
-            current_task,
-            args.target,
-            pref_mode,
-            "route-prefs",
-        )
+        written_path, pref_decision = path, _decision(args.target, pref_mode, "route-prefs", current_task)
+        if not read_only:
+            written_path, pref_decision = _write_runtime_decision(
+                repo_root,
+                context_key,
+                current_task,
+                args.target,
+                pref_mode,
+                "route-prefs",
+            )
         return _output(
             args,
             {
@@ -415,24 +579,35 @@ def resolve_route(args: argparse.Namespace) -> int:
             },
             {
                 "decision": pref_decision,
-                "path": _rel_path(repo_root, written_path),
+                "path": _rel_path(repo_root, written_path) if written_path else None,
                 "pref_path": _rel_path(repo_root, _pref_path(repo_root)),
                 "context_key": context_key,
                 "task": current_task,
-                "wrote_runtime": True,
+                "wrote_runtime": not read_only,
             }
         )
 
-    auto_mode, auto_path, auto_reason = _auto_route_mode(repo_root, context_key, args.target)
-    if auto_mode in PREF_MODES[args.target]:
-        written_path, auto_decision = _write_runtime_decision(
+    # prepare 尚未进入 running；只读模式只使用 runner 显式传入的候选，
+    # 不扫描其它 run 借用授权，也不把预检结果持久化为真实执行决策。
+    auto_mode, auto_path, auto_reason = fallback_mode, None, "no-route-authorization"
+    if not read_only:
+        auto_mode, auto_path, auto_reason = _auto_route_mode(
             repo_root,
             context_key,
             current_task,
             args.target,
-            auto_mode,
-            "auto-loop",
         )
+    if auto_mode in PREF_MODES[args.target]:
+        written_path, auto_decision = path, _decision(args.target, auto_mode, "auto-loop", current_task)
+        if not read_only:
+            written_path, auto_decision = _write_runtime_decision(
+                repo_root,
+                context_key,
+                current_task,
+                args.target,
+                auto_mode,
+                "auto-loop",
+            )
         return _output(
             args,
             {
@@ -442,23 +617,31 @@ def resolve_route(args: argparse.Namespace) -> int:
             },
             {
                 "decision": auto_decision,
-                "path": _rel_path(repo_root, written_path),
+                "path": _rel_path(repo_root, written_path) if written_path else None,
                 "auto_path": _rel_path(repo_root, auto_path) if auto_path else None,
                 "pref_path": _rel_path(repo_root, _pref_path(repo_root)),
                 "context_key": context_key,
                 "task": current_task,
-                "wrote_runtime": True,
+                "wrote_runtime": not read_only,
             }
+        )
+
+    # 只有正常缺少可用选择才应用默认；损坏或歧义 run 继续保留诊断。
+    if auto_reason in {"no-auto-run", "stale-auto-run-pointer", "auto-run-task-mismatch", "no-route-authorization"}:
+        return _output(
+            args,
+            {**_inline_default(args.target), "task": current_task},
+            {"context_key": context_key, "wrote_runtime": False},
         )
 
     return _output(
         args,
         {
             "status": "miss",
-            "reason": "no-valid-decision-pref-or-auto",
+            "reason": auto_reason,
         },
         {
-            "path": _rel_path(repo_root, path),
+            "path": _rel_path(repo_root, path) if path else None,
             "pref_path": _rel_path(repo_root, _pref_path(repo_root)),
             "auto_reason": auto_reason,
             "auto_path": _rel_path(repo_root, auto_path) if auto_path else None,
@@ -472,7 +655,8 @@ def write_route(args: argparse.Namespace) -> int:
     """写入当前 target 的 route 决策并保留 session 文件的其他字段。"""
     if args.source not in VALID_SOURCES:
         return _print({"status": "error", "reason": "invalid-source", "source": args.source})
-    if args.mode not in VALID_MODES[args.target]:
+    mode = _normalize_mode(args.target, args.mode)
+    if mode is None:
         return _print(
             {
                 "status": "error",
@@ -487,7 +671,7 @@ def write_route(args: argparse.Namespace) -> int:
         return _print({"status": "skipped", "reason": "not-trellis-project"})
 
     if args.save_pref:
-        if args.mode not in PREF_MODES[args.target]:
+        if mode not in PREF_MODES[args.target]:
             return _print(
                 {
                     "status": "error",
@@ -497,7 +681,7 @@ def write_route(args: argparse.Namespace) -> int:
                 }
             )
         prefs = _read_prefs(repo_root)
-        prefs[args.target] = args.mode
+        prefs[args.target] = mode
         _write_prefs(repo_root, prefs)
 
     current_task, source, context_key = _current_task(repo_root)
@@ -506,14 +690,17 @@ def write_route(args: argparse.Namespace) -> int:
     if not context_key:
         return _print({"status": "skipped", "reason": "no-session-context", "source": source})
 
-    path, decision = _write_runtime_decision(
-        repo_root,
-        context_key,
-        current_task,
-        args.target,
-        args.mode,
-        args.source,
-    )
+    try:
+        path, decision = _write_runtime_decision(
+            repo_root,
+            context_key,
+            current_task,
+            args.target,
+            mode,
+            args.source,
+        )
+    except (OSError, ValueError) as exc:
+        return _print({"status": "error", "reason": "runtime-write-failed", "message": str(exc)})
     return _output(
         args,
         {
@@ -528,6 +715,74 @@ def write_route(args: argparse.Namespace) -> int:
             "task": current_task,
             "saved_pref": bool(args.save_pref),
         }
+    )
+
+
+def read_pref(args: argparse.Namespace) -> int:
+    """读取不依赖任务或 session 的个人 route 偏好。
+
+    Args:
+        args: 包含 target 和 verbose 的命令行参数。
+
+    Returns:
+        命令退出码。
+    """
+    repo_root = _repo_root()
+    if repo_root is None:
+        return _print({"status": "miss", "reason": "not-trellis-project"})
+    mode = _read_prefs(repo_root).get(args.target)
+    if mode not in PREF_MODES[args.target]:
+        return _output(
+            args,
+            {**_inline_default(args.target), "target": args.target},
+            {"pref_path": _rel_path(repo_root, _pref_path(repo_root))},
+        )
+    return _output(
+        args,
+        {
+            "status": "hit",
+            "target": args.target,
+            "mode": mode,
+            "source": "route-prefs",
+        },
+        {"pref_path": _rel_path(repo_root, _pref_path(repo_root))},
+    )
+
+
+def write_pref(args: argparse.Namespace) -> int:
+    """写入不依赖任务或 session 的个人 route 偏好。
+
+    Args:
+        args: 包含 target、mode 和 verbose 的命令行参数。
+
+    Returns:
+        命令退出码。
+    """
+    mode = _normalize_mode(args.target, args.mode)
+    if mode not in PREF_MODES[args.target]:
+        return _print(
+            {
+                "status": "error",
+                "reason": "invalid-mode",
+                "target": args.target,
+                "mode": args.mode,
+            }
+        )
+    repo_root = _repo_root()
+    if repo_root is None:
+        return _print({"status": "skipped", "reason": "not-trellis-project"})
+    prefs = _read_prefs(repo_root)
+    prefs[args.target] = mode
+    _write_prefs(repo_root, prefs)
+    return _output(
+        args,
+        {
+            "status": "written",
+            "target": args.target,
+            "mode": mode,
+            "source": "route-prefs",
+        },
+        {"pref_path": _rel_path(repo_root, _pref_path(repo_root))},
     )
 
 
@@ -560,6 +815,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     resolve_parser = subparsers.add_parser("resolve", help="resolve route from runtime then prefs")
     resolve_parser.add_argument("--target", choices=sorted(VALID_MODES), required=True)
+    resolve_parser.add_argument("--read-only", action="store_true", help="preview without writing session state")
+    resolve_parser.add_argument("--task", help="explicit repository-relative task path for read-only preview")
+    resolve_parser.add_argument("--auto-mode", help="runner candidate used only after runtime and prefs in read-only preview")
     resolve_parser.add_argument("--verbose", action="store_true", help="include diagnostic paths and session metadata")
     resolve_parser.set_defaults(func=resolve_route)
 
@@ -576,6 +834,17 @@ def build_parser() -> argparse.ArgumentParser:
     write_parser.add_argument("--verbose", action="store_true", help="include diagnostic paths and session metadata")
     write_parser.set_defaults(func=write_route)
 
+    read_pref_parser = subparsers.add_parser("read-pref", help="read a personal route preference")
+    read_pref_parser.add_argument("--target", choices=sorted(PREF_MODES), required=True)
+    read_pref_parser.add_argument("--verbose", action="store_true", help="include preference path metadata")
+    read_pref_parser.set_defaults(func=read_pref)
+
+    write_pref_parser = subparsers.add_parser("write-pref", help="write a personal route preference")
+    write_pref_parser.add_argument("--target", choices=sorted(PREF_MODES), required=True)
+    write_pref_parser.add_argument("--mode", required=True)
+    write_pref_parser.add_argument("--verbose", action="store_true", help="include preference path metadata")
+    write_pref_parser.set_defaults(func=write_pref)
+
     clear_parser = subparsers.add_parser("clear-pref", help="clear a personal route preference")
     clear_parser.add_argument("--target", choices=sorted(PREF_MODES), required=True)
     clear_parser.add_argument("--verbose", action="store_true", help="include diagnostic paths and preference metadata")
@@ -588,7 +857,10 @@ def main() -> int:
     """脚本入口。"""
     parser = build_parser()
     args = parser.parse_args()
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (OSError, ValueError) as exc:
+        return _print({"status": "error", "reason": "runtime-io-error", "message": str(exc)})
 
 
 if __name__ == "__main__":

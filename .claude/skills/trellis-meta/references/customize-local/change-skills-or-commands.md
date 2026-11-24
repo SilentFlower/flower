@@ -1,13 +1,16 @@
 # Change Local Skills, Commands, Prompts, And Workflows
 
-When the user wants to change AI entry points, auto-trigger rules, or explicit command behavior, edit skills, commands, prompts, or workflows in local platform directories.
+<!-- BEGIN skill-garden patch trellis-meta-managed-skill-classification v0.6 -->
+When the user wants to change AI entry points, auto-trigger rules, or explicit command behavior, inspect the deployed skill/command/prompt/workflow and then classify its owner.
 
-Before editing, classify the skill you are about to touch:
+- **Upstream bundled**: distributed by Trellis and tracked by template hashes.
+- **Skill-Garden managed**: modified or projected by `flower/skill-garden`, proven by lock/state entries or managed Patch markers.
+- **Flower managed**: owned by another Flower Plugin, adapter, or Flower Patch catalog.
+- **Shared common**: projected with shared ownership and retained across dependent capabilities.
+- **Project-local**: no upstream template or Plugin ownership claim, and intentionally maintained by the project.
 
-- **Bundled upstream skill** — `trellis-meta`, `trellis-spec-bootstrap`, `trellis-session-insight`, `trellis-channel`. Source of truth lives in the Trellis CLI repo under `packages/cli/src/templates/common/bundled-skills/<name>/`; auto-dispatched to every platform's skill root by `getBundledSkillTemplates()` on `trellis init` / `trellis update`. Local edits here are tracked by `.trellis/.template-hashes.json` and will be flagged on the next update.
-- **Project-local skill** — anything else under `.{platform}/skills/`. Owned by the user; not refreshed by `trellis update`.
-
-The remainder of this file uses "skill" for the local file; the override and conflict rules differ between the two cases.
+Do not classify every non-bundled name as project-local. Use `.flower/state.json`, `.trellis/.template-hashes.json`, local skill roots, and available Bundle declarations as evidence before selecting an edit route.
+<!-- END skill-garden patch trellis-meta-managed-skill-classification v0.6 -->
 
 ## Read These Files First
 
@@ -48,20 +51,21 @@ description: "Use when customizing this project's deployment workflow and releas
 
 Do not write vague descriptions such as "helpful project skill"; they can trigger incorrectly.
 
+<!-- BEGIN skill-garden patch trellis-meta-managed-skill-edit-route v0.6 -->
 ### Bundled vs. Project-Local
 
-The same directory shape is used by two very different ownership models:
+Use the ownership evidence, not the directory shape:
 
-| Aspect | Bundled (`trellis-meta`, `trellis-spec-bootstrap`, `trellis-session-insight`, `trellis-channel`) | Project-local |
+| Owner | Update evidence | Correct edit route |
 | --- | --- | --- |
-| Source of truth | `packages/cli/src/templates/common/bundled-skills/<name>/` in Trellis CLI repo | Inside the user project itself |
-| Dispatch | Auto-dispatched to every platform skill root by `getBundledSkillTemplates()` (`packages/cli/src/templates/common/index.ts`) on `trellis init` / `trellis update` | Created by the user (or another skill) and never moved |
-| Hash tracking | Every file recorded in `.trellis/.template-hashes.json`; conflict prompt on update | Not tracked |
-| Editing locally | Allowed but will be marked "modified by user" on next update | Free editing |
-| The right way to customize | Add a *new* project-local skill with a *different* name that supplements (or supersedes) the bundled one | Edit the file directly |
+| Upstream Trellis | `.trellis/.template-hashes.json` only | Local supplement/divergence or upstream source, according to user intent |
+| Skill-Garden | `flower/skill-garden` lock/state entry or managed marker | 0.6 Patch/Bundle source under `vendor/skill-garden` when authoring Flower |
+| Flower Plugin | `.flower/state.json` owner/path/patch entry | Owning Plugin source or Flower Patch catalog |
+| Shared common | State path with shared ownership | Shared common source; preserve other consumers |
+| Project-local | No managed ownership claim | Edit the project file directly |
 
-If the goal is "make my project's AI behave differently when discussing release notes," the answer is almost always a project-local skill, not surgery on `trellis-meta/`.
-
+For a managed target, the durable sequence is source change -> required preflight -> transaction -> state and Patch application record updates. For a project-private behavior, a differently named local skill or `.trellis/spec/` remains preferable to mutating a public bundled skill.
+<!-- END skill-garden patch trellis-meta-managed-skill-edit-route v0.6 -->
 ## Modify A Command/Prompt/Workflow
 
 Explicit entry points should state:
@@ -73,6 +77,7 @@ Explicit entry points should state:
 
 If a command only repeats workflow rules, prefer making it reference/read `.trellis/workflow.md` instead of maintaining a second copy of the flow.
 
+<!-- BEGIN skill-garden patch trellis-meta-managed-common-paths v0.6 -->
 ## Common Paths
 
 | Platform | Entry directories |
@@ -87,13 +92,17 @@ If a command only repeats workflow rules, prefer making it reference/read `.trel
 | CodeBuddy | `.codebuddy/skills/`, `.codebuddy/commands/` |
 | GitHub Copilot | `.github/skills/`, `.github/prompts/` |
 | Factory Droid | `.factory/skills/`, `.factory/commands/` |
-| Pi Agent | `.pi/skills/` |
+| Pi Agent | `.agents/skills/`, `.pi/prompts/` |
+| Oh My Pi | `.omp/skills/`, `.omp/commands/` |
+| Grok Build | `.grok/skills/`, `.grok/commands/` |
+| Kimi Code | `.agents/skills/`, `.kimi-code/skills/` |
+| Snow CLI | `.snow/skills/`, `.snow/commands/` |
 | Reasonix | `.reasonix/skills/` (no separate commands dir; slash commands built into the platform) |
-| ZCode | `.agents/skills/`, `.zcode/commands/` |
-| Kilo / Antigravity / Devin | workflows + skills |
+| ZCode | `.zcode/skills/`, `.zcode/commands/` |
+| Kilo / Antigravity / Devin / Trae | workflows or commands + skills |
 
-Every directory above is a deploy target for the four bundled skills. Each platform receives a full copy on `trellis init` and refresh on `trellis update`; nothing has to be wired by hand.
-
+Only each platform's skill root receives the bundled skills. `.agents/skills/` is the shared root used by Codex, Gemini CLI, Pi Agent, and Kimi Code; `.pi/prompts/` and `.kimi-code/skills/` contain their platform-private entry points rather than another bundled-skill copy.
+<!-- END skill-garden patch trellis-meta-managed-common-paths v0.6 -->
 ## Add A Project-Local Skill
 
 If the user wants to document team-private customizations, create a project-local skill — never put project-private content into a bundled skill directory, since `trellis update` will overwrite it.
@@ -103,7 +112,9 @@ If the user wants to document team-private customizations, create a project-loca
 └── SKILL.md
 ```
 
-For multi-platform projects, add equivalent versions in each platform skill directory, or use `.agents/skills/` on platforms that support the shared layer (Codex, Gemini CLI).
+<!-- BEGIN skill-garden patch trellis-meta-managed-shared-skill-consumers v0.6 -->
+For multi-platform projects, add equivalent versions in each platform skill directory, or use `.agents/skills/` on platforms that support the shared layer (Codex, Gemini CLI, Pi Agent, Kimi Code).
+<!-- END skill-garden patch trellis-meta-managed-shared-skill-consumers v0.6 -->
 
 Pick a name that does **not** collide with the bundled set:
 

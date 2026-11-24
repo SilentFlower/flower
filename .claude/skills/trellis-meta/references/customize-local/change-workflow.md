@@ -1,6 +1,8 @@
 # Change Local Workflow
 
-When the user wants to change Trellis phases, next-action hints, whether to create tasks, whether to use sub-agents, or when to check/wrap up, edit `.trellis/workflow.md` first.
+<!-- BEGIN skill-garden patch trellis-meta-managed-workflow-entry v0.6 -->
+When the user wants to change Trellis phases, next actions, task gates, routing, checking, or wrap-up, read `.trellis/workflow.md` first because it is the current runtime contract. Before editing it, determine whether the relevant section is project-local, an upstream template, or a Skill-Garden managed Patch output.
+<!-- END skill-garden patch trellis-meta-managed-workflow-entry v0.6 -->
 
 ## Read These Files First
 
@@ -19,14 +21,16 @@ When the user wants to change Trellis phases, next-action hints, whether to crea
 | Change wrap-up after completion | Phase 3 and `[workflow-state:completed]`. |
 | Change which skill a user intent triggers | `Skill Routing` table. |
 
+<!-- BEGIN skill-garden patch trellis-meta-managed-workflow-edit-route v0.6 -->
 ## Modification Steps
 
-1. Find the relevant section in `.trellis/workflow.md`.
-2. When changing rules, keep explicit trigger conditions and next actions.
-3. If adding or renaming a skill/agent, synchronize the corresponding files in platform directories.
-4. Workflow-state changes only need an edit to the `[workflow-state:STATUS]` block in `.trellis/workflow.md`. The hook is parser-only — it reads whatever you put in the block. Keep the opening and closing tags' STATUS strings identical (`[workflow-state:foo]…[/workflow-state:foo]`); mismatched STATUS pairs are silently dropped.
-5. Make the AI reread `.trellis/workflow.md`; do not keep using rules from the old conversation.
-
+1. Find the runtime section in `.trellis/workflow.md` and identify the owner named by the Workflow Owner Index or owning skill/helper.
+2. Inspect Plugin state and nearby markers. If the section is not managed, make the narrow local edit and keep trigger/next-action semantics explicit.
+3. If Skill-Garden owns the section, change the matching 0.6 Patch selector/baseline/content and Bundle policy. Do not add a parallel workflow injector or edit only the dogfood workflow.
+4. Keep workflow-state tags paired, but do not duplicate a full owner procedure into the state block. State holds a one-hop gate; the owner skill/helper holds the detailed contract.
+5. Synchronize affected skills, hooks, helpers, or platform entries through their own managed sources when the shared semantics require it.
+6. Run source-to-snapshot sync, conflict checks, compiled target generation/check, final-output review, and idempotent dogfood application before treating the change as complete.
+<!-- END skill-garden patch trellis-meta-managed-workflow-edit-route v0.6 -->
 ## Example: Relax Task Creation Requirements
 
 To change when task creation can be skipped, usually edit `[workflow-state:no_task]`:
@@ -43,23 +47,22 @@ If the formal Phase 1 flow also needs to change, synchronize the Phase 1 section
 
 If the user wants only one platform to avoid sub-agents, first confirm whether that platform has a separate group in the workflow. Then change Phase 2 routing for that platform group instead of deleting all `trellis-implement` / `trellis-check` instructions across platforms.
 
-## `/trellis:continue` Route Table
+<!-- BEGIN skill-garden patch trellis-meta-managed-continue-recovery v0.6 -->
+## `/trellis:continue` Recovery Ownership
 
-`/trellis:continue` resumes a task by deciding which phase step to load next. The decision combines `task.json.status` with the presence of artifacts inside the task directory. The mapping is fixed in the command itself; forks that add custom statuses must extend both the workflow.md tag block and this table.
+`trellis-continue` owns resume decisions and uses `task_progress.py status --json` only as advisory recovery evidence. Do not maintain a second fixed route table in this reference; read the installed workflow, the owner skill, and the helper for the current version.
 
-| `status` | Artifact state | Resume at |
-| --- | --- | --- |
-| `planning` | `prd.md` missing | Phase 1.1 (load `trellis-brainstorm`) |
-| `planning` | lightweight task with `prd.md` complete | ask for start review, then run `task.py start` |
-| `planning` | complex task missing `design.md` or `implement.md` | complete missing planning artifacts |
-| `planning` | complex task has `prd.md`, `design.md`, and `implement.md` | ask for start review, then run `task.py start` |
-| `in_progress` | no implementation in conversation history | Phase 2.1 (`trellis-implement`) |
-| `in_progress` | implementation done, no `trellis-check` run | Phase 2.2 (`trellis-check`) |
-| `in_progress` | check passed | Phase 3.3 (spec update) → 3.4 (commit) |
-| `completed` | task is still in active tree | Phase 3.5 (run `/trellis:finish-work` to archive) |
+Stable boundaries are:
 
-When you add a custom status (e.g. `in-review`), add a `[workflow-state:in-review]` block in `.trellis/workflow.md` for the per-turn breadcrumb AND extend this route table — usually by editing the `/trellis:continue` command file (`.{platform}/commands/trellis/continue.md` or equivalent) to add a row that decides where to resume from. Without the route entry, `/trellis:continue` will fall through to a default branch and the user will not land on the step you intended.
+- With no active task pointer, surface each healthy candidate with its `taskStatus` and only the diagnostics needed to distinguish invalid progress or scan failures. Suggest an explicit rebind when appropriate; never bind a session automatically.
+- A `planning` task returns through `trellis-brainstorm` readiness, a refreshed `brief.md`, and the task-start review gate before implementation.
+- An `in_progress` task resumes from current artifacts and validated workflow evidence. Implement/check execution goes through `trellis-route`; saved progress must not infer a phase or restore Git behavior.
+- A `completed` task remains discoverable only while Close is pending or blocked. Enter the `trellis-push` completed-task preflight when publication needs recovery; otherwise report `closeout.blockers` and retry deterministic Close after the blocker is resolved. Rework requires an explicit reopen before implementation. After initial approval, plan changes follow `trellis-task-brief`'s incremental change rules rather than repeating whole-Brief approval.
 
+When changing recovery behavior, update `trellis-continue`, `task_progress.py`, the relevant workflow owner/state, and final-output tests together. Keep detailed progress schemas, command arguments, and error matrices in the owner skill/helper rather than duplicating them here.
+<!-- END skill-garden patch trellis-meta-managed-continue-recovery v0.6 -->
 ## Notes
 
-`.trellis/workflow.md` is the local project workflow, not an immutable template. The user can adapt it to team habits. After editing it, platform entry files may still contain old descriptions, so inspect them too.
+<!-- BEGIN skill-garden patch trellis-meta-managed-workflow-notes v0.6 -->
+`.trellis/workflow.md` is the current runtime contract. Before editing, determine whether the target is project-local or Skill-Garden-owned. Direct edits are valid only for unowned local sections; managed sections must be changed through their canonical Patch and owner, synchronized across affected platform entries, and verified in compiled and dogfood outputs.
+<!-- END skill-garden patch trellis-meta-managed-workflow-notes v0.6 -->

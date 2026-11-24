@@ -1,484 +1,178 @@
 ---
 name: trellis-push
-description: "提交并推送配置仓库，可选合并到目标分支，并同步任务进度快照。"
----
-# Push — 提交并推送（可选合并到目标分支）
-
-一键完成 commit → push → 可选 merge 到目标分支 → 写入任务进度快照 → 输出结果。
-
-核心原则：**先计划、一次确认、后执行**。在任何 `git add`、`git commit`、`git push`、`git merge` 之前，必须先展示完整执行计划，并获得用户确认。
-
-例外：当 `trellis-auto-loop` 已显式以 `profile=commit-only` 启动，且 runner 当前有 `outstanding_action.action=commit_only` 时，用户启动 auto-loop 本身就是本次 run 内任务相关本地提交的预授权。此时仍必须由 AI 生成并自检提交计划，但可跳过二次聊天确认；计划只允许 commit-only、不 push/merge/release/archive，并在成功后把 commit hash 回写 runner。预检不安全时只标记当前 auto-loop item blocked/skipped，后续队列仍可继续。
-
-支持多仓库（frontend / backend 等），merge 目标分支记录在 `.trellis/config.yaml` 的 `packages.<name>.merge_target` 中。
-
+description: "按确认的精确文件范围提交普通变更或完成已就绪的 merge commit；多仓计划可包含已展示的本地生成命令，并在普通推送后同步当前任务记录与进度。"
 ---
 
-## 配置
+# Trellis Push
 
-目标分支存储在 `.trellis/config.yaml` 的 packages 配置中：
+`trellis-push` 独占 Phase 3.4：精确计划、提交推送、task 进度及 untracked 清理。
 
-```yaml
-packages:
-  frontend:
-    path: iqs-front-human
-    git: true
-    merge_target: test      # 首次指定后可回写
-  backend:
-    path: iqs
-    git: true
-    merge_target: test
-```
+## 职责与条件入口
 
-> 首次运行时如果 `merge_target` 不存在，默认跳过 merge；如果用户在统一执行计划中明确指定目标分支，可将其回写到 `config.yaml`。如需修改，直接编辑 `config.yaml` 或通过 `/trellis-push` 传入 `--reconfigure` 语义。
+人工确认或有效 policy_timeout claim 与 started 回执之前，禁止 `git add`、`git commit` 或 `git push`。准备后台等待不执行 Git 写入。
 
----
+最终回复前按 `.trellis/scripts/confirmation.md`：已有授权续接；只看计划/停止、本机制自身开发验证或未决风险保持人工。其余必须 项目 `prepare` 完整计划及精确范围；成功后后台 `wait`，原样完整展示 `display` 并结束回合。失败报告实际原因。提醒仅 `claimed=true`、`source=policy_timeout`、`action=execute_git_plan` 且 started 成功进 Step 4，后记终态。准备不需领取，回执不是人工确认，不扩大范围。
 
-## 总流程
+普通模式精确计划确认一次后 commit + push；仅用户要求本地提交才 commit-only，不写任务进度。task 普通计划含独立记录提交。
 
-```text
-Step 0  读取配置、模式与活动任务上下文
-Step 1  预检并收集所有候选仓库状态
-Step 2  生成统一执行计划（业务提交 + push/merge + snapshot + 父仓 bookkeeping）
-Step 3  用户确认后执行业务仓库 commit / push
-Step 4  按已确认计划执行可选 merge
-Step 5  写入已确认的任务进度快照，并补齐运行后字段
-Step 6  输出结果
-```
+- 只提交 planned exact files，保留无关 dirty/staged；不用 `git add .` / `git add -A`，不要求整体 clean。
+- untracked 只接受 `stage=push`，游标不替代证据、计划、确认或 Git 检查；无任务也可普通提交。
+- 不处理上线、队列、日志或物理 GC；不发起、终止或解决合并。只允许普通模式完成已就绪 merge。
 
-除非出现“计划变化、执行失败重试、用户调整 snapshot、父仓 staged/冲突/task 文件预脏等 bookkeeping 安全条件不满足、merge 冲突”等情况，否则不要在执行中途追加新的确认问题。
+| 实际场景 | 先读细则 |
+| --- | --- |
+| 多仓/生成依赖、已有 merge 或历史 GC ahead | [git-special-cases.md](references/git-special-cases.md)；在相关规划或副作用前读取 |
+| 普通 push 且有活动 task | [task-progress.md](references/task-progress.md)；计划前读取，业务 Git 后执行 |
+| taskStatus=completed 的恢复 | [completed-task-recovery.md](references/completed-task-recovery.md)；先完成只读 preflight |
+| validated runner 的内部 commit-only | [auto-loop-commit.md](references/auto-loop-commit.md)；不 push、不执行 Step 5、不渲染交互模板 |
 
----
+未命中场景不加载其 reference；命中却缺失细则时阻塞，不凭记忆代替。内部 commit-only 只接受 runner 的合法预授权。
 
-## Step 0: 读取配置、模式与活动任务上下文
+## Step 0：记录完成链证据
 
-### 0.1 解析语义模式
+普通 push 或用户 `commit-only` 已经构成明确 Git 意图；也接受完成链 owner 的合法交接。除 auto-loop 内部 `commit-only` 外，按当前结果与实际 diff 记录：
 
-支持自然语言或 skill args 传入：
+- Check-All：通过、有效已接受风险、未运行/失效、未处置 findings、blocked 或部分验证；保留 ID/严重度；`[上线后验证]` 作为非阻断风险保留动作、责任、预期。
+- 快速直改：仅无 task/untracked、仍符合 Request Triage 且必要定向验证成功覆盖当前 diff，才记 `不适用（快速直改）` 并列真实命令、结果、范围。验证缺失/失败/失效或范围扩大不得使用；task/tracked 缺检查仍按实际状态列风险，不得伪造通过。
+- Update-Spec：根据当前 `spec_update_result` 与实际 diff 标记 `no-op`、`written`、`needs-review` 或未运行/失效。
 
-| 语义 | 说明 | 用户怎么说 |
-|------|------|-----------|
-| 默认 | 自动检测所有有变更的仓库并处理 | `/trellis-push` |
-| commit-only | 只 commit 不 push，跳过 push / merge | `只提交不推` / `commit-only` |
-| 指定仓库 | 只处理指定仓库 | `只 push 前端` / `push frontend` |
-| 重新配置 | 本次允许重新指定 merge 目标，并回写 `merge_target` | `重新配置 push 目标分支` / `reconfigure push` |
-| 临时目标 | 本次临时指定 merge 目标，不修改配置 | `push 到 hotfix 分支` |
-| snapshot-only | 不提交业务代码，只写入 / 同步任务进度快照 | `只更新 snapshot` / `snapshot-only` |
-| auto-loop commit-only | 由 `trellis-auto-loop` runner 的 `commit_only` action 触发，只提交本任务可归属文件，不二次确认、不 push | `trellis-auto-loop` 内部触发 |
+禁止从历史、摘要或 dirty 推断通过、风险接受或授权。Step 3 展示证据，不会阻止读取 Git 状态或生成提交计划。本步骤不得返回 Phase 2.2，不得加载 `trellis-check-all` 或 `trellis-update-spec`，不补跑；阶段由各 owner 推进。
 
-`snapshot-only` 只在用户明确要求时使用。它仍必须展示统一执行计划；`pushed_commits` 取计划中确认的现有 commit，或按用户说明记录。
+无 task 时运行 `python3 ./.trellis/scripts/untracked_flow.py status --verbose`。命中须记录 work id/summary/stage 且要求 `stage=push`；miss 走无任务路径，损坏则停。游标命中不表示 Push 已计划、已确认或已执行。
 
-### 0.1.1 auto-loop commit-only 判定
+## Step 1：发现仓库与任务
 
-只有同时满足以下条件，才可走 auto-loop 预授权路径：
+候选仓库：
 
-- `.trellis/scripts/auto_loop.py status` 显示当前 `run_status=running`，profile 为 `commit-only`。
-- status 摘要里的 `outstanding_action.action` 是 `commit_only`，且 `outstanding_action.task` 等于当前活动任务。
-- 本次 `trellis-push` 语义是 commit-only，不包含 push / merge / release / archive。
-- 计划拟提交文件全部能归属当前任务；未识别 dirty 文件不纳入提交。
-- 执行前复核 git 状态与计划一致。
+- 含 `.trellis/` 的父仓根目录。
+- `.trellis/config.yaml` 中 package 路径对应的独立 Git root。
+- 用户明确指定的候选仓库。
 
-任一条件不满足时，不得使用预授权。普通 `trellis-push` 继续走“展示计划并等待确认”的规则。
+Git root 去重；非独立仓库的 package 归父仓。
 
-auto-loop 预授权路径不使用额外提交 helper。AI 负责根据当前任务 artifacts、`git status`、`git diff` 和必要的文件内容判断文件归属，输出 planned files / retained files / commit message / 归属理由；`trellis-push` 负责边界复核：当前 action/profile/task 匹配、staged 区为空、无冲突、planned files 当前 dirty、planned files 不含 `.trellis/.runtime/`、`.trellis/.route-prefs.tmp`、其他任务目录或未解释文件。通过后只 `git add` planned files 并执行本地 commit，随后回写 `auto_loop.py record --action commit_only --result ok --commit <hash> ...`。预检失败时回写 `record --result blocked`，该 blocked 只影响当前 item；auto-loop runner 后续 `next` 应继续寻找后续 pending 任务。只有 merge/rebase 冲突、repo 状态不可读、脚本损坏或用户明确 stop 才停止整个 run。
+仓库展示名取匹配 package 名，否则用 Git top-level 目录名。`root`、`parent`、`main repo` 仅为输入别名，不用于展示。
 
-### 0.2 发现候选 Git 仓库
-
-读取 `.trellis/config.yaml` 中的 `packages` 配置，但不要把 `git: true` 当作唯一仓库发现规则。`git: true` 主要用于 Trellis session context 展示独立包仓库状态；`trellis-push` 必须以实际 Git root 为准发现可提交仓库：
-
-- **父仓根目录（含 `.trellis/` 的项目根）始终作为一个候选仓库**，即使它没有配置 `git: true`。
-- packages 中配置的路径如果自身是独立 Git root（存在 `.git` 目录或 submodule 的 `.git` 文件），也作为候选仓库。
-- 如果 package 路径位于父仓内部但不是独立 Git root，不要把它当作单独仓库；它的变更归父仓候选项处理。
-- 如果用户指定了仓库，只保留匹配的候选项；指定父仓可用 `root`、`parent`、`main repo` 或默认 package 名。
-- 同一个 Git root 只保留一次，避免 `path: .` 与父仓重复。
-
-merge 目标仍从对应 package 的 `merge_target` 读取；父仓没有 package 配置时，默认不设置 merge 目标。
-
-### 0.3 读取活动任务上下文（可选）
-
-为生成 snapshot 草案准备输入。本步骤**不阻塞**主流程：任何读取失败都按“无任务上下文”继续，不要中断 push。
+task/untracked 均可选：
 
 ```bash
-# 在仓库根目录（含 .trellis/ 的项目根，不是 package 子目录）
-python3 ./.trellis/scripts/task.py current
-python3 ./.trellis/scripts/push_snapshot.py status --json
+python3 ./.trellis/scripts/task.py current --source || true
+python3 ./.trellis/scripts/task_progress.py status --json || true
 ```
 
-- **无活动任务**（命令退出码非 0 或输出为空）：在计划中标记 `snapshot: 跳过（无活动任务）`。
-- **有活动任务**：解析输出拿到 task 路径（形如 `.trellis/tasks/MM-DD-name/`），并读取下列内容：
-  - `<task_dir>/implement.md`（如有）— 步骤清单，AI 推断进度的主依据
-  - `push_snapshot.py status --json` 的 `snapshot` / `summary`（如有）— 上次推送时的进度基线；若返回 `no-snapshot` / `no-current-task`，按无上次 snapshot 继续
-  - `<task_dir>/task.json` 的 `base_branch` 字段 — 用于 `git log <base_branch>..HEAD` 圈定本任务 commit 范围
-
----
-
-## Step 1: 预检并收集仓库状态
-
-对每个候选 Git 仓库收集：
+有活动任务则计划前读 [task-progress.md](references/task-progress.md)，获取文件级状态：
 
 ```bash
-cd <package_path>
+git status --short --untracked-files=all -- <task-dir>
+```
+
+若 `task_progress.py status` 返回 `taskStatus=completed`，立即按需读取 `references/completed-task-recovery.md`，由该 reference 完成只读 preflight 并返回“恢复计划 / Close 待解阻 / 无需动作 / 阻断”之一。在得到结果前不得进入普通业务规划，也不得重复已经成功的业务 Git 动作。reference 缺失、不可读或证据无法闭合时失败关闭；`task.json.progress` 只作诊断，不能单独选择恢复动作。
+
+展开 `?? <task-dir>/` 至真实文件，禁止将折叠目录当成 exact file 或 pathspec。无活动 task 时仍可提交相关代码，但不生成任务进度。untracked 命中时，结合当前请求、work summary 和实际 diff 判断业务 `planned` 文件归属，计划同时显示 work id；无法明确归属的文件只能保留或作为风险。存在活动 task 时，结合 `brief.md`、`implement.md`、当前 diff 与本轮执行范围生成一行语义进度；同时识别当前任务目录中已存在且可归属的 dirty/untracked 产物，供 Step 5 生成任务记录 exact files。不得从旧进度推断 Git 动作。
+
+## Step 2：预检与文件归属
+
+逐仓读取：
+
+```bash
 git status --short
 git branch --show-current
 git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true
 git diff --stat
 git diff --name-only
+git diff --cached --stat
+git diff --cached --name-only
+git diff --cached --check
+git ls-files -u
+git rev-parse --verify MERGE_HEAD 2>/dev/null || true
 git log --oneline -5
+git log @{u}..HEAD --oneline 2>/dev/null || true
+git rev-list --reverse @{u}..HEAD 2>/dev/null || true
 ```
 
-如果有活动任务和 `base_branch`，再收集：
+停止条件：
+
+- detached HEAD、分支不可读、未解决冲突、rebase、cherry-pick、revert 或其它非 merge 的未完成 Git 集成状态。
+- `MERGE_HEAD` 存在时仅普通模式可继续，并且必须固定当前 `HEAD` / `MERGE_HEAD`、确认 `git ls-files -u` 为空、全部 staged paths 都属于 planned 且没有 retained staged；否则停止。用户/auto-loop `commit-only` 不适用。
+- 普通推送会携带既无法归属本次任务、也未通过特殊 Git reference 的自动 GC 审计的历史 ahead commits。
+- 无法确定 planned file 是否属于当前请求或活动任务。
+- 内部 `commit-only` 发现 staged 区非空。
+
+存在无法归属的历史 ahead 时，先按 [git-special-cases.md](references/git-special-cases.md) 审计候选 GC；仍无法归属则停止。普通路径不运行物理 GC。
+
+业务文件分两组；当前任务记录按下方独立提交：
+
+- `planned`：本轮明确归属且准备提交的 exact files。
+- `retained`：当前存在、但本次明确不提交并保持原状的 dirty paths，包含计划外 untracked、unstaged、staged 文件。clean files 不进入该集合。
+
+普通模式存在活动任务时，当前任务目录中已存在且可归属的 dirty/untracked 产物不进入业务 `planned`，也不进入 `retained`；它们与预计由 helper 更新的 `<task-dir>/task.json` 组成 Step 5 的任务记录 exact files。其他任务目录和无法归属当前任务的文件仍属于 `retained` 或风险，不得顺带提交。
+
+多仓/生成链先读 [git-special-cases.md](references/git-special-cases.md)。
+
+展示名为“保留未提交的变更（dirty）”，阈值由模板所有；保留 exact paths/状态，摘要不得作 pathspec。未知 ahead、分支/upstream 或归属异常列风险；retained 不默认阻塞。
+
+计划/基线默认留在上下文；跨进程或恢复才存 gitignored runtime。不生成 `retained.md` 等展示附件，不纳入任务产物或提交；runner 沿用原契约。
+
+允许 `retained`；记录并保留计划外 staged set。新增文件须重新计划和确认，不静默扩大范围。
+
+## Step 3：展示最小计划
+
+普通模式或用户 `commit-only` 在所有计划数据已经收敛、即将展示用户可见计划时，读取 `references/output-templates.md` 的“计划模板”和“共用展示规则”再渲染；已读、未变化且内容仍可用时直接复用。
+
+模板缺失、不可读或缺章时报 `阻塞`，不得凭记忆重建、缩写或自制替代模板。
+
+多仓只确认一次。已展示生成命令和预计 exact files 时，成功且无列表外新 dirty 沿用原确认；内容/hash/统计变化不重问。其它边界变化按 Step 4 重规划。
+
+
+## Step 4：精确提交与推送
+
+逐仓按序执行，先复核 planned files、分支、HEAD、upstream、冲突、staged、全部 dirty paths 和 retained 摘要；普通推送还须逐个重验计划中已验证 GC 的完整哈希与当前 `@{u}..HEAD`。任一关键条件变化都停止当前执行并重新规划。普通模式仅 `retained` 内容变化时可更新说明。
+
+普通精确提交：
 
 ```bash
-git log <base_branch>..HEAD --oneline
+git add -- <exact planned files>
+git commit --only -m "<confirmed message>" -- <exact planned files>
 ```
 
-预检规则：
-
-- 所有候选仓库都无变更，且不是 `snapshot-only`：提示用户并终止。
-- 有未合并状态、rebase 状态或 merge 冲突残留：立即停止，展示状态；不要继续生成执行计划。
-- 当前分支为空、detached HEAD、或无法确认分支：停止并说明原因。
-- dirty 文件必须按来源分组：**AI 本轮编辑** 与 **未识别 dirty 文件**。未识别 dirty 文件默认不纳入提交计划。
-- 如果父仓（含 `.trellis/` 的仓库）后续要写 snapshot，先记录父仓当前 `git status --porcelain`，供 Step 5 判断：
-  - 是否存在未合并 / 冲突状态；
-  - 是否存在与本次 bookkeeping 无关的 staged 文件；
-  - `<task_dir>/task.json` 是否在写入前已经 dirty；
-  - reconfigure 场景下 `.trellis/config.yaml` 是否在写入前已经 dirty 且未在统一计划中确认。
-  父仓存在无关、未暂存 dirty 文件本身不阻塞 snapshot；这些文件只需要在计划或结果中提示会保留未提交。
-
----
-
-## Step 2: 生成统一执行计划
-
-这是唯一的常规确认点。**确认前禁止执行任何 `git add` / commit / push / merge / task.json 写入。** 唯一例外是已满足 Step 0.1.1 的 auto-loop commit-only 预授权；该路径仍要生成计划并执行自检，只是不再等待用户二次确认。
-
-### 2.1 生成业务提交计划
-
-对每个有变更的仓库生成：
-
-- 仓库名、路径、当前分支、上游分支
-- AI 本轮编辑且拟纳入提交的具体文件列表
-- 未识别 dirty 文件列表（默认不纳入提交）
-- 用户明确要求纳入的未识别文件列表（如有）
-- 草拟 commit message
-- push 计划（默认 / commit-only / 已有 upstream / 需要 `-u`）
-- merge 计划（跳过 / 合并到配置目标 / 合并到临时目标 / 重新配置后回写）
-
-commit message 生成规则：
-
-- 读取最近 5 条 commit 参考风格。
-- 类型前缀使用 `feat` / `fix` / `docs` / `chore` / `refactor` 等。
-- 简短描述变更内容。
-- 默认使用中文描述，除非项目历史明显使用英文。
-
-### 2.2 生成 snapshot 草案
-
-仅当有活动任务，或用户明确要求 `snapshot-only` 时生成。snapshot 的语义内容并入统一确认，不再默认二次询问。
-
-收集信号：
-
-- `implement.md` 步骤清单（如缺失，则说明推断依据不足）
-- 各仓库 `git log <base_branch>..HEAD --oneline`
-- 上次 `last_push_snapshot`（如有）
-- 本次业务提交计划中的变更内容
-
-计划中展示：
-
-```markdown
-任务进度快照计划：
-- task: <task_dir>
-- completed_steps: ["Step 1", "Step 2"]
-- partial_step: "Step 3（如有）"
-- next_step: "Step 4（如有）"
-- notes: "<可选说明>"
-- branch: 执行成功后按实际分支补齐
-- pushed_commits: 执行成功后按实际 commit hash 补齐
-- snapshot_at: 执行成功后写入当前 ISO 8601 时间
-- push_mode: <push / commit-only / snapshot-only / 指定仓库 / reconfigure / 临时目标>
-- bookkeeping: 只提交 `<task_dir>/task.json`
-```
-
-字段语义保持兼容：
-
-```json
-"last_push_snapshot": {
-  "snapshot_at": "<ISO 8601 时间戳>",
-  "branch": "<任务分支名，或多仓字典>",
-  "pushed_commits": {
-    "frontend": "abc1234",
-    "backend": "def5678"
-  },
-  "push_mode": "push",
-  "completed_steps": ["Step 1", "Step 2"],
-  "partial_step": "Step 3（可选）",
-  "next_step": "Step 4（可选）",
-  "notes": "可选说明"
-}
-```
-
-> `pushed_commits`、`snapshot_at`、实际 branch / commit hash 是运行后字段。用户确认的是 snapshot 的语义内容和写入动作；执行成功后由 AI 按实际结果补齐。
-
-`push_mode` 记录本轮确认的模式。默认实际 push 模式写 `"push"`；commit-only 写 `"commit-only"`；snapshot-only 写 `"snapshot-only"`；指定仓库、reconfigure 或临时目标可写对应模式名。
-
-commit-only 模式下，字段名仍保持 `pushed_commits` 以兼容恢复逻辑；值记录本次生成的本地 commit hash，`push_mode` 写 `"commit-only"`，并在 `notes` 中注明“commit-only：本地已提交，未推送”。
-
-### 2.3 展示确认模板
-
-使用以下格式向用户展示完整计划：
-
-```markdown
-## trellis-push 执行计划
-
-模式：<默认 / commit-only / snapshot-only / 指定仓库 / reconfigure / 临时目标>
-
-### 业务仓库
-
-1. <package> (`<path>`)
-   - 分支：<current_branch> -> <upstream 或 origin/current_branch>
-   - AI 本轮编辑，拟提交：
-     - <file-a>
-     - <file-b>
-   - 未识别 dirty，默认不提交：
-     - <unknown-file 或 无>
-   - 用户要求纳入的未识别文件：
-     - <file 或 无>
-   - commit message：`<type>(<scope>): <description>`
-   - push：<执行 / 跳过（commit-only）>
-   - merge：<跳过 / 合并到 target / 临时合并到 target / 重新配置为 target>
-
-### 任务快照
-
-- <跳过原因，或 snapshot 草案>
-
-### 父仓 bookkeeping
-
-- <跳过原因，或仅提交 `<task_dir>/task.json`>
-- 无关未暂存 dirty：<list 或 无>（保留未提交，不阻塞 snapshot commit）
-- 无关 staged / 冲突 / 目标文件预脏：<list 或 无>（有则停止，需处理后重新计划）
-
-确认后将按上述计划执行。回复 `ok` / `行` / `确认` 执行；回复 `skip snapshot` 跳过快照；回复修改意见则先更新计划；回复 `manual` / `我自己来` 则停止。
-```
-
-确认规则：
-
-- 用户确认前不得暂存。
-- 用户修改 commit message、merge 目标或 snapshot 草案时，更新计划并重新展示确认。
-- 用户要求纳入未识别 dirty 文件时，必须明确列出这些文件后重新确认。
-- 用户拒绝文件范围或选择手动处理时，立即停止，不执行任何 git 写操作。
-
----
-
-## Step 3: 按计划执行业务 commit / push
-
-确认后，对每个业务仓库按计划执行。
-
-### 3.1 执行前复核
-
-执行前重新运行：
+提交后验证：
 
 ```bash
-git status --short
-git diff --name-only
+git show --name-only --format= HEAD
+git diff --cached --name-only
 ```
 
-如果文件状态与确认计划不一致，停止并说明“计划已变化，需要重新确认”。不要临时扩展提交范围。
+commit 只能包含 planned files，执行前的计划外 staged set 必须仍保留。
 
-### 3.2 暂存与提交
+已有 merge 的提交与双父验证按 [git-special-cases.md](references/git-special-cases.md)；不得套用上方带 pathspec 的普通 commit。
 
-只暂存计划中明确列出的文件：
+普通模式继续推送当前分支：
 
 ```bash
-git add <具体文件列表>
-git commit -m "<type>(<scope>): <description>"
+git push origin <current-branch>
 ```
 
-禁止：
+已有 upstream 且远端名称不是 `origin` 时，使用实际 upstream remote。无 upstream 时只能在计划中明确将当前分支设置到选定 remote；不能猜测目标分支。
 
-- `git add -A`
-- `git add .`
-- 暂存确认计划之外的文件
-- 未经确认修改 commit message
+`commit-only` 到本地提交成功即结束，不推送，也不写远端任务进度。
 
-### 3.3 Push 当前分支
+## Step 5：同步任务进度
 
-commit-only 模式跳过本节。
+仅普通模式且有活动 task 时执行 [task-progress.md](references/task-progress.md)；该 reference 在计划前加载，业务动作完成后写真实进度及任务记录。untracked、用户或 runner commit-only 均跳过。
 
-```bash
-git push origin <current_branch>
-```
+## Step 6：结果
 
-如果远程没有该分支，且计划已说明需要建立 upstream：
+untracked 的全部已确认 Git 动作成功后，最后运行 `python3 ./.trellis/scripts/untracked_flow.py clear --reason completed --work-id <work-id>`。清理成功才报告完成链已结束；任一仓库、push 或清理失败都保留状态并报告恢复位置，禁止因部分成功伪造完成。用户 `commit-only` 的已确认动作全部成功时同样可以完成并清理。
 
-```bash
-git push -u origin <current_branch>
-```
+普通模式、用户 `commit-only` 或 untracked 展示结果前，读取 `references/output-templates.md` 的“共用展示规则”、“结果模板”和“结果补充规则”；原文未变化且仍可用则复用，变化或缺失才重读。
 
-push 失败时立即停止，展示失败原因和已完成仓库状态。不要自动 force push。
+reference 缺失、无法读取或缺少对应章节时停止并报告 `阻塞`，不得凭记忆重建、缩写或自制替代结果。auto-loop 内部 `commit-only` 不读取或渲染该交互式结果模板，只按 Step 4 的失败保留契约向调用方返回逐仓 commits、files、retained、message 和失败位置，由 `trellis-auto-loop` 完成 `record + next`。
 
----
+## 禁止事项
 
-## Step 4: 按计划执行可选 merge
-
-只有在统一执行计划中明确写了 merge 目标时才执行。不要在 push 后临时追问是否 merge。
-
-执行前再次确认当前工作区干净：
-
-```bash
-git status --short
-```
-
-如果不干净，停止并说明原因。
-
-按计划执行：
-
-```bash
-git checkout <target_branch>
-git pull origin <target_branch>
-git merge <current_branch> --no-edit
-git push origin <target_branch>
-git checkout <current_branch>
-```
-
-如果 merge 目标是 `main` / `master`，计划中必须已经包含额外警告和用户确认。
-
-如果 merge 出现冲突：
-
-1. 立即停止，展示冲突文件列表。
-2. 询问用户：手动解决 / 中止 merge。
-3. 绝对不能 `git merge --abort` 后静默跳过。
-
-如果用户选择 `reconfigure` 并确认回写目标分支，将 `.trellis/config.yaml` 对应 package 的 `merge_target` 更新为确认的目标；该配置变更属于父仓 dirty 文件，必须在 Step 5 的父仓检查里显式处理。
-
----
-
-## Step 5: 写入任务进度快照与父仓 bookkeeping
-
-仅当统一执行计划中确认了 snapshot 时执行；否则跳过。
-
-### 5.1 补齐运行后字段
-
-业务 commit / push 完成后，按实际结果补齐：
-
-- `snapshot_at`：当前 ISO 8601 时间戳
-- `branch`：实际分支；多仓不同分支时使用字典
-- `pushed_commits`：各 package 的短 hash
-- `push_mode`：统一执行计划确认的模式；默认 push 写 `"push"`，commit-only 写 `"commit-only"`，snapshot-only 写 `"snapshot-only"`
-- `notes`：保留已确认 notes；commit-only 模式追加“本地已提交，未推送”
-
-写入前先复核目标文件：
-
-```bash
-git status --porcelain -- <task_json_path> [".trellis/config.yaml"]
-```
-
-- `<task_json_path>` 如果在本次写入前已经 dirty，且该 dirty 未在统一计划中确认：立即停止并说明原因，避免覆盖或混入别人对同一任务文件的修改。
-- reconfigure 场景下，`.trellis/config.yaml` 如果在本次回写前已经 dirty，且未在统一计划中确认：立即停止并说明原因。
-
-写入方式：
-
-1. 将已确认语义内容与运行后字段合并成完整 snapshot JSON。
-2. 调用 helper 写入：
-
-   ```bash
-   python3 ./.trellis/scripts/push_snapshot.py write --task <task_dir> --snapshot-json '<完整 snapshot JSON>'
-   ```
-
-3. 确认 helper 成功返回；失败时停止并展示错误，不继续父仓 bookkeeping commit。
-
-helper 只允许更新 `last_push_snapshot` 字段；不要绕过 helper 手工覆盖整个 `task.json`。
-
-### 5.2 父仓 status 检查
-
-写完 snapshot 后，在父仓根目录执行：
-
-```bash
-git status --porcelain
-git diff --name-only --cached
-```
-
-bookkeeping 的自动处理范围只允许统一计划中确认过的文件：
-
-- `<task_dir>/task.json`
-- 如果 Step 4 选择了 reconfigure：`.trellis/config.yaml`
-
-检查规则：
-
-- 如果存在未合并路径、rebase 状态或 merge 冲突残留：立即停止，展示状态。
-- 如果 `git diff --name-only --cached` 显示除上述允许文件之外的 staged 文件：立即停止，说明这些 staged 文件会被普通 commit 混入，必须先处理或重新确认。
-- 如果存在除上述允许文件之外的**未暂存** dirty 文件：不要阻塞；保留它们未暂存，并在结果中提示“未纳入 snapshot commit”。
-- 如果允许文件之外的 dirty 同时被 staged 和 unstaged 修改，按 staged 风险处理：立即停止。
-
-如果父仓也是本次业务仓库，snapshot / config bookkeeping 仍然使用单独 commit，不和业务 commit 混合。
-
-### 5.3 提交并推送父仓 bookkeeping
-
-```bash
-git add <task_json_path> [".trellis/config.yaml"]
-git commit --only -m "chore(task): update <task_name> push snapshot" -- <task_json_path> [".trellis/config.yaml"]
-```
-
-`git commit --only ... -- <paths>` 的目的是把 bookkeeping commit 限定到当前任务的 `task.json`（以及已确认的 `config.yaml`），即使父仓还有无关未暂存 dirty 文件，也不会把它们带入本次提交。执行前仍必须确认 staged 区没有无关文件；如果本地 Git 对 `--only` 参数不兼容，只有在 staged 区确认仅包含上述允许文件时，才可退回普通 `git commit -m ...`。
-
-检查父仓是否配置 remote：
-
-```bash
-git remote -v | grep -E "^origin\s+"
-```
-
-- 有 remote：`git push origin <current_branch>`；首次使用 `git push -u origin <current_branch>`。
-- 无 remote：仅本地 commit，提示用户“父仓未配 remote，snapshot 仅本地保存”。
-
----
-
-## Step 6: 输出结果
-
-使用结果表汇总：
-
-```markdown
-## Push 结果
-
-| 仓库 | 分支 | 目标 | commit | 状态 |
-|------|------|------|--------|------|
-| frontend | v1.3 | test | abc1234 feat(...): ... | 已合并 |
-| backend | v1.3 | - | def5678 fix(...): ... | 已推送，跳过合并 |
-
-任务进度快照：已写入 `<task_dir>/task.json`，完成 Step 1-3，下一步 Step 5。
-父仓同步：已提交并推送 `chore(task): update <task_name> push snapshot`。
-父仓存在未暂存 dirty 时补充：这些文件已保留未暂存，未纳入 snapshot commit：<list>
-```
-
-如果部分仓库已成功、后续失败，必须明确列出：
-
-- 已完成的 commit / push / merge
-- 失败位置
-- 当前所在分支
-- 用户下一步需要处理什么
-
----
-
-## 安全机制
-
-1. **统一执行计划确认** — 文件列表、commit message、push/merge 意图、snapshot 草案一起确认。
-2. **未识别 dirty 文件隔离** — 默认不纳入提交，除非用户明确确认。
-3. **执行前复核** — git 状态与计划不一致时停止，不临时扩展范围。
-4. **snapshot 合并确认** — 语义字段执行前确认，运行后字段执行后补齐。
-5. **父仓 bookkeeping 隔离** — 只提交已确认的 `task.json` / `config.yaml`；无关未暂存 dirty 文件保留未提交并提示，不阻塞；无关 staged 文件、冲突状态、目标文件预脏必须停止。
-6. **merge 冲突处理** — 冲突时暂停，不静默跳过。
-7. **主分支保护** — 目标分支是 `master` / `main` 时必须在计划中额外警告确认。
-8. **不使用 force push** — 始终使用普通 push。
-
----
-
-## 反模式（避免）
-
-- ❌ 在展示统一执行计划前执行 `git add` / commit / push / merge
-- ❌ `git add -A` 或 `git add .`
-- ❌ 把未识别 dirty 文件静默纳入提交
-- ❌ commit message 未展示给用户就提交
-- ❌ push 后临时追问 merge，而不是在计划中提前确认
-- ❌ snapshot 语义内容未确认就写入 task.json
-- ❌ 父仓 snapshot commit 混入业务代码提交
-- ❌ 父仓存在无关未暂存 dirty 就跳过 snapshot，尽管可以只提交目标 `task.json`
-- ❌ 父仓已有无关 staged 文件时仍执行 snapshot commit
-- ❌ merge 冲突后静默 abort 或跳过
-- ❌ force push 到当前分支或目标分支
-- ❌ 在目标分支上直接开发（只 merge，不在目标分支上改代码）
+- 扩大到计划外文件或要求清理无关工作区。
+- 把普通 push 中可归属当前活动任务的规划产物列为 retained，并以“之后再整理”为由延后首次记录。
+- 执行首次计划未展示的生成命令，或生成计划外文件后仍沿用旧确认。
+- 用任务进度决定是否推送代码。
+- 在本 skill 内发起、终止、解决冲突或改变分支合并目标；只允许完成已就绪的 merge commit。
+- 自动解决 push rejection、冲突、凭证或远端保护规则问题。
+- 在业务失败后伪造已完成进度，或因进度同步失败回滚业务提交。

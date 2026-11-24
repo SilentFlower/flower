@@ -5,11 +5,15 @@ description: "Guides collaborative requirements discovery before implementation.
 
 # Trellis Brainstorm
 
-## Non-Negotiable Interview Contract
+## Non-Negotiable Planning Contract
 
-Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+A request to build, implement, fix, refactor, or "go ahead" is not approval to leave planning. Task-creation consent is also not implementation approval.
 
-Ask the questions one at a time.
+<!-- BEGIN skill-garden patch brainstorm-planning-contract-brief v0.6 -->
+For every non-trivial task, follow `trellis-task-brief` for the final Brief review and its explicit preauthorization exception before implementation begins. Ordinary implementation or task-creation intent is not Brief approval.
+<!-- END skill-garden patch brainstorm-planning-contract-brief v0.6 -->
+
+While any user-owned product, scope, UX, compatibility, risk, or acceptance decision remains unresolved, end the turn with exactly one highest-value question. Do not edit product code, dispatch implementation, or run `task.py start`.
 
 ## Non-Negotiable Evidence Rule
 
@@ -17,7 +21,9 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
 This is mandatory. Before asking the user a question, first check whether the answer is already available in code, tests, configs, docs, existing specs, or task history.
 
-Do not ask the user to confirm facts that the repository can answer. Ask only for product intent, preference, scope, risk tolerance, or decisions that remain ambiguous after inspection.
+Do not ask the user to confirm facts that the repository can answer. Ask only for product intent, preference, scope, risk tolerance, acceptance behavior, or decisions that remain ambiguous after inspection.
+
+Repository evidence establishes current behavior and technical constraints. The user's intended behavior, feature scope boundaries, and UX preferences are never answerable by repository evidence alone, even when an existing pattern exists; existing patterns are options and recommendation evidence, not decisions.
 
 ---
 
@@ -25,17 +31,31 @@ Use this skill during Phase 1 planning to turn the user's request into clear req
 
 ## Preconditions
 
-Use this skill only after task-creation consent has been given and the user is ready to enter Trellis planning.
+<!-- BEGIN skill-garden patch brainstorm-planning-authorization v0.6 -->
+Use this skill after the user explicitly requests task planning, or after clear complex implementation intent authorizes creating a planning workspace. This authorization covers planning only; it never authorizes `task.py start` or implementation.
 
-If no task exists yet, create one:
+Before choosing an approach for non-trivial project work, follow the workflow `Request Triage` Project Knowledge Discovery contract and return here with the matched project-local SOPs and specs.
+
+Before creating or changing a parent/child task tree, load Phase 1.1 via `python3 ./.trellis/scripts/get_context.py --mode phase --step 1.1` and follow its task-tree guidance.
+<!-- END skill-garden patch brainstorm-planning-authorization v0.6 -->
+
+<!-- BEGIN skill-garden patch brainstorm-auto-task-create v0.6 -->
+If no task exists yet, choose the creator from the authorization source.
+
+For inferred high-confidence complex implementation intent, create an auto-routed planning task:
 
 ```bash
-TASK_DIR=$(python3 ./.trellis/scripts/task.py create "<short task title>" --slug <slug>)
+python3 ./.trellis/scripts/task_intent.py create --title "<short task title>" --slug <slug>
 ```
 
-Use a concise title from the user's request. Use a slug without a date prefix. `task.py create` adds the `MM-DD-` directory prefix automatically.
+For explicit user-requested task planning or a manually maintained task, use:
 
-`task.py create` creates the default `prd.md`. Update that file with the current understanding before asking follow-up questions.
+```bash
+python3 ./.trellis/scripts/task.py create "<short task title>" --slug <slug>
+```
+
+Use a concise title from the user's request and a slug without a date prefix. Both paths create the default `prd.md`; update it with the current understanding before asking follow-up questions.
+<!-- END skill-garden patch brainstorm-auto-task-create v0.6 -->
 
 ## Planning Flow
 
@@ -49,11 +69,14 @@ Use a concise title from the user's request. Use a slug without a date prefix. `
    - product intent still needed from the user
    - scope or risk decisions still needed from the user
    - likely out-of-scope items
-4. Ask the single highest-value remaining question.
-5. Include your recommended answer with the question.
-6. After each user answer, update `prd.md` before continuing.
-7. For complex tasks, create or update `design.md` and `implement.md` before implementation starts.
-8. Before final review or `task.py start`, run the PRD convergence pass below.
+4. If a user-owned decision remains, ask the single highest-value question, include your recommendation and trade-off, then stop. Do not perform implementation work in the same turn.
+5. After each user answer, update `prd.md`, recompute the decision inventory, and repeat from step 2.
+6. When no user-owned decision remains, create or update `design.md` and `implement.md` for complex tasks.
+7. Run the requirement convergence gate, then the PRD convergence pass.
+<!-- BEGIN skill-garden patch brainstorm-planning-readiness v0.6 -->
+8. Load `trellis-task-brief`, refresh `brief.md` from the converged artifacts, and display the full Brief. Follow its review gate and explicit preauthorization exception.
+9. Run `task.py start` and begin implementation only after that review gate is satisfied. After initial approval, follow `trellis-task-brief` for incremental plan changes: synchronize affected artifacts and obtain only unresolved change decisions, rather than repeating whole-Brief approval for every refresh.
+<!-- END skill-garden patch brainstorm-planning-readiness v0.6 -->
 
 Do not invent a project-specific product/spec hierarchy. If the repository already has product, domain, or spec docs, use them. If it does not, proceed with the evidence that exists.
 
@@ -69,6 +92,14 @@ Each question must include:
 - the trade-off if the user chooses differently
 
 Do not ask process questions such as whether to search, inspect files, or continue brainstorming. Do the evidence work directly. Ask the user only when the remaining issue is a product decision, preference, scope boundary, or risk tolerance choice.
+
+Recommendations are not default selections. Never choose a recommended product decision on the user's behalf merely because the user asked for implementation.
+
+<!-- BEGIN skill-garden patch brainstorm-planning-review-brief v0.6 -->
+Do not manufacture clarification questions when the request and repository evidence already resolve every decision. In that case, proceed directly to the final Brief handoff through `trellis-task-brief`.
+
+The final Brief review is a required phase-transition gate. Task-creation consent and ordinary implementation intent do not satisfy it; `trellis-task-brief` owns explicit preauthorization, background preparation, validated timeout receipts and manual fallback. Follow that owner before ending the turn; do not require a human-only reply when its background branch applies.
+<!-- END skill-garden patch brainstorm-planning-review-brief v0.6 -->
 
 ## Thinking Framework: First Principles Analysis
 
@@ -113,6 +144,25 @@ For each component of the current plan:
 - What assumptions need verification?
 - What's the simplest experiment to test this?
 
+## Requirement Convergence Gate
+
+Before final review, verify all of the following:
+
+- the user outcome and product value are explicit
+- in-scope and out-of-scope behavior are explicit
+- acceptance criteria describe observable outcomes
+- user-owned product, scope, UX, compatibility, and risk decisions are resolved
+- blocking open questions are empty
+- technical unknowns are researched or explicitly deferred without changing MVP behavior
+
+Lightweight tasks may omit `design.md` and `implement.md`; they may not skip evidence inspection, requirement convergence, final review, or fresh implementation approval.
+
+<!-- BEGIN skill-garden patch brainstorm-planning-summary-shape v0.6 -->
+The final Brief must cover a one-sentence Goal, a Scope limited to included changes, Non-Goals, Context & Decisions, Acceptance, and one-hop Next Step; include Technical Overview only when the planning artifacts define a technical mechanism, and Risks only when relevant.
+
+Keep it a concise handoff. Follow `trellis-task-brief` for prominent limits, major decisions, their concrete user impact, and bold labels; keep detailed designs, test matrices, and decision ledgers in the planning artifacts.
+<!-- END skill-garden patch brainstorm-planning-summary-shape v0.6 -->
+
 ## Artifact Rules
 
 `prd.md` records requirements and acceptance:
@@ -154,10 +204,11 @@ The pass must be lossless:
 - Remove resolved open questions instead of leaving empty or already-answered sections.
 - Merge parallel bug and requirement lists when they describe the same work; keep each defect's severity, evidence, and file:line anchors on the owning requirement.
 - Preserve every file:line anchor, decision, constraint, requirement ID, and acceptance-criteria mapping.
-- Keep only genuinely blocking open questions.
+- Do not proceed to final review while any blocking open question remains.
 
 After the pass, read `prd.md` top to bottom and verify that no fact is repeated across sections unless the repetition adds new information.
 
+<!-- BEGIN skill-garden patch brainstorm-planning-handoff v0.6 -->
 ## Quality Bar
 
 Before declaring planning ready:
@@ -165,9 +216,24 @@ Before declaring planning ready:
 - `prd.md` contains testable acceptance criteria.
 - `prd.md` has passed the PRD convergence pass: no unresolved temporary brainstorm sections, no duplicate facts across sections, and no lost anchors, decisions, or acceptance mappings.
 - Repository-answerable questions have already been answered through inspection.
-- Remaining open questions are genuinely about user intent or scope.
+- New or inherited blocking conditions have an explicit basis, protected interest, necessity, alternatives, and effect on the user outcome. Existing behavior is evidence of the current implementation, not approval of a product constraint.
+- Excluding normal use, rejecting it, or requiring manual handling is treated as a product trade-off. Unresolved choices follow the existing convergence gate; preserve applicable authorization and data-protection contracts.
+- Acceptance follows the complete user operation across necessary related entry points and recovery or upgrade handoffs. Check exclusions and partial fixes for remaining blockers or mutual waiting; independent business expansion still follows scope management.
+- Important limits, major decisions, and their user impact are recorded in the planning artifacts for the Brief to summarize; local component success alone does not establish the final user outcome.
+- Blocking open questions are empty.
 - Complex tasks have `design.md` and `implement.md`.
 - Sub-agent-dispatch tasks have real curated entries in both `implement.jsonl` and `check.jsonl`; seed-only manifests are not ready.
-- The user has reviewed the final planning artifacts or explicitly approved proceeding.
+- Planning artifacts are ready for the final Brief handoff.
 
-Do not start implementation until the user approves or asks for implementation.
+Do not start implementation merely because the user originally asked for implementation.
+
+## Planning Handoff
+
+Once the Quality Bar is satisfied, load `trellis-task-brief` and delegate confirmation mode to that owner BEFORE the final reply: refresh the Brief, attempt its eligible background prepare/wait, and display the full returned display. Only exclusions or actual failure use manual confirmation with the reason. Do not impose a separate human-only stop. Preparation does not permit implementation; start only after that owner's valid human/runner authorization or one-time policy_timeout claim plus started receipt.
+
+Ordinary implementation intent expressed before the final artifacts and full Brief are shown authorizes planning only; it cannot be reused as the final review confirmation.
+
+Once initial Brief approval exists, plan updates use `trellis-task-brief`'s incremental change rules. Artifact refresh alone does not require another whole-Brief review; unresolved new decisions still pause the affected work.
+
+For `## Open Questions`, use Markdown checkbox state rather than placeholder prose: unresolved items are `- [ ]`; resolved items move into requirements/decisions or are removed; when no open questions remain, remove the section or leave it empty. Do not write bare placeholders such as `- None`, `- TBD`, or `- 已确认` because historical bare list items require an explicit auto-loop semantic review.
+<!-- END skill-garden patch brainstorm-planning-handoff v0.6 -->

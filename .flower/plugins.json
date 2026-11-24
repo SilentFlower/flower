@@ -1,0 +1,10 @@
+{
+  "plugins": [
+    {
+      "id": "flower/skill-garden",
+      "source": "flower",
+      "version": "0.6.13-beta.24"
+    }
+  ],
+  "schemaVersion": 1
+}
