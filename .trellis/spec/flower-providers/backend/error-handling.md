@@ -46,10 +46,7 @@
 
 ## `pi.registerProvider` 本身失败
 
-pi 上游的 `registerProvider` 在重复注册同名 provider 时会**静默覆盖**(根据 pi 0.75 行为),不抛错。
-本包对 4 个 provider **一次性顺序注册**,不在意覆盖语义(同一 caller 多次调用是反模式)。
-
-如果未来需要严格检查"是否已注册",在 `registerHavefunProviders` 入口加幂等检测(当前 pi 未必有这个 API,先不做)。
+当前工厂一次顺序注册四个 provider。pi 1.6.0 按 `"$LLM_API_KEY"` 引用解析凭据，注册前校验环境值。历史上 pi 0.75 曾观察到同名注册静默覆盖。
 
 ---
 
@@ -85,9 +82,10 @@ pi 上游的 `registerProvider` 在重复注册同名 provider 时会**静默覆
 
 | 协议 | SDK 预期 | 来源 |
 |---|---|---|
-| openai-completions / openai-responses | baseURL 含 `/v1`(SDK 拼 `${baseURL}/chat/completions`) | `node_modules/.../pi-ai/dist/providers/openai-completions.js:385` |
-| anthropic-messages | baseURL 不带 `/v1`(SDK 默认 `https://api.anthropic.com`,内部拼 `/v1/messages`) | `node_modules/@anthropic-ai/sdk/client.d.ts:126` |
-| google-generative-ai | baseURL 含 `/v1beta`(`apiVersion = ""` 不再追加) | `node_modules/.../pi-ai/dist/providers/google.js:247-249` |
+| openai-completions | baseURL 含 `/v1`，请求 `/v1/chat/completions` | `pi-ai/dist/api/openai-completions.js` |
+| openai-responses | baseURL 含 `/v1`，请求 `/v1/responses` | `pi-ai/dist/api/openai-responses.js` |
+| anthropic-messages | baseURL 为根 URL，请求 `/v1/messages` | `pi-ai/dist/api/anthropic-messages.js` |
+| google-generative-ai | baseURL 含 `/v1beta`，适配器设置空的 `apiVersion` | `pi-ai/dist/api/google-generative-ai.js` |
 
 **Fix**:`LLM_BASE_URL` 是**网关根 URL**,本包 `catalog.ts:PROVIDER_PATH_SUFFIX` + `env.ts:resolveProviderBaseUrl(provider)` 按 provider 自动拼正确后缀。`register.ts` / `runtime.ts:buildHavefunModel` 必须用 `resolveProviderBaseUrl(provider)`,不要直接用 `getLLMBaseUrl()`。
 

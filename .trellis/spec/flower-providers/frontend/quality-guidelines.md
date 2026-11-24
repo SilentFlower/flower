@@ -16,7 +16,7 @@ pi.registerProvider("havefun-anthropic", {
 });
 ```
 
-必须从 `process.env` 读,且 `apiKey` 传**变量名字符串**(`"LLM_API_KEY"`,pi 内部读 env)。
+注册配置使用 `apiKey: "$LLM_API_KEY"`，由 pi 从环境解析。ops-bot 的协议子入口通过请求选项接收环境中的值。
 
 ### ❌ 缺凭证时 fallback
 

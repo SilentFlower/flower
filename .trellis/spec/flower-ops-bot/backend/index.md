@@ -1,6 +1,6 @@
 # Backend Development Guidelines
 
-> `@flower-ai/flower-ops-bot` 的内部实现层(会话存储、Agent 装配、工具适配)开发规范。
+> `@flower-ai/flower-ops-bot` 的内部实现层（会话存储、Agent 构造）开发规范。
 
 ---
 
@@ -13,7 +13,6 @@
 | `handler.ts` | 消息处理主流程,订阅事件,持久化会话 |
 | `agent-factory.ts` | 按 conversationId 构造 / 持久化 Agent |
 | `session-store.ts` | Redis 后端(降级内存),会话 messages 读写 |
-| `tools.ts` | ToolDefinition → AgentTool 转换,装配工具列表 |
 | `prompts.ts` | `OPS_SYSTEM_PROMPT` 系统提示词 |
 | `dingtalk/signature.ts` | HMAC-SHA256 签名 + 防重放 |
 
@@ -37,4 +36,3 @@
 2. **会话 TTL 24h**:超过自然过期,无需手工清理
 3. **Agent 实例不缓存**:每次 webhook 重建 Agent(无 LRU)。简单可预测,代价是每条消息多一次 Redis 读
 4. **`pickModel()` 当前写死**:真实接入后改为读 model registry
-5. **`toAgentTool` 是兼容层**:`pi-coding-agent` 的 `ToolDefinition` vs `pi-agent-core` 的 `AgentTool` 字段重合度高,简单字段映射

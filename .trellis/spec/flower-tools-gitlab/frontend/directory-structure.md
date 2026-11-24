@@ -9,8 +9,9 @@
 ```
 packages/flower-tools-gitlab/
 ├── src/
-│   ├── index.ts     # 5 个工具定义 + registerGitlabTools + 类型 / 工具 export
-│   └── client.ts    # GitLab REST 轻量客户端 + 当前 stub 实现
+│   ├── index.ts     # 工具定义、registerGitlabTools 和公开导出
+│   ├── client.ts    # GitLab REST 客户端
+│   └── sanitize.ts  # 包内评论快捷指令转义
 ├── dist/
 ├── package.json
 └── tsconfig.json
@@ -38,24 +39,15 @@ packages/flower-tools-gitlab/
 | 元素 | 说明 |
 |------|------|
 | `LineCommentInput` / `BotComment` | 公开接口类型 |
-| `GitlabClient` | 客户端接口(5 个方法) |
+| `GitlabClient` | 客户端接口 |
 | `gitlabClient()` | 惰性单例 getter |
-| `createStubClient(host, token)` | 当前 stub 实现(TODO 真实接入) |
+| `createRealClient(host, token)` | REST 实现 |
 
 ---
 
-## 未来拆分
+### `src/sanitize.ts`
 
-真实接入 GitLab REST API 后,client.ts 可能拆为:
-
-```
-src/
-├── index.ts
-├── client.ts          # GitlabClient 接口 + 单例 getter
-└── client-real.ts     # 真实 HTTP 实现
-```
-
-或者直接在 `client.ts` 内把 `createStubClient` 替换为 `createRealClient`。当前先放一个文件。
+`gitlabPostCommentTool` 和 `gitlabPostLineCommentTool` 发送前通过本地模块调用 `sanitizeQuickActions`。包根保持工具调用入口。
 
 ---
 

@@ -95,13 +95,13 @@ export async function pushToSession(
 | `route(req, res)` | Node 内置 `IncomingMessage / ServerResponse` | 不要包装 |
 | `handleDingTalkWebhook(req, res)` | 同上 | 同上 |
 | `handleMessage(input)` | `HandleMessageInput` 对象 | `conversationId` / `userId` / `userName` / `text` / `onChunk` 必填 |
-| `getOrCreateAgent(input)` | `AgentFactoryInput` 对象 | `conversationId` / `userId` / `userName` 必填 |
+| `getOrCreateAgent(conversationId)` | `string` | 钉钉会话 ID |
 | `pushToSession(url, text, isFinal)` | 位置参数 | URL → 内容 → 是否结束,固定顺序 |
 
 新增 handler 时:
 
 - 超过 2 个参数 → 改 `input` 对象
-- 入参类型必须导出(`HandleMessageInput`、`AgentFactoryInput`),便于测试时手动构造
+- 入参类型必须导出（如 `HandleMessageInput`）,便于测试时手动构造
 
 ---
 
@@ -118,7 +118,7 @@ export async function pushToSession(
 - **5 秒内必须 200**(否则钉钉重发,用户看到双倍消息)
 - **错误降级提示**:agent 跑错时 push 一条"抱歉,处理出错了:..."(见 `webhook.ts:81-87`)
 - **流式输出节流 500ms**:既要"看起来在打字"也要别让钉钉限流
-- **不复述敏感数据**:LLM 系统提示词里写明,但本层不做校验(`flower-tools-arms` 在工具结果里已脱敏)
+- 系统提示词要求用户提供已脱敏的信息，并要求模型避免复述凭据。
 
 ---
 

@@ -12,19 +12,19 @@
 |------|------|
 | 页面 / 路由 | `src/server.ts` 内的 `route(req, res)` 表 |
 | 组件 | webhook 处理(`dingtalk/webhook.ts`)、健康检查、push 推送(`dingtalk/push.ts`) |
-| Hook | `pi.on` 暂不直接用(由 `flower-compliance` 接管);`agent.subscribe` 用于流式输出订阅 |
+| Hook | `agent.subscribe` 用于流式输出订阅 |
 | State Management | `conversationId` 维度的会话状态(`session-store.ts`,Redis) |
 | Accessibility | 钉钉用户体验:5 秒应答、流式输出节流、错误降级提示 |
 
 ### 包定位
 
 - 形态:**HTTP 长驻服务**(Node 内置 `http`,不用框架)
-- 入口:`packages/flower-ops-bot/src/server.ts` → `dist/server.js`(可执行 `flower-ops-bot`)
+- 入口:`apps/ops-bot/src/server.ts` → `dist/server.js`(可执行 `flower-ops-bot`)
 - 端口:`PORT` 环境变量,默认 3000
 - 路由:
   - `POST /dingtalk/webhook` — 钉钉消息回调
   - `GET  /healthz` — 健康检查
-- 依赖:`@earendil-works/pi-agent-core` 的 `Agent` + `pi-ai` 的 `streamSimple` + `ioredis`
+- 依赖包括 `@earendil-works/pi-agent-core` 的 `Agent`、`@earendil-works/pi-ai/api/<协议>` 的 `streamSimple`、`@flower-ai/flower-providers` 和 `ioredis`。
 
 ---
 

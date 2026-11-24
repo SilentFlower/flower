@@ -60,7 +60,7 @@ if (!baseUrl) throw new Error("LLM_BASE_URL 环境变量未配置");
 ### ❌ 在后端模块直接读 `req` / `res`
 
 后端模块(`handler.ts` / `agent-factory.ts` / `session-store.ts`)应该是**HTTP 无关**的,
-通过 `HandleMessageInput` / `AgentFactoryInput` 等结构化对象接收输入,
+使用 `HandleMessageInput` 接收一条钉钉消息的结构化输入。
 通过 `onChunk` 回调输出。
 
 ### ❌ 使用 `setInterval` 做后台清理

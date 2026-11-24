@@ -21,8 +21,8 @@
 ### 包定位
 
 - 形态:**CLI 应用**,运行在 GitLab CI 容器内,跑完即退出
-- 入口:`packages/flower-code-reviewer/src/cli.ts` → `dist/cli.js`(可执行 `flower-review`)
-- 依赖:`@earendil-works/pi-coding-agent`(以 print 模式调 `piMain`)
+- 入口:`apps/code-reviewer/src/cli.ts` → `dist/cli.js`(可执行 `flower-review`)
+- 依赖:`@flower-ai/agent-runtime` 调度评审，`@earendil-works/pi-coding-agent` 公开 SDK 装配 print 会话
 - 触发:CI 注入 `CI_PROJECT_ID` / `CI_MERGE_REQUEST_IID`,bot 评审 MR 并发评论
 
 ---
@@ -92,7 +92,7 @@
 |------|------|------|
 | **E1 · LLM 网关 fail open** | `isLlmFailure(err)` 5 级判定(AuthError 黑名单 / LLM 关键字 / 网络关键字 / HTTP 5xx 429 / 默认 fail close);LLM 失败 → `buildLlmFailureNotice` warning 评论 + `return exitCode: 0` 不阻塞 pipeline;**非 LLM 错误(AuthError / FileNotFoundError)正常抛**;但 `scanForBlockers` 触发的 blocker(已成功评出的)仍 fail close | `run.ts` |
 | **E2 · MR diff size cap** | env `FLOWER_MAX_FILES`(默认 50);`applyDiffCap` 按 churn(additions + deletions)降序稳定排序取 top N;截断时 prompt 注入 `truncation: {shown, total}` → LLM 在 walkthrough 必须写「⚠️ 本次仅评 N/M 个最大变更文件,其余请手工 review」 | `run.ts` + `prompts.ts` |
-| **E3 · quick action sanitize** | `sanitizeQuickActions(body)`(在 `@flower-ai/flower-tools-common`),50+ quick action 关键字 + 大小写不敏感;首字符 `/` → `&#47;`;flower-tools-gitlab 的 post 评论工具 execute 内 wrap;与 prompt 第 4 条硬约束形成**双层防御** | `flower-tools-common/src/sanitize.ts` + `flower-tools-gitlab/src/index.ts` |
+| **E3 · 快捷指令转义** | GitLab 包内的 `sanitizeQuickActions(body)` 由两种评论工具共用。匹配时将行首 `/` 改为 `&#47;`，匹配忽略大小写。 | `packages/flower-tools-gitlab/src/sanitize.ts` 和 `src/index.ts` |
 | **E6 · 行内评论定位** | `gitlab_get_mr_diff` hunk 内标注 `add` / `ctx` / `del` 和行号;prompt 必须要求 `gitlab_post_line_comment.line` 优先取 `add` / `ctx` 对应的新文件行号,禁止直接使用 `gitlab_get_file_content` 的普通文件行号;工具层会对不可评论行做近邻重定位或降级整体评论 | `flower-tools-gitlab/src/client.ts` + `flower-tools-gitlab/src/index.ts` + `prompts.ts` |
 | **E5 · 行窗读取 + size cap + 二进制跳过** | `safeReadFile` wrapper 在 `flower-tools-gitlab/src/safe-read.ts` 工具层,`gitlab_get_file_content` execute 内 wrap;默认只返回 500 行,显式 `startLine/endLine` 时单次最多 1000 行;env `FLOWER_MAX_FILE_SIZE`(默认 51200);二进制按后缀(18 类)跳过;LLM 默认拿不到整份大文件或二进制原始内容 | `flower-tools-gitlab/src/safe-read.ts` |
 | **E4 · markdown 校验** | **延后**(remark 依赖较重);mitigation 暂留 prompt 5 个完整模板样例引导 LLM 复制 |
@@ -147,9 +147,18 @@
 - fail-open 行为不变:失败默认**完全静默**(不刷屏 CI 日志),`DEBUG_AUDIT=1` 才打单行 `[audit] 上报失败: <msg> (<code>)`;`AbortSignal.timeout(2000)`
 - siemSink 是 critical sink:`FLOWER_TELEMETRY=0` 总开关只关 JSONL/console,审计通道不可关
 
-### 8. 镜像版本管理 + Dockerfile 优化(2026-05-20 演进链)
+### 8. Reviewer 镜像构建和运行层
 
-flower 仓 Dockerfile 优化(`packages/flower-code-reviewer/Dockerfile`)产出 image 路径 `192.168.27.236/base/flower-code-reviewer:<tag>`:
+从仓库根使用 `apps/code-reviewer/Dockerfile` 构建。公司镜像路径为 `192.168.27.236/base/flower-code-reviewer:<tag>`。
+
+#### pi 1.6.0 依赖与验收
+
+- builder 安装 reviewer 的 workspace 依赖闭包，运行 `npx tsc --build --force apps/code-reviewer/tsconfig.json`，随后执行 `npm prune --omit=dev --no-audit --no-fund`。根 `.dockerignore` 排除本地 `node_modules`、`dist` 和 `*.tsbuildinfo`，避免本地增量产物影响镜像构建。
+- pi 1.6.0 沿用 npm 的实际解析布局。运行层复制裁剪后的 `node_modules`，保留 coding-agent 的嵌套依赖、动态加载模块与 photon WASM。Flower 工作区按 `package.json` 和 `dist` 复制，reviewer 另复制 `skills`。生成的声明与映射文件按 Dockerfile 在工作区 `dist` 内清理。
+- builder 在 devDependencies 裁剪后从 reviewer、GitLab、providers 三处验证导入。reviewer 与 GitLab 检查 `pi-coding-agent` 和 `typebox`，providers 检查 `pi-ai` 和 `pi-coding-agent`。任一导入失败都使构建失败。
+- 最终层验证 `flower-review --help` 的默认入口和 PATH wrapper、四份评审清单，以及 pi、TypeBox、pi-schema 和 photon WASM 的可用性。受控模型测试通过真实入口校验两种评论、合规、遥测和网关失败提示。
+
+#### 历史镜像优化（2026-05-20 起）
 
 | commit | 优化点 | image 大小变化 |
 |---|---|---|
@@ -164,24 +173,7 @@ flower 仓 Dockerfile 优化(`packages/flower-code-reviewer/Dockerfile`)产出 i
 
 累计减重:Harbor compressed 149.3 → 82.8 MiB(**−45%**);本地 727 → 434 MB(**−40%**)。
 
-pi 0.76.0 后的 Dockerfile 约束:
-- `@earendil-works/pi-coding-agent` 发布包带 `npm-shrinkwrap.json`,npm workspaces 会在多个 `packages/*/node_modules` 下重复安装私有 pi 依赖。reviewer runtime 镜像必须只保留一份根级 `node_modules/@earendil-works/pi-coding-agent` / `pi-ai`,并删除 workspace 内重复副本。
-- `@earendil-works/pi-ai` 运行 Bedrock provider 时需要 `@aws-sdk/client-bedrock-runtime`;若把 `pi-ai` 从 workspace 私有目录提升到根级,必须同时确保根级有这份依赖。
-- **pi 包落位随 npm 决策漂移,禁止写死 cp 源路径**(2026-07-06 事故):镜像内 workspace 子集安装时
-  `pi-coding-agent` 被 hoist 到根、`pi-ai` 只在 workspace 嵌套——旧版写死
-  `cp packages/flower-code-reviewer/node_modules/.../pi-coding-agent` 直接 `can't stat`。
-  统一按「根缺失才从任一 `packages/*/node_modules` 副本提升,全都找不到 `exit 1`」处理
-  (实现见 Dockerfile 守卫循环;布局复现留档 `.trellis/tasks/archive` 的 hotfix-reviewer-image-pi-ai research)。
-- **禁止 `cmd1 && cmd2 ... || true` 让 `|| true` 兜整条链**:shell 优先级会把链上任何一步的失败都吞掉
-  (2026-07-06 事故:cp 失败被吞,缺 pi-ai 的镜像假绿出厂,业务 MR 评审 `ERR_MODULE_NOT_FOUND`)。
-  `|| true` 只允许兜单条命令,且优先拆成独立 RUN(如 koffi 裁剪层)。
-- **构建期 resolve 自检是强制层**:builder 末尾必须从每个消费 workspace 上下文
-  `(cd packages/<pkg> && node -e "Promise.all([import('@earendil-works/pi-ai'),import('@earendil-works/pi-coding-agent')])...")`,
-  解析失败即构建红——任何裁剪/合并逻辑的回归在构建期拦截,不许流到运行时。
-- runtime 层只复制各 workspace 的 `package.json` + `dist`;`flower-code-reviewer` 还需要复制 `skills`。禁止把 `src`、测试、`tsconfig.tsbuildinfo`、README 等开发文件带入 runtime。
-- Docker builder 使用 `tsc --build --force`;否则 `.dockerignore` 排除本地 `dist` 后,增量构建可能误判为最新并导致容器内缺少 `dist/cli.js`。
-- 清理 npm 发布包时只删明确非运行时文件(`*.map`、`*.d.ts`、Markdown、tests/docs/examples 目录)。不要使用过宽的 `CHANGELOG*` 规则:pi-coding-agent 存在运行期 import 的 `dist/utils/changelog.js`,误删会导致 CLI 启动失败。
-- 根 `.dockerignore` 应排除本地 `node_modules`、workspace `node_modules`、`dist`、`*.tsbuildinfo`、`.git`、`.trellis/workspace` 等内容,避免 build context 被本地依赖放大。
+2026-07-06 的 pi 0.76 镜像事故中，`pi-coding-agent` 被提升到根级，`pi-ai` 位于 workspace 嵌套目录。旧版固定复制路径，失败又被整条命令末尾的 `|| true` 吞掉，导致业务评审报 `ERR_MODULE_NOT_FOUND`。当时使用的手工提升、去重和 koffi 裁剪属于旧版镜像记录，布局复现留档在 `.trellis/tasks/archive` 的 hotfix-reviewer-image-pi-ai 任务。
 
 业务方接入侧 image tag 管理:
 - 默认 `latest`(浮动跟 flower 仓 main HEAD)
@@ -203,7 +195,7 @@ pi 0.76.0 后的 Dockerfile 约束:
 
 **何时加 `reviewer_*` 工具**:LLM 需要查询"评审过程本地状态"(本轮已读哪些文件 / 已发什么评论 / trace 元数据)时,优先 `reviewer_*` 而非新 `gitlab_*` API 调用 — 因为本地 trace **快、严格"本轮"语义、无 API 配额消耗**。
 
-**注册位置**:`packages/flower-code-reviewer/src/reviewer-self-tools.ts`(与 `extension.ts` 同级);在 `extension.ts` 注册序列中位于 `registerGitlabTools` 之后、`registerReviewTrace` 之前。
+**注册位置**在 `apps/code-reviewer/src/reviewer-self-tools.ts`，与 `extension.ts` 同级。`extension.ts` 中在 `registerGitlabTools` 之后、`registerReviewTrace` 之前注册。
 
 #### 9.2 Design Decision · agent 自审 vs 代码 post-process(v1 弃用记录)
 

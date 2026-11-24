@@ -48,5 +48,5 @@ SQLite 幂等入库,提供 trace 列表 / 回放 / 指标 Web UI。
    避免 SQLite percentile SQL 技巧,便于单测(`metrics.ts`)
 6. **Docker 构建指定包,避 TS5083**:顶层 `npm run build` 走根 tsconfig(references 全部 package),
    Dockerfile 未 COPY 的包会触发 `TS5083 Cannot read file '.../tsconfig.json'`;
-   改用 `tsc --build packages/<pkg>/tsconfig.json`,递归编译该包 + 声明的 transitive deps、跳过无关包
-   (实测 `ba58509`,flower-code-reviewer Dockerfile)
+   Observer 镜像执行 `tsc --build --force apps/observer/tsconfig.json`，只构建自身与声明的传递依赖。
+   根构建、Observer 单独构建和镜像构建均通过 `copy-static` 准备 `dist/static`。

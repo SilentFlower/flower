@@ -13,7 +13,7 @@
 |------|------|----------|
 | CLI 参数 | `CliArgs` 对象 | 进程级,只读 |
 | 环境变量 | `process.env.*` | 进程级,只读 |
-| 运行期上下文 | `piMain` 内部 | 单次评审,框架管理 |
+| 运行期上下文 | 共享 runtime 的服务主体与工作区绑定，SDK 会话负责 pi JSONL | 每次 CLI 启动独立的新会话 |
 | GitLab 评论历史 | 远端 GitLab,通过 `gitlab_get_previous_review` 工具读 | 远端持久,本进程只读 |
 
 ---

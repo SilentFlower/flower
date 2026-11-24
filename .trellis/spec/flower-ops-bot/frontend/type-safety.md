@@ -10,9 +10,8 @@
 |------|------|---------|
 | `DingTalkRequest` | `src/dingtalk/webhook.ts` | ❌ 内部 |
 | `HandleMessageInput` | `src/handler.ts` | ✅ |
-| `AgentFactoryInput` / `AgentInstance` | `src/agent-factory.ts` | ✅ |
+| `AgentInstance` | `src/agent-factory.ts` | ✅ |
 | `StoredSession` / `SessionBackend` | `src/session-store.ts` | `StoredSession` ✅,`SessionBackend` ❌ |
-| `LineCommentInput` / `BotComment` 等远端来源类型 | 各 tools 包 re-export | ✅(由源包决定) |
 
 ---
 
@@ -42,10 +41,6 @@ if (Number.isNaN(ts) || Math.abs(Date.now() - ts) > 60 * 60 * 1000) {
 ```
 
 `Number.parseInt` + `Number.isNaN` 双重防御,避免 LLM/调用方传入非数字字符串。
-
-### 工具参数:`Type.Object` schema
-
-参考 `flower-tools-arms` 的工具定义。本包不直接定义工具(只是装配),不重复约束。
 
 ### Redis 反序列化:try/catch + 兜底 undefined
 
@@ -100,7 +95,7 @@ const ts = req.headers.timestamp as number;
 
 ### ❌ `any` 滥用
 
-只有跨包类型转换(`tools.ts:toAgentTool`、`agent-factory.ts:pickModel`)允许 `any`,且必须加 `// biome-ignore lint/suspicious/noExplicitAny:` 注释说明原因。
+在 `handler.ts` 先将 `AgentEvent` 收窄到 `message_update`，再以 `assistantMessageEvent.type === "text_delta"` 读取 `delta`。模型交给各协议流函数前由 `hasApi(model, api)` 收窄。
 
 ### ❌ Non-null assertion 处理 `process.env`
 

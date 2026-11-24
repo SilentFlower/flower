@@ -6,7 +6,7 @@
 
 ## Overview
 
-本包工具沿用 `flower-tools-arms` 的 5 字段结构,本节强调本包特有的:
+GitLab 工具通过 `defineTool` 定义 `name`、`label`、`description`、`parameters` 和 `execute`。
 
 - 工具按 `get_*` / `post_*` 命名区分只读 / 写
 - `severity` 三档是契约
@@ -19,6 +19,8 @@
 ### 标准工具
 
 ```typescript
+import * as Type from "typebox";
+
 export const gitlabPostLineCommentTool = defineTool({
   name: "gitlab_post_line_comment",
   label: "发表行内评论",
@@ -31,10 +33,12 @@ export const gitlabPostLineCommentTool = defineTool({
   }),
   async execute(_id, params) {
     const { projectId, mrIid } = readEnv();
-    await gitlabClient().postMrLineComment(projectId, mrIid, params);
+    const safeBody = sanitizeQuickActions(params.body);
+    const result = await gitlabClient().postMrLineComment(projectId, mrIid, { ...params, body: safeBody });
+    const text = result.posted === "note_fallback" ? "已发表整体评论" : "已发表行内评论";
     return {
-      content: [{ type: "text", text: `行内评论已发表: ${params.file}:${params.line}` }],
-      details: { severity: params.severity, file: params.file, line: params.line },
+      content: [{ type: "text", text }],
+      details: { severity: params.severity, file: params.file, line: params.line, posted: result.posted },
     };
   },
 });
@@ -43,7 +47,7 @@ export const gitlabPostLineCommentTool = defineTool({
 要点:
 
 1. **`readEnv()` 在 `execute` 内调**(而非顶层 import time),让缺 env 时工具单独失败而非整个 import 崩
-2. **写工具的成功 content 给出操作摘要**(`行内评论已发表: file:line`),让 LLM 知道做了什么
+2. **写工具的成功 content 给出操作摘要**，区分行内评论和降级整体评论。发送前统一调用评论转义。
 3. **`details` 暴露 severity / file / line** 给 pi 框架,审计上报会用到
 4. **行内评论的 `line`** 是**变更后的行号**(GitLab `new_line`),不是原行号
 
@@ -55,16 +59,16 @@ export const gitlabPostLineCommentTool = defineTool({
 
 ```typescript
 const severitySchema = Type.Union([
-  Type.Literal("info"),
-  Type.Literal("warning"),
   Type.Literal("blocker"),
+  Type.Literal("major"),
+  Type.Literal("minor"),
 ]);
 ```
 
 | 档位 | 何时使用 |
 |------|----------|
-| `info` | 风格 / 命名 / 建议性 |
-| `warning` | 一般问题(性能、设计、可读性) |
+| `minor` | 风格 / 命名 / 建议性 |
+| `major` | 重要问题(性能、设计、可读性) |
 | `blocker` | 安全漏洞、逻辑错误、合规硬要求 |
 
 `blocker` 触发 pipeline fail。**严格使用**,不轻易打 blocker(prompt 里已强约束)。

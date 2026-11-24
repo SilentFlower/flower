@@ -51,7 +51,7 @@ console.warn("[audit] 上报失败:", err);
 - ❌ **审计 record 全量**(生产环境):`record` 字段开放,可能含来自上游 handler 的敏感数据;只在 `DEBUG_AUDIT=1` 时打印
 - ❌ **凭证 / token**:`SIEM_INGEST_URL` 本身不算敏感,但如果未来加 token / auth header,绝不要打印
 - ❌ **PII**:本包不直接接触 PII,但如果上层 handler 不小心把 PII 放进 `record`,**本包不做兜底**(防御纵深的责任在调用方,不在 logging)
-- ❌ **业务数据**(如 MR diff、ARMS 日志原文):本包不应该有这些数据,如果出现说明上层职责越界
+- ❌ **业务数据**（如 MR diff、日志原文）：本包不应记录这些数据。
 
 ---
 

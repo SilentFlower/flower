@@ -30,7 +30,7 @@ packages/flower-compliance/
 **不属于**本模块的事:
 
 - ❌ 决定哪些 event 要上报(那是 `index.ts` 里 handler 的事)
-- ❌ 决定脱敏规则(那是各工具自己的事,如 `flower-tools-arms/src/mask.ts`)
+- ❌ 决定脱敏规则（由各工具负责）
 - ❌ 批量缓冲(应该让 SIEM 负责聚合,本端不缓存)
 
 ---

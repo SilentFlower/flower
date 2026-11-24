@@ -14,11 +14,13 @@
 ## Directory Layout
 
 ```
-packages/flower-code-reviewer/
+apps/code-reviewer/
 ├── src/
 │   ├── cli.ts              # 可执行入口,只做参数解析 + 顶层 try/catch
 │   ├── args.ts             # CliArgs 类型 + parseArgs(argv)
-│   ├── run.ts              # 评审主流程:调 piMain、拼路径、组装 prompt
+│   ├── run.ts              # 评审主流程、MR 上下文、prompt 和结果判定
+│   ├── review-execution.ts # 共享运行、SDK 会话和软超时
+│   ├── project-trust.ts    # SDK 资源预加载时的用户信任决定
 │   ├── extension.ts        # pi 扩展工厂:注册 provider/compliance/tools
 │   ├── prompts.ts          # 评审 prompt 模板(读 skill 文件后拼接)
 │   └── skill-selector.ts   # 按文件类型自动选 skill 的策略
@@ -45,8 +47,8 @@ packages/flower-code-reviewer/
 
 ### 主流程
 
-- `run.ts`:**评审编排**。读环境变量 → 选 skill → 拼 prompt → 调 `piMain` → 扫评论决定 exitCode。**不直接调用 GitLab API**(那是 `@flower-ai/flower-tools-gitlab` 的事)。
-- `extension.ts`:**pi 扩展工厂**,导出 `default function(pi: ExtensionAPI): void`,按固定顺序调 `registerHavefunProviders → registerCompliance → registerCommonTools → registerGitlabTools`。**顺序不可换**:provider 必须先于 compliance,compliance 必须先于业务工具。
+- `run.ts` 编排评审。解析输入后提交共享运行，等待终态，扫描评论并决定退出码。GitLab 调用复用 `@flower-ai/flower-tools-gitlab`。
+- `extension.ts` 注册 pi 扩展，顺序为 provider、telemetry、compliance、试跑写入门禁、GitLab、自审与评审 trace。
 
 ### 辅助
 
@@ -82,4 +84,4 @@ packages/flower-code-reviewer/
 
 - ❌ 在 `cli.ts` 里写 try/catch 又自己处理业务异常(顶层只该捕获并打日志退出)
 - ❌ 在 `run.ts` 里直接 `fetch` GitLab API,绕过工具(评审意见必须经过 `gitlab_post_*` 工具,以便 compliance 拦截 + 审计)
-- ❌ `extension.ts` 把工具注册写在 `pi.on()` 回调里(会乱序);必须**同步**注册,在 `piMain` 启动前完成
+- 工具在 `extension.ts` 同步注册，SDK 会话在加载扩展后绑定生命周期。

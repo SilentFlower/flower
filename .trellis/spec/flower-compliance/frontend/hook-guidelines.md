@@ -103,4 +103,4 @@ await fetch(url, {
 - ❌ 把白名单 `RegExp` 写在 handler 里(每次 handler 调用都新建对象;放 module-level `const`)
 - ❌ 拦截 handler 在判断后 `throw new Error("不允许")`(应该 `return { block: true, reason }`)
 - ❌ 上报全量 `event.input` 到 SIEM(可能含 token / 密码 / PII;只上报 keys)
-- ❌ 给 `tool_result` 注册 handler 时,**修改** `event` 字段以"过滤敏感数据"(handler 不应该修改 event;脱敏交给具体工具的 `execute` 在返回前做,例如 `flower-tools-arms` 的 `maskSensitive`)
+- ❌ 给 `tool_result` 注册 handler 时,**修改** `event` 字段以"过滤敏感数据"(handler 不应该修改 event;脱敏交给具体工具的 `execute` 在返回前做)

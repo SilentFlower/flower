@@ -64,7 +64,7 @@ console.error("[redis]", err);
 console.log("[ops-bot] 收到消息:", input.text);
 ```
 
-可能含敏感数据(查询 ARMS 时可能带凭证 / 业务数据)。`text` 永远不进日志。
+可能含用户贴出的运维日志、凭证和业务数据。`text` 永远不进日志。
 
 ### ❌ Agent 输出累积器
 
@@ -73,7 +73,7 @@ console.log("[ops-bot] 收到消息:", input.text);
 console.log("[handler] accumulator:", accumulator);
 ```
 
-LLM 输出可能含 ARMS 日志原文,即使经过 maskSensitive 也不保证 100% 干净。
+模型可能复述用户提供的日志和业务数据。
 **审计走 SIEM,日志只保留控制流信息**。
 
 ### ❌ 凭证

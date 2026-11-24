@@ -7,7 +7,7 @@
 ## When to Use
 
 - 接入新的 LLM 网关(自部署 / 第三方代理 / 多协议聚合)首次跑通时
-- `pi-ai streamSimple` / `complete` 报形如:
+- pi-ai 协议子入口的 `stream` 或 `streamSimple` 出现以下错误
   - `Incomplete JSON segment at the end`
   - `Stream ended without finish_reason`
   - done event 触发但 `message.content` 为空 / 找不到 text 块
@@ -56,14 +56,14 @@
 
 ## 关键 SDK baseURL 预期速查
 
-> 源码定位(`node_modules/@earendil-works/pi-ai/dist/providers/`):
+> pi 1.6.0 的调用入口在 `@earendil-works/pi-ai/api/<协议>`，安装后的实现位于 `node_modules/@earendil-works/pi-ai/dist/api/`。
 
 | 协议 `api` | baseURL 期望 | 源码定位 |
 |---|---|---|
-| `openai-completions` | 含 `/v1`(SDK 拼 `${baseURL}/chat/completions`) | `openai-completions.js:385` |
-| `openai-responses` | 含 `/v1`(SDK 拼 `${baseURL}/responses`) | `openai-responses.js:168` |
-| `anthropic-messages` | 不带 `/v1`(SDK 内部拼 `/v1/messages`) | `node_modules/@anthropic-ai/sdk/client.d.ts:126` |
-| `google-generative-ai` | 含 `/v1beta`(`apiVersion = ""` 不再追加) | `google.js:247-249` |
+| `openai-completions` | 含 `/v1`，请求 `/v1/chat/completions` | `openai-completions.js` |
+| `openai-responses` | 含 `/v1`，请求 `/v1/responses` | `openai-responses.js` |
+| `anthropic-messages` | 使用根 URL，SDK 拼接 `/v1/messages` | `anthropic-messages.js` |
+| `google-generative-ai` | 含 `/v1beta`，适配器设置空的 `apiVersion` | `google-generative-ai.js` |
 
 ---
 
@@ -125,7 +125,7 @@ curl -sS -X POST https://your-gateway.example.com/v1/messages \
 
 ---
 
-## 真实案例(pi-ai anthropic.js:544 过时注释 vs Anthropic 官方文档)
+## 历史案例(pi-ai anthropic.js:544 过时注释 vs Anthropic 官方文档)
 
 **症状**:接 thinking effort 抽象时,想给 Claude Opus 4.7 拿到 anthropic 实际最高的 `effort: "max"`,但翻 pi-ai 源码 `node_modules/@earendil-works/pi-ai/dist/providers/anthropic.js:544` 看到一行注释 "max only Opus 4.6",于是怀疑 Opus 4.7 不支持 max。
 

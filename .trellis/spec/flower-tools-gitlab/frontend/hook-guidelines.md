@@ -16,7 +16,7 @@ export function registerGitlabTools(pi: { registerTool: (def: any) => void }): v
 }
 ```
 
-集中入口,与 `flower-tools-arms` / `flower-tools-common` 风格统一。
+GitLab 工具统一通过此入口注册。
 
 ---
 

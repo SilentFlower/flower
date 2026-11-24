@@ -16,8 +16,8 @@ export function registerHavefunProviders(
   if (!options.appSource || options.appSource.trim() === "") {
     throw new Error("registerHavefunProviders:options.appSource 必填(非空字符串)");
   }
-  const baseUrl = getLLMBaseUrl();          // fail-fast
-  const apiKeyEnvName = getLLMApiKeyEnvName(); // 返回字面量 "LLM_API_KEY",同时校验 env 存在
+  getLLMBaseUrl();                           // 启动前校验网关配置
+  const apiKeyEnvName = getLLMApiKeyEnvName(); // 校验环境值并返回变量名
   const mergedModels = getMergedModels();    // BUILTIN_MODELS + LLM_EXTRA_MODELS_JSON
 
   for (const providerName of ALLOWED_PROVIDER_NAMES) {
@@ -26,8 +26,8 @@ export function registerHavefunProviders(
     const filteredModels = mergedModels.filter((m) => m.nativeApi === api);
 
     pi.registerProvider(providerName, {
-      baseUrl,
-      apiKey: apiKeyEnvName, // 字面量 "LLM_API_KEY" — pi 自己从 env resolve
+      baseUrl: resolveProviderBaseUrl(providerName),
+      apiKey: `$${apiKeyEnvName}`,
       api,
       models: filteredModels.map(toProviderModelConfig),
       headers: { "X-App-Source": options.appSource },
@@ -39,7 +39,7 @@ export function registerHavefunProviders(
 要点:
 
 1. **fail-fast**:缺关键 env / `appSource` 为空字符串直接 throw,不要 fallback 默认值
-2. **`pi.registerProvider` 的 apiKey 字段**:传**环境变量名字符串**(`"LLM_API_KEY"`),pi 内部读 env,凭证不进 process 内存对象
+2. **`pi.registerProvider` 的 apiKey 字段**。传入 `"$LLM_API_KEY"`，由 pi 从环境解析凭据。配置对象中只保留引用。
 3. **`headers: { "X-App-Source": ... }`**:用于审计 / 计费,**必传**,值是 `code-reviewer` / `ops-bot`
 4. **一次性注册 4 个 provider**:`havefun-openai` / `havefun-openai-responses` / `havefun-anthropic` / `havefun-gemini`,模型按 `nativeApi` 严格归属
 

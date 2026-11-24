@@ -20,8 +20,8 @@
 
 ```typescript
 pi.registerProvider("havefun-anthropic", {
-  baseUrl: process.env.LLM_BASE_URL!,
-  apiKey: "LLM_API_KEY",
+  baseUrl: resolveProviderBaseUrl("havefun-anthropic"),
+  apiKey: "$LLM_API_KEY",
   api: "anthropic-messages",
   models: claudeModels.map(toProviderModelConfig),
   headers: { "X-App-Source": options.appSource },
@@ -34,8 +34,8 @@ pi.registerProvider("havefun-anthropic", {
 |------|------|
 | `name`(第一参) | provider 标识,**必须唯一**;本包统一用 4 个 `havefun-*` |
 | `baseUrl` | LLM 网关基础 URL,**不带尾斜杠**,例如 `https://jp-ai.havefun.eu.cc` |
-| `apiKey` | 环境变量名字符串(**不是值**),pi 内部读 env |
-| `api` | API 协议,必须 ∈ pi-ai 的 4 个合法值 |
+| `apiKey` | pi 1.6.0 的环境变量引用，使用 `"$LLM_API_KEY"`。缺少或留空的环境值由注册入口拒绝。裸变量名会被 SDK 当成凭据字面值。 |
+| `api` | 使用 Flower 的四个网关协议之一。 |
 | `models` | 模型清单数组(只挂"`nativeApi` 与本 provider 协议一致"的模型子集) |
 | `headers` | 额外请求头 |
 
@@ -114,7 +114,9 @@ export const BUILTIN_MODELS: readonly BuiltinModelEntry[] = [
 
 不适用(本包只注册不调用)。
 
-实际的 LLM 调用在 `ops-bot` 通过 `streamSimple` 发起、在 `code-reviewer` 通过 `piMain` 内部完成。
+reviewer 在 `piMain` 内发起请求。ops-bot 从 `@earendil-works/pi-ai/api/<模型协议>` 导入对应的 `streamSimple`，用 `hasApi(model, api)` 收窄模型类型，再传入 Agent 提供的 transcript、请求选项及环境中的 API key。
+
+凭据场景由 `src/__tests__/register.test.ts` 验证。断言注册配置保留 `"$LLM_API_KEY"` 引用。缺少凭据时注册抛错。受控 HTTP 测试核对请求携带从环境解析出的值及 `X-App-Source`。
 
 ---
 

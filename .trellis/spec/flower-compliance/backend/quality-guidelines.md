@@ -61,7 +61,7 @@ body: JSON.stringify({
 - `npm run check`
 - `npm run build`
 
-新增审计字段时,**手工**验证一次:`DEBUG_AUDIT=1 node packages/flower-code-reviewer/dist/cli.js --dry-run --mr-iid 1`,确认 console 中出现新字段。
+新增审计字段时,**手工**验证一次:`DEBUG_AUDIT=1 node apps/code-reviewer/dist/cli.js --dry-run --mr-iid 1`,确认 console 中出现新字段。
 
 ---
 

@@ -19,19 +19,19 @@
 
 ### 工具参数
 
-`Type.Object` schema,详见 `flower-tools-arms/frontend/type-safety.md`。
+从 `typebox` 导入 `Type` 命名空间，以 `Type.Object` 定义工具参数。pi 1.6.0 的 `defineTool` 从 TypeBox schema 推导参数类型，运行时由 pi-schema 校验。直接调用 `execute` 的测试使用 `ExtensionToolContext`，提供 `tools` 和 `executeTool` 字段。
 
 ### `severity` 三档
 
 ```typescript
 const severitySchema = Type.Union([
-  Type.Literal("info"),
-  Type.Literal("warning"),
   Type.Literal("blocker"),
+  Type.Literal("major"),
+  Type.Literal("minor"),
 ]);
 ```
 
-参数 schema 已限定,`execute` 内 `params.severity` 类型自动是 `"info" | "warning" | "blocker"`。
+参数 schema 将 `execute` 的 `params.severity` 推导为 `"blocker" | "major" | "minor"`。
 
 ### CI 环境变量
 
@@ -60,7 +60,7 @@ export interface GitlabClient {
     projectId: string,
     mrIid: number,
     body: string,
-    severity: "info" | "warning" | "blocker",
+    severity: "blocker" | "major" | "minor",
   ): Promise<void>;
   postMrLineComment(projectId: string, mrIid: number, input: LineCommentInput): Promise<void>;
   getBotComments(projectId: string, mrIid: number): Promise<BotComment[]>;
@@ -94,7 +94,7 @@ export interface LineCommentInput {
   file: string;
   line: number;
   body: string;
-  severity: "info" | "warning" | "blocker";
+  severity: "blocker" | "major" | "minor";
 }
 ```
 

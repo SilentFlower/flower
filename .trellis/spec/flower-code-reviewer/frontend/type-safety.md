@@ -43,17 +43,19 @@
 
 ## Validation
 
-### 工具参数:`Type.Object` schema(`@earendil-works/pi-ai`)
+### 工具参数用 TypeBox 描述
 
 ```typescript
-parameters: Type.Object({
+import * as Type from "typebox";
+
+const parameters = Type.Object({
   body: Type.String({ description: "评论内容(Markdown)" }),
   severity: Type.Union([
-    Type.Literal("info"),
-    Type.Literal("warning"),
     Type.Literal("blocker"),
+    Type.Literal("major"),
+    Type.Literal("minor"),
   ]),
-})
+});
 ```
 
 约定:
@@ -62,6 +64,8 @@ parameters: Type.Object({
 2. **枚举用 `Type.Union(Type.Literal(...))`**,不用裸字符串
 3. **可选字段** 用 `Type.Optional(...)`,不用 `?:`
 4. **不要用 `Type.Any` / `Type.Unknown`**,这等于把校验交给 LLM 自由发挥
+
+pi 1.6.0 的 `defineTool` 通过 TypeBox 推导 `execute` 参数。实际调用由 pi-schema 校验。调用测试使用 `ExtensionToolContext`。
 
 参考:`packages/flower-tools-gitlab/src/index.ts:65-81`(`gitlabPostCommentTool`)
 
@@ -122,7 +126,6 @@ const limit = params.limit || 100;       // ❌ 0 会被替换为 100
 - pi-coding-agent 与 pi-agent-core 在版本之间字段微调,跨包转换处临时用 `any`
 - 必须加 `// biome-ignore lint/suspicious/noExplicitAny: <理由>` 注释
 
-参考反例(合理使用):`packages/flower-ops-bot/src/tools.ts:51`
 
 ### ❌ `as Type` 强制类型断言绕过校验
 

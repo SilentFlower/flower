@@ -36,7 +36,7 @@
 4. **`appSource` 仅是 header 标签**:不参与模型选择 / 路由,模型选择由部署单元的 env 决定
 5. **`LLM_BASE_URL` 是网关根 URL**:用户 env 只配根 URL(如 `https://jp-ai.havefun.eu.cc`),本包 `catalog.ts:PROVIDER_PATH_SUFFIX` + `env.ts:resolveProviderBaseUrl(provider)` 自动按 provider 拼正确后缀(openai-* → `/v1`,gemini → `/v1beta`,anthropic 无后缀)。**不要在 `register.ts` / `runtime.ts` 内直接用 `getLLMBaseUrl()` 给 model 赋值** — 必须经 `resolveProviderBaseUrl(provider)`。详见 [error-handling Common Mistakes](./error-handling.md#-把-llm_base_url-当-4-个-provider-共用的完整-baseurl-直接透传)
 6. **reasoning effort 决策分两条路径**(2026-05-21 起):
-   - **SDK 路径**(ops-bot,`runtime.ts:getDefaultReasoningEffort(modelId?)`):优先级 env (`LLM_REASONING_EFFORT`) > per-model 默认 > 全局 fallback `"high"`。在 streamFn 内调,传给 `streamSimple` 的 `reasoning` 字段
+   - **SDK 路径**(ops-bot,`runtime.ts:getDefaultReasoningEffort(modelId?)`):优先级 env (`LLM_REASONING_EFFORT`) > per-model 默认 > 全局 fallback `"high"`。在 streamFn 内把非 `off` 值传给协议子入口 `streamSimple` 的 `reasoning` 字段。
    - **CLI 路径**(code-reviewer,`runtime.ts:buildPiCliArgs`):env 缺省时 fallback 到 `DEFAULT_LLM_REASONING_EFFORT = "high"`(stress test 实测稳定组合的 effort 端);显式传 `--thinking <effort>` 给 pi CLI,**不**让 pi 走自己的内置 `DEFAULT_THINKING_LEVEL=medium` 默认
    - pi 的 `ThinkingLevel` 只有 5 级无 `max`,对 Anthropic Opus 4.7 这种实际最高是 `"max"` 的 model,在 `catalog.ts:BUILTIN_MODELS` 中显式声明 `thinkingLevelMap: { xhigh: "max", ... }` 把 pi 最高映射到 anthropic 实际最高。
 

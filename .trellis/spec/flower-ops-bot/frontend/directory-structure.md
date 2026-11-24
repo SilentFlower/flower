@@ -7,7 +7,7 @@
 ## Directory Layout
 
 ```
-packages/flower-ops-bot/
+apps/ops-bot/
 ├── src/
 │   ├── server.ts             # HTTP 入口:监听端口、路由表、优雅关闭
 │   ├── dingtalk/
@@ -17,7 +17,6 @@ packages/flower-ops-bot/
 │   ├── handler.ts            # 消息处理主流程(agent.prompt + 流式订阅)
 │   ├── agent-factory.ts      # 按 conversationId 构造 / 持久化 Agent
 │   ├── session-store.ts      # Redis 后端 + 内存降级
-│   ├── tools.ts              # ToolDefinition → AgentTool 转换 + 工具装配
 │   └── prompts.ts            # OPS_SYSTEM_PROMPT(系统提示词)
 ├── dist/
 ├── Dockerfile                # 基础镜像 node:22,EXPOSE 3000
@@ -43,7 +42,6 @@ packages/flower-ops-bot/
 ### 存储与外部 API
 
 - **`session-store.ts`**:Redis 后端,环境无 `REDIS_URL` 时自动降级到内存 Map(仅本地开发)。
-- **`tools.ts`**:把 `@flower-ai/flower-tools-arms` / `@flower-ai/flower-tools-common` 的 `ToolDefinition` 转成 `pi-agent-core` 的 `AgentTool`。
 - **`dingtalk/push.ts`**:流式推送回钉钉 sessionWebhook。
 - **`dingtalk/signature.ts`**:HMAC-SHA256 签名校验 + 1 小时防重放。
 
@@ -58,7 +56,7 @@ packages/flower-ops-bot/
 - 文件名 `kebab-case.ts`(`agent-factory.ts`、`session-store.ts`)
 - 子目录按"外部协议域"切(`dingtalk/`),不按"层次"切(没有 `service/` / `controller/`)
 - 函数名 `camelCase`(`handleMessage`、`getOrCreateAgent`、`pushToSession`)
-- 类型 `PascalCase`(`AgentFactoryInput`、`DingTalkRequest`、`StoredSession`)
+- 类型 `PascalCase`(`AgentInstance`、`DingTalkRequest`、`StoredSession`)
 - 环境变量:`PORT` / `REDIS_URL` / `DINGTALK_BOT_SECRET` / `LLM_BASE_URL` / `LLM_API_KEY`
 - Redis key:`flower:ops-bot:session:<conversationId>`(`flower:` 是项目前缀,`ops-bot:` 是产品域)
 

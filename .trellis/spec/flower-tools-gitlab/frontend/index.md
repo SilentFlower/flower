@@ -12,7 +12,7 @@
 
 | 通用前端概念 | 本包对应 |
 |------|------|
-| 公开 API | 5 个 ToolDefinition + `registerGitlabTools` + `gitlabClient` |
+| 公开 API | 9 个 ToolDefinition、`registerGitlabTools` 和 `gitlabClient` |
 | Hook | `pi.registerTool(def)`(由 `registerGitlabTools` 调用) |
 | State | 客户端单例(`cachedClient`)+ CI 注入的 env(`CI_PROJECT_ID` / `CI_MERGE_REQUEST_IID`) |
 
@@ -40,7 +40,7 @@
 
 | Guide | 说明 |
 |-------|------|
-| [Directory Structure](./directory-structure.md) | `src/index.ts` 工具层 + `src/client.ts` HTTP 客户端 |
+| [Directory Structure](./directory-structure.md) | 工具、HTTP 客户端及包内评论转义 |
 | [Component Guidelines](./component-guidelines.md) | 工具结构与 severity 三档约束 |
 | [Hook Guidelines](./hook-guidelines.md) | `registerGitlabTools(pi)` 装配 |
 | [State Management](./state-management.md) | `cachedClient` 单例、CI 环境变量 |

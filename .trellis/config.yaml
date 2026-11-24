@@ -114,22 +114,20 @@ codex:
 
 # Auto-detected monorepo packages
 packages:
+  agent-runtime:
+    path: packages/agent-runtime
   flower-code-reviewer:
-    path: packages/flower-code-reviewer
+    path: apps/code-reviewer
   flower-compliance:
     path: packages/flower-compliance
   flower-observer:
-    path: packages/flower-observer
+    path: apps/observer
   flower-ops-bot:
-    path: packages/flower-ops-bot
+    path: apps/ops-bot
   flower-providers:
     path: packages/flower-providers
   flower-telemetry:
     path: packages/flower-telemetry
-  flower-tools-arms:
-    path: packages/flower-tools-arms
-  flower-tools-common:
-    path: packages/flower-tools-common
   flower-tools-gitlab:
     path: packages/flower-tools-gitlab
 

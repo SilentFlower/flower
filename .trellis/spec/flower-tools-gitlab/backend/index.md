@@ -1,15 +1,14 @@
 # Backend Development Guidelines
 
-> `@flower-ai/flower-tools-gitlab` 的内部实现层(REST 客户端、stub 实现、未来真实接入)规范。
+> `@flower-ai/flower-tools-gitlab` 的 REST 客户端、评论转义和本地上下文规范。
 
 ---
 
 ## Overview
 
-本目录(`backend/`)关心 **`src/client.ts` / `src/workspace.ts` 的实现**:
+本目录记录 `src/client.ts`、`src/workspace.ts` 和 `src/sanitize.ts` 的实现约定。
 
 - 已接入真实 GitLab REST API(**8 个 endpoint**:getMrDiff / getMrFiles / postMrComment / postMrLineComment / getBotComments / **getFileContent** / **listGroupProjects** / **listProjectBranches**)
-- stub 阶段的 `[Stub]` console.log 已全部清除
 - `safe-read.ts` 工具层 wrapper(默认 500 行行窗 + 单次最大 1000 行 + 单文件 50KB cap + 18 类二进制后缀跳过)封装 `gitlab_get_file_content` execute,LLM 默认拿不到超大整文件或二进制原始内容
 - `workspace.ts` 负责跨项目本地上下文准备:只允许白名单 namespace 下的项目,按需 shallow fetch 到固定临时目录,供 reviewer 后续用本地 `rg` 搜索
 
@@ -19,7 +18,7 @@
 
 | Guide | 说明 |
 |-------|------|
-| [Directory Structure](./directory-structure.md) | 当前布局与未来拆分 |
+| [Directory Structure](./directory-structure.md) | REST 客户端与包内转义的职责 |
 | [Database Guidelines](./database-guidelines.md) | 不适用(GitLab 是远端) |
 | [Error Handling](./error-handling.md) | API 错误 / token 错误 / 增量评审重试策略 |
 | [Logging Guidelines](./logging-guidelines.md) | 不打 token / diff 内容 / 评论 body |
@@ -47,7 +46,7 @@
      - major / minor:**body 原样**,无任何 marker(由模板内 emoji + 加粗中文等级 表达严重程度,例如 `🟠 **重要** · ...`)
    - `run.ts:scanForBlockers` 双 marker 兼容:正则同时匹配 `<!--\s*severity:\s*blocker\s*-->`(新)和 `^\[severity:blocker\]`(旧,向后兼容历史评论)
    - 改 marker 格式必须同步改 `flower-code-reviewer/src/run.ts:scanForBlockers` 正则
-7. **行内评论 quick-action 防御**:`postMrComment` / `postMrLineComment` execute 内对 `body` 参数做 `sanitizeQuickActions`(import 自 `@flower-ai/flower-tools-common`)→ 首字符 `/` 改成 `&#47;`,防止 LLM 输出 `/approve` `/close` 等被 GitLab 当作 quick action 误执行 MR 状态;**与 prompt 第 4 条硬约束形成双层防御**
+7. **评论快捷指令转义**。整体和行内评论工具在调用 REST 客户端前共用 `src/sanitize.ts` 的 `sanitizeQuickActions`。已知快捷指令的行首 `/` 转义为 `&#47;`，保留普通正文、路径和已转义内容。函数仅在包内使用。行为见 `sanitize.test.ts`，发送时的正文见 `tool-sanitize.test.ts`。
 8. **错误处理**:
    - HTTP 200/201 OK
    - 4xx(401/403/404/429)直接抛 Error,信息含 endpoint path + HTTP code + 响应体前 200 字符(截断防 token / 内部信息泄漏)

@@ -43,15 +43,24 @@ export function registerHavefunProviders(
 
 ### 顶层扩展(等价于"组合根 hook")
 
-`code-reviewer/src/extension.ts` 把多个 factory 串起来:
+`review-execution.ts` 通过 `createAgentSessionServices` 注入命名 inline 工厂 `flower-reviewer`。共享运行负责提交和终态；SDK `bindExtensions({ mode: "print" })` 负责实际工具与扩展生命周期。每次 CLI 启动独立的 pi 会话并保留原格式 JSONL。
+
+`review-network.ts` 负责 CLI 进程的 HTTP 引导。首次出站前以用户级设置填充缺省代理环境变量，保留显式环境配置。使用 Undici 环境代理调度器处理 CONNECT 和 `NO_PROXY`。信任判定后，以生效的 `httpIdleTimeoutMs` 设置响应头和响应体空闲时限。代理配置无效时停止本轮且不输出原始代理值。用本地夹具的 `proxy-settings`、`proxy-bypass`、`proxy-explicit`、`proxy-idle` 和 `proxy-invalid` 验证路由及失败行为。
+
+项目资源加载前，`project-trust.ts` 在公开预加载回调里先按 SDK 顺序调用用户级 `project_trust`，再回退到已记忆决定和用户默认设置。非交互 `ask` 拒绝项目加载。明确 `no` 优先于默认及记忆允许。按此顺序验收两种允许的覆盖用例，以及 `undecided`、处理器异常和 `remember: true`。
+
+试跑门禁位于 telemetry 和 compliance 之后，先于 review trace。它拒绝两种 GitLab 评论工具并记录 `security_block`。总超时调用共享运行的取消入口，等待已提交终态后发送超时提示。评论工具的中止信号覆盖 GitLab HTTP 发送和重试等待；已发送而收不到响应的请求记录为结果待核对。用 `apps/code-reviewer/verification/local-review.mjs` 的 `dry-run`、`timeout-model` 和 `timeout-write` 核对出站记录。
+
+`apps/code-reviewer/src/extension.ts` 把多个 factory 串起来:
 
 ```typescript
 export default function (pi: ExtensionAPI): void {
   registerHavefunProviders(pi, { appSource: "code-reviewer" });
   registerTelemetry(pi, { product: "code-reviewer", sinks: buildTelemetrySinks() });
   registerCompliance(pi, { mode: "ci-readonly", product: "code-reviewer", onBlock: /* 接 telemetry */ });
-  registerCommonTools(pi);
   registerGitlabTools(pi);
+  registerReviewerSelfTools(pi);
+  registerReviewTrace(pi);
 }
 ```
 
@@ -62,7 +71,8 @@ export default function (pi: ExtensionAPI): void {
 | 1 | provider | 没 provider,后面所有 LLM 调用都找不到模型 |
 | 2 | telemetry | 观测监听必须先于 compliance:pi 按注册顺序短路,先注册才能看到被拦截的调用意图 |
 | 3 | compliance | 是后续工具调用的"门禁",必须早于业务工具;onBlock 回调接 telemetry(2026-06-10) |
-| 4 | tools(common / gitlab) | 业务工具,任意顺序 |
+| 4 | GitLab 与 reviewer 自审工具 | 提供实际评审能力 |
+| 5 | 评审 trace | 记录读文件、准备工作区和行内评论 |
 
 ---
 
@@ -89,10 +99,10 @@ export const gitlabGetMrDiffTool = defineTool({
 
 ### 约定
 
-1. **`name` 全局唯一**,用 `<domain>_<verb>_<noun>` 蛇形(`gitlab_post_comment`、`arms_query_logs`)
+1. **`name` 全局唯一**,用 `<domain>_<verb>_<noun>` 蛇形(`gitlab_post_comment`、`gitlab_get_mr_diff`)
 2. **`label` 是给 LLM 的可读名**,可以是中文(`"获取 MR diff"`)
 3. **`description` 是给 LLM 的工具说明**,直接影响 LLM 调用决策,要写清"用来做什么 / 何时用 / 入参含义"
-4. **`parameters` 用 `@earendil-works/pi-ai` 的 `Type.Object`**,不要自己写 JSON schema
+4. **`parameters` 用 `typebox` 的 `Type.Object`**。使用 `import * as Type from "typebox"` 保留 pi 1.6.0 `defineTool` 的参数推导。运行时由 `@earendil-works/pi-schema` 校验。
 5. **返回值固定形状**:`{ content: [{ type: "text", text: string }], details?: object }`
 6. **副作用 = 调外部 API**:实际 HTTP 调用放在 `client.ts` 等独立模块里,工具的 `execute` 只做参数解包 + 调 client + 包装返回值
 
@@ -103,8 +113,8 @@ export const gitlabGetMrDiffTool = defineTool({
 | 对象 | 命名规则 | 例子 |
 |------|----------|------|
 | 注册函数 | `register<Domain>Tools` 或 `register<Domain>(pi, options)` | `registerGitlabTools` / `registerCompliance` |
-| 工具变量(命名导出) | `<domain><Action>Tool` (camelCase) | `gitlabPostCommentTool` / `armsQueryLogsTool` |
-| 工具 `name` 字段 | `<domain>_<action>` (snake_case) | `gitlab_post_comment` / `arms_query_logs` |
+| 工具变量(命名导出) | `<domain><Action>Tool` (camelCase) | `gitlabPostCommentTool` / `gitlabGetMrDiffTool` |
+| 工具 `name` 字段 | `<domain>_<action>` (snake_case) | `gitlab_post_comment` / `gitlab_get_mr_diff` |
 | 事件订阅 handler | 匿名 lambda 或私有 `function on<Event>(...)` | `pi.on("tool_call", async (event) => { ... })` |
 
 ---

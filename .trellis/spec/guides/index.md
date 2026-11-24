@@ -37,7 +37,7 @@ These guides help you **ask the right questions before coding**.
 - **问题**:LLM 网关抖动 / 限流 / 5xx → 整个评审 fail close 让 pipeline 阻塞,业务方愤怒
 - **方案**:`run.ts` 顶层 try/catch + `isLlmFailure(err)` 5 级判定;LLM 失败 → 退化为 1 条 warning 评论说明「评审失败请手工 review」+ `exitCode = 0` 不阻塞;但 `scanForBlockers` 已成功识别的 blocker 仍 fail close
 - **关键**:`isLlmFailure` 必须区分 LLM 失败 vs GitLab API 失败(后者应 fail close);判定基于 error 类名 + HTTP status + message 关键字综合
-- **落地**:`packages/flower-code-reviewer/src/run.ts`(`isLlmFailure` / `buildLlmFailureNotice`)
+- **落地**:`apps/code-reviewer/src/run.ts`(`isLlmFailure` / `buildLlmFailureNotice`)
 - **测试 case**:mock LLM 抛 LlmNetworkError → warning 评论 post + exit 0;mock AuthError → 正常抛(fail close)
 
 ### 模式 2 · 评审 trace 单例 + 「无依据评论」拦截
@@ -45,16 +45,13 @@ These guides help you **ask the right questions before coding**.
 - **问题**:LLM 不读源代码瞎评论 → 评论质量低 + 业务方失信
 - **方案**:module-level 单例 `ReviewTrace` 累计 `readFiles: Set<path>` 和 `lineComments: Array<{path}>`;extension.ts `pi.on('tool_call', ...)` 监听 `gitlab_get_file_content` 调用记录 readFiles,`gitlab_post_line_comment` 调用记录 lineComment;finalize 阶段(LLM 全部 tool call 完成后)算 `unsupportedFiles = lineComments.path - readFiles`,有则拼 blocker 整体评论 + 触发 scanForBlockers exit 1
 - **关键**:**module-level 单例**(不是依赖注入)是因为 pi-coding-agent 框架的 tool dispatch 不易传上下文;`resetTrace()` 在 run.ts 启动期调用避免污染连续运行
-- **落地**:`packages/flower-code-reviewer/src/review-trace.ts` + `extension.ts` 注册顺序 `tools → review-trace 监听`
+- **落地**:`apps/code-reviewer/src/review-trace.ts` + `extension.ts` 注册顺序 `tools → review-trace 监听`
 - **测试 case**:mock LLM 不调用 `gitlab_get_file_content` 就发 line_comment → scanForBlockers 返回 ≥ 1 个「无依据评论」blocker
 
-### 模式 3 · 跨包 utility 收敛(common-up)
+### 模式 3 · 在业务包内复用函数
 
-- **问题**:每个 tools-* package 各写一份 sanitize / encoding / time helpers → DRY 违反 + 修复不同步
-- **方案**:通用纯函数 utility 统一放 `flower-tools-common`;下游 package 通过 `@flower-ai/flower-tools-common` workspace dep + tsconfig `references` 引用
-- **关键**:**抑制 helper 在 caller 包里就地写**(即使「就一个 caller」);如果一段函数可能被 sibling package 也用到,就直接放 common
-- **落地**:本次 `sanitizeQuickActions` 从 flower-code-reviewer 上移到 flower-tools-common(sibling `code-reviewer-auto-fix-bot` 也会复用)
-- **判定标准**:utility 是不是纯函数(无 IO / 无副作用)+ 是不是与具体 package 业务无关 → 是 → common
+- 由现有调用方决定函数归属。GitLab 评论转义规则由 GitLab 工具包维护，整体和行内评论复用 `packages/flower-tools-gitlab/src/sanitize.ts`。
+- 通过包内单测验证字符串规则，通过公开评论工具验证出站正文。出现多个实际消费包时，再评估共享包和公开接口的需要。
 
 ---
 
@@ -82,7 +79,7 @@ These guides help you **ask the right questions before coding**.
 ### When to Think About LLM Integration Debugging
 
 - [ ] 接入新 LLM 网关首次跑通
-- [ ] `pi-ai streamSimple` / `complete` 报 `Incomplete JSON segment` / `Stream ended without finish_reason` / done event 内容空
+- [ ] pi-ai 协议子入口报 `Incomplete JSON segment` 或 `Stream ended without finish_reason`，或终止事件缺少文本
 - [ ] "流式响应看起来收到了但 text 是空字符串"
 - [ ] 怀疑 SDK 与网关 SSE 不兼容(先验证不是路径问题再说)
 
