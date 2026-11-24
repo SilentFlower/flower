@@ -628,10 +628,10 @@ window.agentUI = (() => {
 			const shown = !scroll.hidden && ticks.length >= 3 && scroll.scrollHeight > scroll.clientHeight && gap >= 40;
 			nav.hidden = !shown;
 			if (!shown) return hide();
-			// 导航条覆盖滚动区域的可视高度，横向位于左侧留白的中线。
+			// 导航条覆盖滚动区域的可视高度；刻度中线固定离会话区左缘 20 像素，宽窗留白再大也贴边，不悬在空白中间。
 			nav.style.top = `${scroll.offsetTop}px`;
 			nav.style.height = `${scroll.clientHeight}px`;
-			nav.style.left = `${scroll.offsetLeft + gap / 2}px`;
+			nav.style.left = `${scroll.offsetLeft + 20}px`;
 			const tops = records.map(({ requestId }) => views.get(requestId).node.getBoundingClientRect().top - viewport.top);
 			const atBottom = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop < 65;
 			const next = navigatorTurn(tops, scroll.clientHeight, atBottom);

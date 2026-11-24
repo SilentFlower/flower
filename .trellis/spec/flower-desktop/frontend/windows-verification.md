@@ -40,6 +40,7 @@ cmd.exe /c "python D:\…\flower-ui-private-desktop.py D:\…\run.log cmd /c D:\
 | 日志停在某一步、看门狗没触发 | 出错后 `finally` 先清看门狗，`app.close()` 被关窗确认挡住 | 按第 3 节收尾顺序 |
 | 私有桌面里 `minimize()` 后 `isFocused()` 仍为 true | 非输入桌面没有真实前台切换 | 在主进程替换 `BrowserWindow.prototype.isFocused` 模拟后台，并在验收记录中注明「模拟」 |
 | 打开侧栏后窗口不外扩 | 侧栏已被前面的路径预览打开，再点开关是关闭 | 先确认 `#workspace-panel` 隐藏再打开 |
+| `verify-panel-layout-windows.mjs` 第 15 步「重启后左侧展开」`composerWidth` 前后不等；`verify-markdown-windows.mjs` 的 HTML 比对多出 `data-path-pending` | 时序竞态：重启后会话历史尚在读取时 `data-home="false"`，读完空会话翻为首页版式，两次快照落在翻转两侧；Markdown 快照早于回复路径核对完成 | 同一候选包重跑一次；仍失败时在快照里加记 `data-home` 与 `.composition` 内边距判断是否跨版式，并用改动前候选包跑基线，不要据此改布局 |
 | 脚本在早期断言失败，后续步骤全部未执行 | 产品文案或默认值变化后脚本断言过期；也可能是改动前就存在的漂移 | 逐处修正后重跑直到退出码为 0；判断是否为既有漂移时，用 `git show HEAD:<脚本>` 的旧版本对改动前的候选包跑一次基线，同样失败即为既有漂移 |
 
 ### 5. Good / Base / Bad Cases

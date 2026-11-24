@@ -36,6 +36,7 @@
 - Markdown 渲染出的滚动容器（代码块、`.markdown-table-scroll`）不要调用 `softScroll`：由 `ui/markdown.js` 在 HTML 中直接输出 `soft-scroll` 类，`style.css` 的 `:where(pre, .markdown-table-scroll).soft-scroll:hover` 显示滑块。脚本切换的 `data-scrolling` 会让流式更新时 `updateBlocks` 的 `isEqualNode` 不相等，反复替换节点并丢失横向滚动位置。表格单元格不要设 `white-space: nowrap`，用 `overflow-wrap: anywhere` 加 `min-width`（`border-box` 下 4.5em 约三个汉字）。
 - 悬停显示的浮层（如上下文详情卡、会话导航预览卡）不要设 `pointer-events: none`，与触发元素之间有空隙时用浮层的透明伪元素（`::after`/`::before`）桥接，否则指针移向浮层途中就失去 `:hover`。只有覆盖大片区域的透明定位容器（如 `.thread-navigator`）可设 `pointer-events: none`，其中的触发元素与浮层显式恢复 `auto`；脚本收起浮层时用容器的 `pointerleave` 与 `matches(":hover")`，点击浮层前用 `mousedown` 的 `preventDefault()` 保住触发元素的焦点。
 - `.conversation-body` 是 `position: relative` 且 `overflow: auto`：挂在其上的绝对定位浮层（导航条、预览卡）要把位置收在 `#thread-scroll` 的可视范围内（`offsetTop`/`clientHeight`），超出会让会话区本身出现滚动条。
+- `.conversation-body` 同时是尺寸查询容器（`container-type: inline-size`）。会话版式（消息列正文最宽 914、`.timeline`/`.composition` 的 `--gutter` 50，输入区内边距 `--gutter - 10`）按 `@container (max-width: 699px)` 收到 20，不要改用视口媒体查询：侧栏折叠与右栏并排时会话区宽度与窗口宽度不成比例。首页编辑卡由 `.workbench[data-home="true"] .composition` 覆盖 `--gutter`、`max-width` 与 `padding-inline`，改会话版式时保持首页尺寸不变。
 - 替换共用选择器的样式块时连同逗号前的选择器一起检查，例如 `.sidebar-heading, .session-list h2 { … }`，只替换后半段会把前一个选择器接到新规则上。
 - 新增 preload 接口要在 `preload.cjs` 与 `main.mjs` 的 `handle` 两侧同时出现，处理器先校验会话为当前选中会话、路径经 `workspace.mjs` 的 `locate` 校验。
 - 改动后运行 `cd apps/desktop && npm test`、`npx biome check apps/desktop`；涉及 Windows 行为时按 [Windows Verification](./windows-verification.md) 打包并实机验收。
