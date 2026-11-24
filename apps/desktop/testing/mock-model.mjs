@@ -54,6 +54,7 @@ export async function startMockModel({
 				model: input.model,
 				keys: Object.keys(input).sort(),
 				reasoning: input.reasoning_effort,
+				thinking: input.thinking?.type,
 				hasAnthropicHeaders: Boolean(req.headers["anthropic-version"] || req.headers["x-api-key"]),
 				tokenMatches,
 			});

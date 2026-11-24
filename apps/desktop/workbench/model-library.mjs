@@ -161,21 +161,31 @@ export function parseEffortLevels(value) {
 	return levels.filter((level) => declared.has(level));
 }
 
+/**
+ * 选出关闭思考的发送方式。
+ * @param {object|undefined} model pi 目录中的推理模型
+ * @param {string} fallback 非 DeepSeek 模型的方式
+ * @returns {"deepseek"|"none"|"omit"} deepseek 发 thinking.type，none 发 reasoning_effort=none，omit 不带推理字段
+ */
+function offMethod(model, fallback) {
+	// DeepSeek 不认 reasoning_effort=none，只能用自家的 thinking.type 关闭；兼容网关一般原样转发该字段。
+	return model?.provider === "deepseek" ? "deepseek" : fallback;
+}
+
 function recommendation(service, id, catalog) {
 	const model = sdkModels.get(catalogModelId(id));
-	const direct = deepSeekDirect(service, model);
-	const format = direct ? "deepseek" : "openai";
+	const format = deepSeekDirect(service, model) ? "deepseek" : "openai";
 	const saved = service?.keyUnavailable ? undefined : service?.verifiedEffort?.models;
 	const declared = catalog ? catalog.get(id) : saved?.find(([modelId]) => modelId === id)?.[1];
 	if (declared) {
 		// DeepSeek 的目录只列思考开启时的 effort。关闭通过单独的 thinking.type 发送。
-		const addOff = direct && declared.length && model.levels.includes("off") && !declared.includes("off");
-		return { source: "service", format, levels: addOff ? ["off", ...declared] : declared };
+		const addOff =
+			model?.provider === "deepseek" && declared.length && model.levels.includes("off") && !declared.includes("off");
+		return { source: "service", format, off: offMethod(model, "none"), levels: addOff ? ["off", ...declared] : declared };
 	}
 	if (!model) return { source: "default", levels: [] };
-	// 目录没有声明时采用 pi 的模型档位；关闭思考还需要当前协议有对应的发送方式。
-	const projected = model.levels.filter((level) => level !== "off" || direct || model.standardOff);
-	return { source: "builtin", format, levels: projected };
+	// pi 目录已标明能否关闭思考；没有标准关闭字段的模型（如 Claude）不带推理字段即为关闭。
+	return { source: "builtin", format, off: offMethod(model, model.standardOff ? "none" : "omit"), levels: model.levels };
 }
 
 /** 生成模型推理推荐摘要供设置页使用。@param {object} service 已保存服务 @param {string} value 模型名 @param {Map} catalog 服务声明 @returns {object} 来源与推荐档位 */
@@ -188,7 +198,11 @@ function capability(service, model, catalog) {
 	if (model?.mode === "none") return {};
 	if (model?.mode === "standard") {
 		const native = sdkModels.get(catalogModelId(model.id));
-		return { format: deepSeekDirect(service, native) ? "deepseek" : "openai", levels: model.levels };
+		return {
+			format: deepSeekDirect(service, native) ? "deepseek" : "openai",
+			off: offMethod(native, "none"),
+			levels: model.levels,
+		};
 	}
 	return recommendation(service, model?.id, catalog);
 }
@@ -197,7 +211,8 @@ function selection(service, catalog) {
 	const entry = service.models.find(({ id }) => id === service.modelId);
 	const result = capability(service, entry, catalog);
 	const available = result.levels ?? [];
-	const effort = available.includes(entry?.effort) ? entry.effort : "default";
+	// 未选过或已失效的档位落到最左档：能关闭思考时为关闭，否则为最低档。
+	const effort = available.includes(entry?.effort) ? entry.effort : (available[0] ?? "default");
 	return { ...result, available, effort };
 }
 
@@ -291,7 +306,7 @@ export function selectModel(library, value) {
 export function setModelEffort(library, effort, catalog) {
 	const service = findService(library);
 	const available = service?.modelId && selection(service, catalog).available;
-	if (!available?.length || (effort !== "default" && !available.includes(effort))) {
+	if (!available?.includes(effort)) {
 		throw new Error("当前模型不支持此推理档位。");
 	}
 	const models = service.models.map((entry) => (entry.id === service.modelId ? { ...entry, effort } : entry));
@@ -304,27 +319,27 @@ export function runtimeSelection(service, catalog) {
 	if (!model) return {};
 	// 未收录的兼容网关由服务端协商图片输入；已知纯文本模型在发送前提示。
 	model.input = inputKinds.get(catalogModelId(model.id)) ?? ["text", "image"];
-	const { available, format, effort } = selection(service, catalog);
+	const { available, format, off, effort } = selection(service, catalog);
 	if (!available.length) return { model };
 	const thinkingLevelMap = Object.fromEntries(
-		levels.map((level) => [
-			level,
-			!available.includes(level) || (level === "off" && (effort === "default" || format === "deepseek"))
-				? null
-				: level === "off"
-					? "none"
-					: level,
-		]),
+		levels.map((level) => [level, available.includes(level) && level !== "off" ? level : null]),
 	);
-	// 深度思考协议用 thinking.type 关闭，默认档由服务决定。
-	if (format === "deepseek" && effort === "off") delete thinkingLevelMap.off;
+	let thinkingFormat = format;
+	if (effort === "off") {
+		// pi 在未指定档位时按 thinkingLevelMap.off 关闭：DeepSeek 格式下键缺省即发 thinking.type=disabled，
+		// 标准协议下为字符串时发 reasoning_effort，为 null 时不带推理字段。
+		if (off === "deepseek") {
+			thinkingFormat = "deepseek";
+			delete thinkingLevelMap.off;
+		} else if (off === "none") thinkingLevelMap.off = "none";
+	}
 	return {
 		model: {
 			...model,
 			reasoning: true,
 			thinkingLevelMap,
-			compat: { thinkingFormat: format, supportsReasoningEffort: true },
+			compat: { thinkingFormat, supportsReasoningEffort: true },
 		},
-		reasoning: effort === "default" || effort === "off" ? undefined : effort,
+		reasoning: effort === "off" ? undefined : effort,
 	};
 }

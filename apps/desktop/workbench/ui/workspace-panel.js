@@ -27,6 +27,8 @@
 		let folders = [];
 		let file = "";
 		let attachment;
+		// 回复中的文件名对应多个同名文件时的候选：{ name, paths }。
+		let choices;
 		let mode = "files";
 		let change;
 		const collator = new Intl.Collator(undefined, { numeric: true });
@@ -167,6 +169,49 @@
 		}
 		previewAdd.addEventListener("click", () => void addReference(previewAdd));
 
+		function fileKind(name, directory = false) {
+			if (directory) return "folder";
+			if (/\.(xlsx|csv|tsv)$/i.test(name)) return "table";
+			if (/\.(png|jpe?g|gif|webp|bmp)$/i.test(name)) return "image";
+			if (/\.(?:md|mdx|pdf|docx|txt)$/i.test(name)) return "report";
+			if (/\.(?:[cm]?[jt]sx?|json|css|html|py|sh|go|rs|java|ya?ml)$/i.test(name)) return "code";
+			return "document";
+		}
+
+		function renderChoices() {
+			status(`工作区中有 ${choices.paths.length} 个名为 ${choices.name} 的文件，选择要预览的一个。`);
+			const list = element("ul", "panel-file-list");
+			for (const path of choices.paths) {
+				const parts = path.split("/");
+				const name = parts.pop();
+				const control = button(
+					"",
+					() => {
+						folders = parts;
+						file = name;
+						view.focus({ preventScroll: true });
+						void load();
+					},
+					"panel-file-row panel-choice",
+				);
+				const type = fileKind(name);
+				control.dataset.kind = type;
+				control.dataset.ext = (/\.([^.]+)$/.exec(name)?.[1] ?? "").toLowerCase();
+				// 同名文件靠所在目录区分：主文字为直接上级目录，其余上级路径作补充。
+				control.append(
+					icon(type),
+					element("span", "", parts.at(-1) ?? "工作区根目录"),
+					element("small", "panel-choice-parent", parts.slice(0, -1).join("/")),
+				);
+				control.title = path;
+				control.setAttribute("aria-label", `预览文件：${path}`);
+				const row = element("li");
+				row.append(control);
+				list.append(row);
+			}
+			content.replaceChildren(list);
+		}
+
 		function renderDirectory(result, restoreName) {
 			for (const entry of result.entries) entries.set(entry.name, entry);
 			pageOffset += result.entries.length;
@@ -188,12 +233,7 @@
 					"panel-file-row",
 				);
 				const name = element("span", "", entry.name);
-				let type = "document";
-				if (directory) type = "folder";
-				else if (/\.(xlsx|csv|tsv)$/i.test(entry.name)) type = "table";
-				else if (/\.(png|jpe?g|gif|webp|bmp)$/i.test(entry.name)) type = "image";
-				else if (/\.(?:md|mdx|pdf|docx|txt)$/i.test(entry.name)) type = "report";
-				else if (/\.(?:[cm]?[jt]sx?|json|css|html|py|sh|go|rs|java|ya?ml)$/i.test(entry.name)) type = "code";
+				const type = fileKind(entry.name, directory);
 				control.dataset.kind = type;
 				// 同属文档类的 PDF 与 Word 按扩展名再区分图标颜色。
 				control.dataset.ext = directory ? "" : (/\.([^.]+)$/.exec(entry.name)?.[1] ?? "").toLowerCase();
@@ -255,7 +295,9 @@
 					? [selected.workspace, change?.path].filter(Boolean)
 					: attachment
 						? ["对话附件", file]
-						: [selected.workspace, ...folders, file].filter(Boolean);
+						: choices && !file
+							? [selected.workspace, `名为 ${choices.name} 的文件`]
+							: [selected.workspace, ...folders, file].filter(Boolean);
 			location.title = parts.join(" / ");
 			for (const [index, part] of parts.entries()) {
 				if (index) location.append(element("span", "crumb-separator", "›"));
@@ -265,6 +307,7 @@
 						button(
 							part,
 							() => {
+								choices = undefined;
 								folders = folders.slice(0, index);
 								file = "";
 								view.focus();
@@ -387,7 +430,7 @@
 			}
 			if (panel.hidden) return;
 			previewAdd.hidden = true;
-			back.hidden = mode === "git" ? !change : !folders.length && !file;
+			back.hidden = mode === "git" ? !change : !folders.length && !file && !choices;
 			refresh.hidden = !selected;
 			by("panel-title").textContent = mode === "git" ? "Git 变更" : file ? "文件预览" : "工作区文件";
 			breadcrumbs();
@@ -414,6 +457,7 @@
 			status(mode === "git" ? "正在读取 Git 变更…" : file ? "正在读取文件…" : "正在读取目录…");
 			try {
 				if (mode === "git") return await renderGit(stamp);
+				if (choices && !file && !attachment) return renderChoices();
 				const path = [...folders, file].filter(Boolean).join("/") || ".";
 				const result = attachment
 					? await host.previewAttachment(selected.id, attachment.request, attachment.id)
@@ -541,6 +585,15 @@
 				return;
 			}
 			attachment = undefined;
+			if (choices) {
+				// 从候选进入的预览返回候选列表，候选列表再返回到工作区根目录。
+				if (file) folders = [];
+				else choices = undefined;
+				file = "";
+				view.focus({ preventScroll: true });
+				void load();
+				return;
+			}
 			const previous = file || folders.pop();
 			file = "";
 			view.focus({ preventScroll: true });
@@ -764,6 +817,7 @@
 				}
 				change = undefined;
 				attachment = undefined;
+				choices = undefined;
 				selected = next;
 				ready = initialized;
 				folders = [];
@@ -776,6 +830,7 @@
 				if (selected?.id !== id) return;
 				setMode("files");
 				attachment = undefined;
+				choices = undefined;
 				file = "";
 				opener = trigger;
 				display(true);
@@ -784,19 +839,27 @@
 			previewAttachment(ref, request, trigger) {
 				if (!selected) return;
 				setMode("files");
+				choices = undefined;
 				attachment = { id: ref.id, request };
 				file = ref.name;
 				opener = trigger;
 				display(true);
 			},
-			/** 从当前会话的交付文件进入预览。@param {string} path 交付文件相对路径 @param {HTMLElement} trigger 来源按钮 @returns {void} */
-			preview(path, trigger) {
+			/**
+			 * 从交付文件或回复中的路径进入预览；有多个同名候选时先列出候选。
+			 * @param {string} path 工作区相对路径
+			 * @param {HTMLElement} trigger 来源按钮
+			 * @param {string[]} [candidates] 同名文件的相对路径
+			 * @returns {void}
+			 */
+			preview(path, trigger, candidates) {
 				if (!selected) return;
 				setMode("files");
 				attachment = undefined;
 				opener = trigger;
-				folders = path.split(/[\\/]/);
-				file = folders.pop();
+				choices = candidates?.length ? { name: path, paths: candidates } : undefined;
+				folders = choices ? [] : path.split(/[\\/]/);
+				file = choices ? "" : folders.pop();
 				display(true);
 			},
 		};

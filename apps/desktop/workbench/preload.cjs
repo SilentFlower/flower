@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("flower", {
 	listWorkspaceEntries: (session, directory, offset) => invoke("list-workspace-entries", session, directory, offset),
 	previewWorkspaceFile: (session, path) => invoke("preview-workspace-file", session, path),
 	showPathMenu: (session, path, preview) => invoke("show-path-menu", session, path, preview),
+	resolveReplyPaths: (session, paths) => invoke("resolve-reply-paths", session, paths),
 	chooseFile: (session) => invoke("choose-file", session),
 	referenceFile: (session, path) => invoke("reference-file", session, path),
 	dropFiles: (session, files) =>

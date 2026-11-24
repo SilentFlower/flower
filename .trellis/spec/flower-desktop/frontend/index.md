@@ -22,6 +22,7 @@
 | Guide | 说明 |
 |-------|------|
 | [Windows Verification](./windows-verification.md) | Playwright `_electron` 实机验收脚本：私有桌面运行、主进程替身、收尾与超时、前台焦点的限制 |
+| [Workbench Contracts](./workbench-contracts.md) | 回复路径核对 IPC（状态、缓存失效、Git/遍历查找）与推理档位「关闭思考」的请求字段映射 |
 
 > 共享运行时的事件持久化契约见 [agent-runtime backend spec](../../agent-runtime/backend/index.md)。
 
@@ -31,6 +32,8 @@
 
 - 新增 Main 的 electron 具名导入（如 `Notification`）时，同步补到 `testing/workspace-panel.test.mjs` 的假 electron 模块导出列表，否则该测试在导入阶段失败。
 - 新的滚动容器调用 `flowerUI.softScroll(node)` 使用自动隐藏细滚动条，不要再写 `scrollbar-width: thin`：Chromium 中标准属性 `scrollbar-width` 一旦设置，`::-webkit-scrollbar` 样式整体失效，Windows 上会回到带箭头的原生滚动条。
+- Markdown 渲染出的滚动容器（代码块、`.markdown-table-scroll`）不要调用 `softScroll`：由 `ui/markdown.js` 在 HTML 中直接输出 `soft-scroll` 类，`style.css` 的 `:where(pre, .markdown-table-scroll).soft-scroll:hover` 显示滑块。脚本切换的 `data-scrolling` 会让流式更新时 `updateBlocks` 的 `isEqualNode` 不相等，反复替换节点并丢失横向滚动位置。表格单元格不要设 `white-space: nowrap`，用 `overflow-wrap: anywhere` 加 `min-width`（`border-box` 下 4.5em 约三个汉字）。
+- 悬停显示的浮层（如上下文详情卡）不要设 `pointer-events: none`，与触发元素之间有空隙时用浮层的透明 `::after` 桥接，否则指针移向浮层途中就失去 `:hover`。
 - 替换共用选择器的样式块时连同逗号前的选择器一起检查，例如 `.sidebar-heading, .session-list h2 { … }`，只替换后半段会把前一个选择器接到新规则上。
 - 新增 preload 接口要在 `preload.cjs` 与 `main.mjs` 的 `handle` 两侧同时出现，处理器先校验会话为当前选中会话、路径经 `workspace.mjs` 的 `locate` 校验。
 - 改动后运行 `cd apps/desktop && npm test`、`npx biome check apps/desktop`；涉及 Windows 行为时按 [Windows Verification](./windows-verification.md) 打包并实机验收。

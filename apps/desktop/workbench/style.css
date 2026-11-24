@@ -879,7 +879,8 @@ summary:focus-visible {
 
 /* 自动隐藏的细滚动条（侧栏、主会话区、右栏共用，脚本见 flowerUI.softScroll）。
    滑块隐藏时仍保留滚动条的命中范围，显示和收起不会移动内容。
-   标准属性 scrollbar-width 会让 ::-webkit-scrollbar 失效，这些容器不能再设置它。 */
+   标准属性 scrollbar-width 会让 ::-webkit-scrollbar 失效，这些容器不能再设置它。
+   Markdown 渲染的代码块与表格由渲染器直接带 soft-scroll 类，不挂脚本，指针悬停时显示滑块。 */
 @media (forced-colors: none) {
 	.soft-scroll::-webkit-scrollbar {
 		width: 12px;
@@ -900,7 +901,8 @@ summary:focus-visible {
 		background-color: transparent;
 		background-clip: padding-box;
 	}
-	.soft-scroll[data-scrolling]::-webkit-scrollbar-thumb {
+	.soft-scroll[data-scrolling]::-webkit-scrollbar-thumb,
+	:where(pre, .markdown-table-scroll).soft-scroll:hover::-webkit-scrollbar-thumb {
 		background-color: light-dark(#d7d7d4, #3c3c3a);
 	}
 	.soft-scroll[data-scrolling]::-webkit-scrollbar-thumb:hover,
@@ -1585,12 +1587,142 @@ summary:focus-visible {
 	width: 16px;
 	height: 16px;
 }
-.context-usage {
-	margin: 4px 2px 0;
+/* 上下文圆环：静止时只占一个小环，详情卡在悬停或键盘聚焦时浮出。 */
+.context-meter {
+	--meter: var(--accent);
+	position: relative;
+	flex: none;
+}
+.context-meter[hidden] {
+	display: none;
+}
+.context-meter[data-level="warn"] {
+	--meter: var(--warn);
+}
+.context-meter[data-level="danger"] {
+	--meter: var(--danger);
+}
+.button.context-ring {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	min-height: 32px;
+	padding: 4px 7px;
 	color: var(--muted);
-	font-size: 11px;
+	font-size: 12px;
 	font-variant-numeric: tabular-nums;
-	text-align: right;
+}
+.context-ring svg {
+	width: 16px;
+	height: 16px;
+	flex: none;
+	transform: rotate(-90deg);
+}
+.context-ring circle {
+	fill: none;
+	stroke-width: 2.6;
+}
+.context-ring-track {
+	stroke: var(--edge);
+}
+.context-ring-value {
+	stroke: var(--meter);
+	stroke-linecap: round;
+	stroke-dasharray: 0 100;
+}
+.context-meter:not([data-level="normal"]) .context-ring {
+	color: var(--meter);
+	font-weight: 600;
+}
+#context-percent:empty {
+	display: none;
+}
+.context-detail {
+	position: absolute;
+	right: 0;
+	bottom: calc(100% + 8px);
+	z-index: 20;
+	width: 232px;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--surface);
+	box-shadow: 0 8px 28px rgb(0 0 0 / 12%);
+	color: var(--ink);
+	font-size: 12px;
+	line-height: 1.5;
+	opacity: 0;
+	visibility: hidden;
+	transform: translateY(4px);
+}
+/* 透明桥接圆环与详情卡之间的空隙，指针移到卡片上时容器仍处于悬停状态。 */
+.context-detail::after {
+	content: "";
+	position: absolute;
+	inset: 100% 0 auto;
+	height: 9px;
+}
+.context-meter:hover .context-detail,
+.context-ring:focus-visible + .context-detail {
+	opacity: 1;
+	visibility: visible;
+	transform: none;
+}
+.context-detail-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+}
+.context-detail-head span,
+.context-detail p {
+	color: var(--muted);
+}
+.context-detail-head strong {
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.context-bar {
+	height: 4px;
+	margin: 8px 0 6px;
+	overflow: hidden;
+	border-radius: 2px;
+	background: var(--wash);
+}
+.context-bar span {
+	display: block;
+	width: 0;
+	height: 100%;
+	border-radius: inherit;
+	background: var(--meter);
+}
+.context-detail p {
+	margin: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+	.context-ring-value {
+		transition: stroke-dasharray 0.4s ease;
+	}
+	.context-detail {
+		transition:
+			opacity 0.15s ease,
+			transform 0.15s ease,
+			visibility 0.15s;
+	}
+}
+@media (forced-colors: active) {
+	.context-ring-value {
+		stroke: CanvasText;
+	}
+	.context-bar span {
+		background: CanvasText;
+	}
+}
+@media (max-width: 760px) {
+	#context-percent {
+		display: none;
+	}
 }
 
 #feedback:not(:empty) {

@@ -171,13 +171,20 @@
 								<button class="button write-mode-choice" id="write-mode-open" type="button" popovertarget="write-mode-picker" aria-haspopup="dialog" aria-label="工作区权限：自动审批" disabled><svg class="icon" aria-hidden="true"><use href="#icon-shield-check"/></svg><span id="write-mode-name">自动审批</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></button>
 							</div>
 							<div class="composer-end">
+								<div class="context-meter" id="context-meter" hidden>
+									<button class="button context-ring" id="context-usage" type="button" aria-describedby="context-detail"><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="context-ring-track" cx="10" cy="10" r="7.5"/><circle class="context-ring-value" id="context-ring-value" cx="10" cy="10" r="7.5" pathLength="100"/></svg><span id="context-percent"></span></button>
+									<div class="context-detail" id="context-detail" role="tooltip">
+										<div class="context-detail-head"><span>上下文</span><strong id="context-amount"></strong></div>
+										<div class="context-bar" aria-hidden="true"><span id="context-bar-value"></span></div>
+										<p id="context-source"></p>
+									</div>
+								</div>
 								<button class="button model-choice" id="model-picker-open" type="button" popovertarget="model-picker" aria-haspopup="dialog" aria-label="选择模型" disabled><span id="composer-model-icon" hidden></span><span id="model">选择模型</span><span id="composer-effort" hidden></span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></button>
 								<button class="button icon-button send" id="send" type="button" aria-label="提交任务（先选择工作区）" title="提交任务（先选择工作区）" disabled><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button>
 							</div>
 						</div>
 					</div>
 					<p class="sr-only" id="input-hint">Enter 执行右侧操作，Shift + Enter 换行。</p>
-					<p id="context-usage" class="context-usage" role="status" hidden></p>
 					<p id="feedback" class="feedback" role="status"></p>
 					<div class="home-suggestions" id="home-suggestions" role="group" aria-label="任务建议">
 						<button class="button" type="button" data-suggestion="请浏览工作区，简要说明主要目录和文件的用途。"><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg>浏览工作区</button>
@@ -259,7 +266,7 @@
 			<div class="effort-heading">
 				<span id="effort-model-icon"></span>
 				<output id="effort-label" for="effort-range" aria-hidden="true"></output>
-				<button id="effort-reset" class="button quiet" type="button" title="恢复服务默认" aria-label="恢复服务默认"><svg class="icon" aria-hidden="true"><use href="#icon-reset"/></svg></button>
+				<button id="effort-reset" class="button quiet" type="button" title="恢复默认档位" aria-label="恢复默认档位"><svg class="icon" aria-hidden="true"><use href="#icon-reset"/></svg></button>
 			</div>
 			<div class="effort-model">
 				<button id="effort-models" class="button quiet" type="button" aria-controls="model-list-panel"><span id="effort-model-name"></span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></button>

@@ -119,17 +119,18 @@ test("迁移旧 Key，服务与模型各自保存能力，改变地址不复用�
 	assert.equal(findService(edited, b.id).apiKey, "key-beta");
 });
 
-test("锁定的 pi 协议发出各自的实际字段，默认档和不支持模型略去覆写", async (t) => {
+test("锁定的 pi 协议发出各自的实际字段，未选档位落到最左档，不支持模型略去覆写", async (t) => {
 	const deepSeekIds = ["deepseek-v4-pro", "deepseek-flash"];
 	const unknownId = "deepseek-other";
 	const standardId = "gpt-5-mini";
 	const extraSdkModel = "gpt-5.2";
 	const nonReasoningModel = "gpt-4.1-mini";
 	const sonnet = "claude-sonnet-5-5";
+	const omittedOff = "claude-sonnet-5";
 	const fable = "claude-fable-5-1";
 	const remote = await startMockModel({
 		model: deepSeekIds[0],
-		alternatives: [deepSeekIds[1], unknownId, standardId, sonnet, fable, extraSdkModel, nonReasoningModel],
+		alternatives: [deepSeekIds[1], unknownId, standardId, sonnet, omittedOff, fable, extraSdkModel, nonReasoningModel],
 	});
 	t.after(() => remote.close());
 	const context = { messages: [{ role: "user", content: "延续刚才的会话", timestamp: Date.now() }] };
@@ -159,9 +160,9 @@ test("锁定的 pi 协议发出各自的实际字段，默认档和不支持模�
 		assert.equal(terminal?.type, "done");
 		return fields;
 	}
+	const disabled = { thinking: { type: "disabled" } };
 	const cases = [
-		["default", {}],
-		["off", { thinking: { type: "disabled" } }],
+		["off", disabled],
 		["low", { reasoning_effort: "low", thinking: { type: "enabled" } }],
 		["max", { reasoning_effort: "max", thinking: { type: "enabled" } }],
 	];
@@ -172,16 +173,20 @@ test("锁定的 pi 协议发出各自的实际字段，默认档和不支持模�
 		assert.deepEqual(publicService(findService(deep)).available, ["off", ...projected]);
 		// 官方服务可用 /models 声明补齐锁定 SDK 的目录，例如 V4 Pro 的 low。
 		const directCatalog = new Map([[id, ["low", "high", "max"]]]);
+		assert.deepEqual(await run(deep, directCatalog), disabled, `${id} 未选档位`);
 		for (const [effort, expected] of cases) {
 			const fields = await run(setModelEffort(deep, effort, directCatalog), directCatalog);
 			assert.deepEqual(fields, expected, `${id} ${effort}`);
 			t.diagnostic(`${id} ${effort} ${JSON.stringify(fields)}`);
 		}
 
+		// 经兼容网关也用 DeepSeek 的 thinking.type 关闭，其他档位仍走 reasoning_effort。
 		const gateway = updateService(empty, { baseUrl: remote.baseUrl, modelId: id }, safeStorage);
-		assert.deepEqual(publicService(findService(gateway)).available, projected);
-		assert.throws(() => setModelEffort(gateway, "off"), /不支持/);
-		assert.deepEqual(await run(gateway), {});
+		assert.deepEqual(publicService(findService(gateway)).available, ["off", ...projected]);
+		assert.equal(publicService(findService(gateway)).effort, "off");
+		assert.throws(() => setModelEffort(gateway, "default"), /不支持/);
+		assert.deepEqual(await run(gateway), disabled);
+		assert.deepEqual(await run(setModelEffort(gateway, "off")), disabled);
 		assert.deepEqual(await run(setModelEffort(gateway, "max")), { reasoning_effort: "max" });
 		const declared = updateService(
 			gateway,
@@ -190,7 +195,7 @@ test("锁定的 pi 协议发出各自的实际字段，默认档和不支持模�
 		);
 		assert.deepEqual(publicService(findService(declared)).available, ["off", "low"]);
 		assert.deepEqual(await run(setModelEffort(declared, "low")), { reasoning_effort: "low" });
-		assert.deepEqual(await run(setModelEffort(declared, "off")), { reasoning_effort: "none" });
+		assert.deepEqual(await run(setModelEffort(declared, "off")), disabled);
 	}
 	deep = selectModel(deep, unknownId);
 	assert.deepEqual(publicService(findService(deep)).available, []);
@@ -206,7 +211,7 @@ test("锁定的 pi 协议发出各自的实际字段，默认档和不支持模�
 	);
 	assert.deepEqual(await run(setModelEffort(standard, "low")), { reasoning_effort: "low" });
 	assert.deepEqual(await run(setModelEffort(standard, "off")), { reasoning_effort: "none" });
-	assert.deepEqual(await run(standard), {});
+	assert.deepEqual(await run(standard), { reasoning_effort: "none" });
 	const claude = updateService(empty, { baseUrl: remote.baseUrl, modelId: sonnet }, safeStorage);
 	const sonnetLevels = ["low", "medium", "high", "xhigh", "max"];
 	assert.deepEqual(describeEffortPreset(findService(claude), sonnet), { source: "builtin", levels: sonnetLevels });
@@ -216,13 +221,28 @@ test("锁定的 pi 协议发出各自的实际字段，默认档和不支持模�
 	});
 	assert.deepEqual(describeEffortPreset(undefined, "extra/claude-sonnet-5-5"), { source: "default", levels: [] });
 	assert.deepEqual(describeEffortPreset(undefined, "deepseek-flash-preview"), { source: "default", levels: [] });
-	assert.deepEqual(await run(claude), {});
+	// 不能关闭思考的模型默认停在最低档。
+	assert.equal(publicService(findService(claude)).effort, "low");
+	assert.deepEqual(await run(claude), { reasoning_effort: "low" });
 	for (const effort of sonnetLevels) {
 		assert.deepEqual(await run(setModelEffort(claude, effort)), { reasoning_effort: effort });
 	}
 	const declared = new Map([[sonnet, ["low", "medium", "high"]]]);
 	assert.deepEqual(publicService(findService(claude), declared).available, ["low", "medium", "high"]);
 	assert.throws(() => setModelEffort(claude, "max", declared), /不支持/);
+	// pi 支持关闭但没有标准关闭字段的模型，关闭时不带推理字段。
+	const omitted = selectModel(claude, omittedOff);
+	assert.deepEqual(publicService(findService(omitted)).available, [
+		"off",
+		"minimal",
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+		"max",
+	]);
+	assert.deepEqual(await run(omitted), {});
+	assert.deepEqual(await run(setModelEffort(omitted, "low")), { reasoning_effort: "low" });
 	const fableLibrary = selectModel(claude, fable);
 	const fableLevels = ["minimal", ...sonnetLevels];
 	assert.deepEqual(publicService(findService(fableLibrary)).available, fableLevels);
@@ -231,6 +251,7 @@ test("锁定的 pi 协议发出各自的实际字段，默认档和不支持模�
 	}
 	const sdk = selectModel(claude, extraSdkModel);
 	assert.deepEqual(publicService(findService(sdk)).available, ["off", "low", "medium", "high", "xhigh"]);
+	assert.deepEqual(await run(sdk), { reasoning_effort: "none" });
 	assert.deepEqual(await run(setModelEffort(sdk, "xhigh")), { reasoning_effort: "xhigh" });
 	assert.deepEqual(await run(setModelEffort(sdk, "off")), { reasoning_effort: "none" });
 	const nonReasoning = selectModel(sdk, nonReasoningModel);
@@ -322,7 +343,8 @@ test("同一服务重启恢复已保存模型的声明，换 Key 或地址后重
 		const reloaded = await loadModelLibrary(path, safeStorage);
 		assert.deepEqual(publicService(findService(reloaded)).available, []);
 		const rediscovered = rememberModelEffortCatalog(reloaded, id, catalog);
-		assert.equal(runtimeSelection(findService(rediscovered)).reasoning, undefined);
+		// 原凭据验证的档位作废，重新确认后回到最左档。
+		assert.equal(runtimeSelection(findService(rediscovered)).reasoning, "low");
 	}
 	const changedOnDisk = JSON.parse(disk);
 	changedOnDisk.services[0].baseUrl = "http://localhost:4003/v1";

@@ -45,7 +45,26 @@ window.flowerMarkdown = (() => {
 
 	// 解析器全局共用，路径按当前渲染的回复所属会话解析；parse 同步执行，渲染前后切换即可。
 	let resolvePath;
+	let checkPath;
 	const imageFile = /\.(png|jpe?g|jpe|jfif|gif|webp|bmp)$/i;
+
+	/**
+	 * 解析并查询路径的核对结果。没有核对接口时视为已存在，保持旧调用方行为。
+	 * @param {string} text 链接地址或行内代码
+	 * @returns {{state: string, path?: string, candidates?: string[]} | undefined} 不像路径时为 undefined
+	 */
+	function linkPath(text) {
+		const path = resolvePath?.(text);
+		if (!path) return;
+		return checkPath ? checkPath(path) : { state: "file", path };
+	}
+
+	function pathAttributes(found) {
+		const name = escapeText(found.path);
+		// 多个同名文件时点击列出候选，悬停提示同名数量。
+		const title = found.state === "choices" ? `工作区中有 ${found.candidates.length} 个同名文件` : name;
+		return `data-workspace-path="${name}" title="${escapeText(title)}"`;
+	}
 
 	function createParser(marked) {
 		const renderer = {
@@ -62,18 +81,19 @@ window.flowerMarkdown = (() => {
 			},
 			codespan({ text }) {
 				const code = escapeText(text);
-				const path = resolvePath?.(text);
-				if (!path) return `<code>${code}</code>`;
-				const name = escapeText(path);
-				return `<code class="path-ref" data-workspace-path="${name}" title="${name}" role="link" tabindex="0">${code}</code>`;
+				const found = linkPath(text);
+				if (!found || found.state === "missing") return `<code>${code}</code>`;
+				// 核对完成前与普通代码外观一致，宿主确认文件存在后再变成链接。
+				if (found.state === "pending") return `<code data-path-pending="${escapeText(found.path)}">${code}</code>`;
+				return `<code class="path-ref" ${pathAttributes(found)} role="link" tabindex="0">${code}</code>`;
 			},
 			link({ href, raw, tokens }) {
 				const target = safeLink(href);
-				const path = target ? undefined : resolvePath?.(href);
-				if (path) {
-					const name = escapeText(path);
-					return `<a href="#" data-workspace-path="${name}" title="${name}">${this.parser.parseInline(tokens)}</a>`;
-				}
+				const found = target ? undefined : linkPath(href);
+				if (found?.state === "missing") return this.parser.parseInline(tokens);
+				if (found?.state === "pending")
+					return `<span data-path-pending="${escapeText(found.path)}">${this.parser.parseInline(tokens)}</span>`;
+				if (found) return `<a href="#" ${pathAttributes(found)}>${this.parser.parseInline(tokens)}</a>`;
 				if (!target) return escapeText(raw);
 				const url = escapeText(target);
 				// 地址只交给 Host 处理。保留原生链接的键盘激活语义。
@@ -84,11 +104,12 @@ window.flowerMarkdown = (() => {
 				return escaped ? escapeText(text) : false;
 			},
 			code({ text }) {
-				return `<pre tabindex="0" aria-label="代码块"><code>${escapeText(text)}</code></pre>\n`;
+				// 代码块与宽表格直接带上细滚动条样式，悬停显示滑块，流式重渲染时节点保持一致。
+				return `<pre class="soft-scroll" tabindex="0" aria-label="代码块"><code>${escapeText(text)}</code></pre>\n`;
 			},
 			table(token) {
 				const table = marked.Renderer.prototype.table.call(this, token);
-				return `<div class="markdown-table-scroll" tabindex="0" role="region" aria-label="表格">${table}</div>\n`;
+				return `<div class="markdown-table-scroll soft-scroll" tabindex="0" role="region" aria-label="表格">${table}</div>\n`;
 			},
 		};
 		return new marked.Marked({ gfm: true, renderer });
@@ -130,9 +151,10 @@ window.flowerMarkdown = (() => {
 	 * @param {(url: string) => void} openLink 可信链接交互
 	 * @param {object} [paths] 工作区路径交互，只在聊天回复中提供
 	 * @param {(text: string) => string | undefined} paths.resolve 把回复中的路径转成工作区相对路径
+	 * @param {(path: string) => {state: "pending"|"file"|"choices"|"missing", path?: string, candidates?: string[]}} [paths.check] 查询宿主核对结果，不提供时视为文件存在
 	 * @param {(path: string, trigger: HTMLElement) => void} paths.open 在右栏预览
 	 * @param {(path: string, trigger: HTMLElement) => void} paths.menu 打开路径菜单
-	 * @param {(root: HTMLElement) => void} paths.hydrate 为工作区图片填入内容
+	 * @param {(root: HTMLElement, refresh: () => void) => void} paths.hydrate 为工作区图片填入内容、核对待定路径，结果到达后调用 refresh 重新渲染
 	 * @param {(image: HTMLImageElement) => void} paths.openImage 放大查看图片
 	 * @returns {{update: (source: string) => void}} 流式和历史共用的更新接口
 	 */
@@ -147,19 +169,28 @@ window.flowerMarkdown = (() => {
 					const template = document.createElement("template");
 					// 标记由固定的 Marked 渲染器生成，HTML、图片、代码和地址在各自的入口处理。
 					resolvePath = paths?.resolve;
+					checkPath = paths?.check;
 					try {
 						template.innerHTML = parser.parse(source);
 					} finally {
 						resolvePath = undefined;
+						checkPath = undefined;
 					}
 					updateBlocks(root, template.content);
-					paths?.hydrate(root);
+					paths?.hydrate(root, refresh);
 					return;
 				} catch {
 					// 极端文档仍可阅读并复制原文。
 				}
 			}
 			root.textContent = source;
+		};
+		// 路径核对结果到达后按同一原文重新渲染，已缓存的结果在解析时同步生效。
+		const refresh = () => {
+			if (!previous) return;
+			const source = previous;
+			previous = undefined;
+			render(source);
 		};
 
 		const pathTarget = (event) => {
@@ -195,11 +226,7 @@ window.flowerMarkdown = (() => {
 			paths.menu(target.dataset.workspacePath ?? target.dataset.workspaceImage, target);
 		});
 		ready?.then(() => {
-			if (parser && previous) {
-				const source = previous;
-				previous = undefined;
-				render(source);
-			}
+			if (parser) refresh();
 		});
 		return { update: render };
 	}

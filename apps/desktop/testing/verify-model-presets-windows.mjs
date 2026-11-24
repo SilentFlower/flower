@@ -129,7 +129,7 @@ async function closeSettings() {
 	await focusIs("theme-open");
 }
 
-async function send(model, effort, label) {
+async function send(model, effort, label, thinking) {
 	const before = remote.observations.requestFields.length;
 	const prompt = `延续刚才的会话，验证配置 ${label}`;
 	await by("prompt").fill(prompt);
@@ -140,9 +140,10 @@ async function send(model, effort, label) {
 	assert.equal(wire.path, "/compatible/v1/chat/completions");
 	assert.equal(wire.model, model);
 	assert(wire.tokenMatches && !wire.hasAnthropicHeaders);
-	assert(!wire.keys.some((key) => ["thinking", "output_config", "reasoning"].includes(key)));
+	assert(!wire.keys.some((key) => ["output_config", "reasoning"].includes(key)));
 	assert.equal(wire.keys.includes("reasoning_effort"), Boolean(effort));
 	assert.equal(wire.reasoning, effort);
+	assert.equal(wire.thinking, thinking);
 	cases.push({ label, ...wire });
 }
 
@@ -286,7 +287,7 @@ try {
 	await edit(deepseek);
 	await changeMode("推荐");
 	await by("model-recommendation-source").getByText("pi 本地目录", { exact: true }).waitFor();
-	assert.equal(await by("model-recommendation-levels").textContent(), "低 · 高 · 最高");
+	assert.equal(await by("model-recommendation-levels").textContent(), "关闭思考 · 低 · 高 · 最高");
 	await changeMode("手动");
 	await finishEdit();
 	assert.equal((await state()).model, claude);
@@ -315,7 +316,7 @@ try {
 	assert.equal(await page.evaluate(() => window.flowerTheme.saved.accent), "#bf6c35");
 	await manual.focus();
 	await page.keyboard.press("Tab");
-	const off = effortChip("关闭");
+	const off = effortChip("关闭思考");
 	assert(await off.evaluate((chip) => chip.matches(":focus-visible") && getComputedStyle(chip).outlineWidth === "2px"));
 	await page.keyboard.press("Space");
 	assert.equal(await off.getAttribute("aria-pressed"), "true");
@@ -356,12 +357,13 @@ try {
 	await changeMode("推荐");
 	await finishEdit();
 	assert(await editButton(deepseek).evaluate((button) => button === document.activeElement));
-	assert.deepEqual((await state()).modelSettings.available, ["low", "high", "max"]);
+	assert.deepEqual((await state()).modelSettings.available, ["off", "low", "high", "max"]);
 	await closeSettings();
 	await setEffort("max");
 	await send(deepseek, "max", "DeepSeek 内置最高");
-	await setEffort("default");
-	await send(deepseek, undefined, "DeepSeek 服务默认");
+	await assert.rejects(setEffort("default"), /不支持/);
+	await setEffort("off");
+	await send(deepseek, undefined, "DeepSeek 经网关关闭思考", "disabled");
 
 	declares.set(deepseek, ["low"]);
 	await openOverview();
@@ -369,8 +371,8 @@ try {
 	await by("settings-discover").click();
 	await by("settings-models").getByRole("button", { name: deepseek, exact: true }).click();
 	await by("model-recommendation-source").getByText("服务模型列表", { exact: true }).waitFor();
-	assert.equal(await by("model-recommendation-levels").textContent(), "低");
-	assert.deepEqual((await state()).modelSettings.available, ["low"]);
+	assert.equal(await by("model-recommendation-levels").textContent(), "关闭思考 · 低");
+	assert.deepEqual((await state()).modelSettings.available, ["off", "low"]);
 	await by("close-settings").click();
 	await closeSettings();
 	await setEffort("low");
@@ -383,8 +385,8 @@ try {
 	await finishEdit();
 	await closeSettings();
 	assert.deepEqual((await state()).modelSettings.available, ["low", "medium", "high", "xhigh", "max"]);
-	await setEffort("default");
-	await send(claude, undefined, "Claude 服务默认");
+	await setEffort("low");
+	await send(claude, "low", "Claude 不可关闭时的最低档");
 	await setEffort("xhigh");
 	await send(claude, "xhigh", "Claude 目录很高");
 	await setEffort("max");
@@ -411,7 +413,7 @@ try {
 	await send(claude, "max", "重启后保留 Claude 服务声明");
 	await openOverview();
 	await chooseModel(deepseek);
-	assert.deepEqual((await state()).modelSettings.available, ["low"]);
+	assert.deepEqual((await state()).modelSettings.available, ["off", "low"]);
 	assert.equal((await state()).modelSettings.effort, "low");
 	await edit(deepseek);
 	await changeMode("服务默认");
@@ -427,7 +429,7 @@ try {
 	await by("settings-add-model").click();
 	await by("model-id").fill(sdkKnown);
 	await by("model-recommendation-source").getByText("pi 本地目录", { exact: true }).waitFor();
-	assert.equal(await by("model-recommendation-levels").textContent(), "关闭 · 低 · 中 · 高 · 很高");
+	assert.equal(await by("model-recommendation-levels").textContent(), "关闭思考 · 低 · 中 · 高 · 很高");
 	await finishEdit();
 	await closeSettings();
 	await setEffort("xhigh");

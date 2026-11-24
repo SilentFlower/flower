@@ -60,8 +60,7 @@ let capabilityRequest = 0;
 let recommendedLevels = [];
 let manualLevelsInitialized = false;
 const effortNames = {
-	default: "服务默认",
-	off: "关闭",
+	off: "关闭思考",
 	minimal: "极低",
 	low: "低",
 	medium: "中",
@@ -216,6 +215,65 @@ function hydrateReplyImages(root) {
 		else void entry.ready.then(show);
 	}
 }
+// 回复中的路径按会话缓存宿主的核对结果。工具执行后可能新建文件，届时丢弃「不存在」「多个同名」与仍在核对中的结论。
+const replyPaths = new Map();
+const replyPathKey = (owner, path) => JSON.stringify([owner, path]);
+function checkReplyPath(path) {
+	return replyPaths.get(replyPathKey(session, path))?.result ?? { state: "pending", path };
+}
+function checkReplyPaths(root, refresh) {
+	const owner = session;
+	const waiting = new Set();
+	const asking = [];
+	for (const node of root.querySelectorAll("[data-path-pending]")) {
+		const path = node.dataset.pathPending;
+		let entry = replyPaths.get(replyPathKey(owner, path));
+		if (!entry) {
+			entry = { owner };
+			replyPaths.set(replyPathKey(owner, path), entry);
+			asking.push([path, entry]);
+		}
+		if (!entry.result) waiting.add(entry);
+	}
+	// 宿主每次最多核对 64 项，同一次渲染的路径合并请求。
+	for (let start = 0; start < asking.length; start += 64) {
+		const batch = asking.slice(start, start + 64);
+		const ready = ui
+			.resolveReplyPaths(
+				owner,
+				batch.map(([path]) => path),
+			)
+			.then(
+				(results) => {
+					for (const [index, [path, entry]] of batch.entries()) {
+						const found = results[index] ?? {};
+						entry.result = found.path
+							? { state: "file", path: found.path }
+							: found.candidates
+								? { state: "choices", path, candidates: found.candidates }
+								: { state: "missing" };
+					}
+				},
+				() => {
+					// 切换会话等原因读取失败时不留结论，下次渲染重新核对，也不触发重渲染以免反复请求。
+					for (const [path, entry] of batch) {
+						if (replyPaths.get(replyPathKey(owner, path)) === entry) replyPaths.delete(replyPathKey(owner, path));
+					}
+				},
+			);
+		for (const [, entry] of batch) entry.ready = ready;
+	}
+	if (!waiting.size) return;
+	void Promise.all([...waiting].map((entry) => entry.ready)).then(() => {
+		if (root.isConnected && owner === session && [...waiting].every((entry) => entry.result)) refresh();
+	});
+}
+function forgetMissingPaths(owner) {
+	for (const [key, entry] of replyPaths) {
+		// 在途核对反映的是工具执行前的文件状态，一并移出缓存；迟到结果只落到旧条目上，重渲染时重新核对。
+		if (entry.owner === owner && entry.result?.state !== "file") replyPaths.delete(key);
+	}
+}
 function releaseReplyImages(owner) {
 	for (const [key, entry] of replyImages) {
 		if (entry.owner !== owner) continue;
@@ -230,12 +288,20 @@ const thread = agentUI.thread(
 	{
 		paths: {
 			resolve: (text) => flowerMarkdown.workspacePath(state?.sessions.find((entry) => entry.id === session)?.path, text),
-			open: (path, trigger) => workspacePanel.preview(path, trigger),
-			menu: (path, trigger) =>
+			check: checkReplyPath,
+			open: (path, trigger) => workspacePanel.preview(path, trigger, checkReplyPath(path).candidates),
+			menu(path, trigger) {
+				// 多个同名文件没有单一的本机路径，右键同样列出候选。
+				const { candidates } = checkReplyPath(path);
+				if (candidates) return workspacePanel.preview(path, trigger, candidates);
 				action(async () => {
 					if ((await ui.showPathMenu(session, path, true)) === "preview") workspacePanel.preview(path, trigger);
-				})(),
-			hydrate: hydrateReplyImages,
+				})();
+			},
+			hydrate(root, refresh) {
+				hydrateReplyImages(root);
+				checkReplyPaths(root, refresh);
+			},
 			openImage(image) {
 				const entry = replyImages.get(JSON.stringify([session, image.dataset.workspaceImage]));
 				if (entry?.blob) void window.flowerImages.open(image.alt, async () => entry.blob, image);
@@ -383,14 +449,17 @@ function renderRequests(follow = false) {
 		streamFrame = 0;
 	}
 	const timeline = timelines.get(session);
-	const home = !session || (timeline?.loaded && !timeline.requests.size);
-	workbench.dataset.home = String(Boolean(home));
+	const home = Boolean(!session || (timeline?.loaded && !timeline.requests.size));
+	// 进入或离开空白页（如新会话发出首个请求）时同步上下文圆环。
+	const homeChanged = workbench.dataset.home !== String(home);
+	workbench.dataset.home = String(home);
 	by("empty").hidden = !home;
 	by("title").hidden = !session;
 	by("home-suggestions").hidden = !home;
 	by("thread-scroll").hidden = home;
 	by("history-status").hidden = !session || timeline?.loaded || timeline?.failed || Boolean(timeline?.requests.size);
 	thread.update(timeline?.requests.values() ?? [], follow);
+	if (homeChanged) void refreshContextUsage(true);
 }
 
 function matchingSessions(query) {
@@ -729,19 +798,45 @@ async function reloadHistory(id) {
 	}
 }
 
+/** 紧凑显示 token 数，如 87.5K、1M。@param {number} value token 数 @returns {string} 紧凑文本 */
+function compactTokens(value) {
+	if (value < 1000) return String(value);
+	const [size, unit] = value < 1_000_000 ? [1000, "K"] : [1_000_000, "M"];
+	return `${Number((value / size).toFixed(1))}${unit}`;
+}
+
 function showContextUsage(usage) {
-	const status = by("context-usage");
+	const meter = by("context-meter");
 	const configured = state?.modelSettings?.context;
-	status.hidden = !session || !model || !configured;
-	if (status.hidden) return;
+	// 空白新会话只有系统提示与工具声明的占用，发出首个请求后再显示。
+	meter.hidden = !session || !model || !configured || workbench.dataset.home === "true";
+	if (meter.hidden) return;
 	const number = (value) => value.toLocaleString("zh-CN");
 	const limit = usage?.limit ?? configured.limit;
-	status.textContent = usage
-		? `上下文约 ${number(usage.tokens)} / ${number(limit)} tokens`
-		: `上下文上限 ${number(limit)} tokens`;
-	const source = { custom: "手动设置", catalog: "pi 模型目录", fallback: "未知型号的本机兜底" };
-	status.title = `会话占用为估算。窗口来源：${source[configured.source] ?? "当前配置"}。`;
-	if (configured.source === "fallback") status.textContent += " · 兜底窗口";
+	const ratio = usage ? Math.min(1, usage.tokens / limit) : 0;
+	const percent = ratio * 100;
+	const shortPercent = !usage ? "" : percent > 0 && percent < 1 ? "<1%" : `${Math.round(percent)}%`;
+	// 70% 起提醒，90% 时已接近运行时的自动压缩。
+	meter.dataset.level = ratio >= 0.9 ? "danger" : ratio >= 0.7 ? "warn" : "normal";
+	by("context-ring-value").style.strokeDasharray = `${percent} 100`;
+	by("context-bar-value").style.width = `${percent}%`;
+	by("context-percent").textContent = shortPercent;
+	by("context-amount").textContent = usage
+		? `${compactTokens(usage.tokens)} / ${compactTokens(limit)} · ${Number(percent.toFixed(1))}%`
+		: `上限 ${compactTokens(limit)}`;
+	// 窗口来源对使用者没有意义，只在未识别型号使用兜底窗口时提示上限可能不准。
+	by("context-source").textContent = [
+		usage ? "估算值" : "占用待估算",
+		configured.source === "fallback" ? "未识别型号，上限为兜底值" : "",
+	]
+		.filter(Boolean)
+		.join(" · ");
+	by("context-usage").setAttribute(
+		"aria-label",
+		usage
+			? `上下文已用约 ${shortPercent}，${number(usage.tokens)} / ${number(limit)} tokens`
+			: `上下文上限 ${number(limit)} tokens`,
+	);
 }
 
 async function refreshContextUsage(reset = false) {
@@ -803,13 +898,15 @@ function update(next) {
 	by("model").textContent = modelName || "选择模型";
 	const effort = next.modelSettings?.available.length ? effortNames[next.modelSettings.effort] : "";
 	const modelLabel = modelName ? `选择模型：${modelName}${effort ? `，推理强度：${effort}` : ""}` : "选择模型";
+	// 关闭思考时按钮只显示模型名，档位文字只在开启思考时出现。
+	const effortText = next.modelSettings?.effort === "off" ? "" : effort;
 	by("model-picker-open").title = modelLabel;
 	by("model-picker-open").setAttribute("aria-label", modelLabel);
 	const icon = by("composer-model-icon");
 	icon.replaceChildren(modelIcon(modelName));
 	icon.hidden = !modelName;
-	by("composer-effort").textContent = effort;
-	by("composer-effort").hidden = !effort;
+	by("composer-effort").textContent = effortText;
+	by("composer-effort").hidden = !effortText;
 	by("effort-model-name").textContent = modelName ?? "";
 	by("effort-model-icon").replaceChildren(modelIcon(modelName));
 	if (!effortSaving) syncEffort();
@@ -974,9 +1071,11 @@ function receive(event) {
 		case "tool_result": {
 			const step = record.steps.find(({ toolCallId, endedAt }) => toolCallId === event.toolCallId && !endedAt);
 			if (step) Object.assign(step, { endedAt: event.at, isError: event.isError });
+			forgetMissingPaths(sessionId);
 			break;
 		}
 		case "terminal":
+			forgetMissingPaths(sessionId);
 			timeline.active.delete(requestId);
 			record.status = event.status;
 			record.failure = event.failure?.message;
@@ -1017,13 +1116,13 @@ function modelIcon(id = "") {
 }
 
 function effortOptions() {
-	return ["default", ...(state?.modelSettings?.available ?? [])];
+	return state?.modelSettings?.available ?? [];
 }
 
 function paintEffort(hop = false) {
 	const range = by("effort-range");
 	const options = effortOptions();
-	const value = effortNames[options[Number(range.value)]] ?? effortNames.default;
+	const value = effortNames[options[Number(range.value)]] ?? "";
 	const position = Number(range.value) / Math.max(1, Number(range.max));
 	range.setAttribute("aria-valuetext", value);
 	by("effort-track").style.setProperty("--effort", String(position));
@@ -1050,7 +1149,7 @@ function paintEffort(hop = false) {
 function syncEffort() {
 	const range = by("effort-range");
 	const options = effortOptions();
-	const max = String(options.length - 1);
+	const max = String(Math.max(0, options.length - 1));
 	if (range.max !== max) {
 		range.max = max;
 		by("effort-stops").replaceChildren(...options.map(() => flowerUI.element("span")));
@@ -1102,7 +1201,7 @@ by("effort-range").addEventListener("change", (event) => void saveEffort(effortO
 by("effort-reset").addEventListener("click", () => {
 	by("effort-range").value = "0";
 	paintEffort(true);
-	void saveEffort("default");
+	void saveEffort(effortOptions()[0]);
 	by("effort-range").focus();
 });
 by("effort-models").addEventListener("click", () => showPickerPage(false, true));
@@ -1237,7 +1336,6 @@ function modelError(error, fallback) {
 const modelPolicies = [...by("model-capability").querySelectorAll("input")];
 const modelLevels = new Map();
 for (const [level, description] of Object.entries(effortNames)) {
-	if (level === "default") continue;
 	const chip = flowerUI.button(
 		description,
 		() => {

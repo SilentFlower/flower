@@ -154,6 +154,21 @@
 	height: 15px;
 }
 
+/* 同名候选：直接上级目录为主文字，其余上级路径以小字补充在右侧。 */
+.panel-choice > span {
+	flex: 0 1 auto;
+}
+.panel-choice-parent {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--muted);
+	font-size: 11px;
+	text-align: end;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .panel-file-row .panel-enter {
 	width: 11px;
 	height: 11px;

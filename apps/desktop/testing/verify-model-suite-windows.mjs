@@ -87,6 +87,13 @@ async function chooseOption(control, option) {
 	await by(`${control}-options`).getByRole("option", { name: option, exact: true }).click();
 }
 
+// 提交会清空草稿附件；核对「切换档位或服务保留草稿」前先重新附上 notes.txt。
+async function attachNotes() {
+	await by("composer-add").click();
+	await by("file").click();
+	await page.waitForFunction(() => document.getElementById("attachment").textContent === "notes.txt");
+}
+
 async function openPicker() {
 	await by("model-picker-open").click();
 	await by("model-picker").waitFor();
@@ -119,19 +126,17 @@ try {
 	const legacy = await waitState((snapshot) => snapshot.model === modelId);
 	assert.equal(legacy.modelServices.length, 1);
 	assert(legacy.modelSettings.hasKey);
-	assert.deepEqual(legacy.modelSettings.available, ["low", "high", "max"]);
+	assert.deepEqual(legacy.modelSettings.available, ["off", "low", "high", "max"]);
 	const aId = legacy.modelSettings.id;
 	await page.evaluate(() => window.flower.chooseWorkspace());
-	await by("composer-add").click();
-	await by("file").click();
-	await page.waitForFunction(() => document.getElementById("attachment").textContent === "notes.txt");
+	await attachNotes();
 	await completed("请读取 notes.txt，核对旧服务的 Key");
 	assert.deepEqual(a.observations.attempts.at(-1), {
 		model: modelId,
 		hasAuthorization: true,
 		tokenMatches: true,
 		reasoning: null,
-		thinking: null,
+		thinking: "disabled",
 	});
 	await openSettings();
 	assert(await by("model-overview").isVisible());
@@ -153,14 +158,16 @@ try {
 	await by("settings-discover").click();
 	await by("settings-models").getByRole("button", { name: "basic-a", exact: true }).waitFor();
 	await by("model-id").fill(modelId);
-	await by("model-recommendation-levels").getByText("低 · 高 · 最高", { exact: true }).waitFor();
+	await by("model-recommendation-levels").getByText("关闭思考 · 低 · 高 · 最高", { exact: true }).waitFor();
 	await by("model-capability").getByText("手动", { exact: true }).click();
 	await by("model-levels").getByRole("button", { name: "中", exact: true }).click();
 	await by("model-levels").getByRole("button", { name: "最高", exact: true }).click();
 	await saveSettings();
-	assert.deepEqual((await state()).modelSettings.available, ["low", "medium", "high"]);
-	results.push("真实 Windows DPAPI 旧 Key 可迁移，内置能力的服务默认档不发送推理字段");
+	// 推荐档位含关闭思考，手动策略从推荐初始化，因此保留关闭思考并以它为默认档。
+	assert.deepEqual((await state()).modelSettings.available, ["off", "low", "medium", "high"]);
+	results.push("真实 Windows DPAPI 旧 Key 可迁移，旧设置未选档位时按关闭思考发送 thinking.type=disabled");
 
+	await attachNotes();
 	await by("prompt").fill("拖动时保留的草稿");
 	await page.emulateMedia({ reducedMotion: "no-preference", forcedColors: "none" });
 	await openPicker();
@@ -196,7 +203,7 @@ try {
 				.evaluate((image) => image.complete && image.naturalWidth > 0),
 		);
 	}
-	assert.equal(await range.getAttribute("aria-valuetext"), "服务默认");
+	assert.equal(await range.getAttribute("aria-valuetext"), "关闭思考");
 	assert.equal(await range.getAttribute("max"), "3");
 	await range.evaluate((control) =>
 		control.addEventListener(
@@ -259,12 +266,13 @@ try {
 
 	await openPicker();
 	await by("effort-reset").click();
-	await waitState(({ modelSettings }) => modelSettings.effort === "default");
+	await waitState(({ modelSettings }) => modelSettings.effort === "off");
 	assert(await petal.isHidden());
 	await page.keyboard.press("Escape");
 	await by("model-picker").waitFor({ state: "hidden" });
 	await completed("延续刚才的会话：重置强度");
 	assert.equal(a.observations.attempts.at(-1).reasoning, null);
+	assert.equal(a.observations.attempts.at(-1).thinking, "disabled");
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(660, 615));
 	await page.waitForFunction(() => innerWidth === 660);
@@ -300,7 +308,7 @@ try {
 	await by("settings-close-dialog").click();
 	await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1282, 801));
 	await page.waitForFunction(() => innerWidth === 1282);
-	results.push("默认重置不发送覆写参数，660 像素与减弱动效模式仍可键盘操作");
+	results.push("重置回到关闭思考并发送 thinking.type=disabled，660 像素与减弱动效模式仍可键盘操作");
 
 	await openSettings();
 	await chooseOption("settings-service", "添加服务");
@@ -373,6 +381,7 @@ try {
 	await boot();
 	assert.equal((await state()).model, "manual-b");
 	assert.equal((await state()).modelSettings.id, serviceB.id);
+	await attachNotes();
 	await by("prompt").fill("跨服务切换保留的草稿");
 	await openPicker();
 	await chooseOption("picker-service", "服务甲");

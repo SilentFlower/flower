@@ -56,9 +56,10 @@ import {
 	previewWorkspaceFile,
 	reportFiles,
 	resolveArtifact,
+	resolveMentionedPaths,
 	workspaceEntryPath,
 } from "./workspace.mjs";
-import { gitChanges, gitDifference } from "./workspace-git.mjs";
+import { gitChanges, gitDifference, trackedFiles } from "./workspace-git.mjs";
 
 const page = new URL("./index.html", import.meta.url);
 const uid = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/;
@@ -852,6 +853,11 @@ export function launchWorkbench() {
 				Menu.buildFromTemplate(items).popup({ window, callback: () => resolve("") });
 			});
 		}),
+	);
+	handle("resolve-reply-paths", (id, paths) =>
+		readSelectedWorkspace(id, (workspace, signal) =>
+			resolveMentionedPaths(workspace, paths, signal, () => trackedFiles(workspace, signal)),
+		),
 	);
 	handle("preview-workspace-file", (id, path) =>
 		readSelectedWorkspace(id, async (workspace, signal) => ({

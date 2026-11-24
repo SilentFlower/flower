@@ -20,9 +20,10 @@ import {
 	previewWorkspaceFile,
 	readAttachmentEvidence,
 	resolveArtifact,
+	resolveMentionedPaths,
 	workspaceTools,
 } from "../workbench/workspace.mjs";
-import { gitChanges, gitDifference } from "../workbench/workspace-git.mjs";
+import { gitChanges, gitDifference, trackedFiles } from "../workbench/workspace-git.mjs";
 
 async function temporaryDirectory(t) {
 	const directory = await mkdtemp(join(tmpdir(), "flower-workspace-panel-"));
@@ -677,7 +678,15 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 	// 路径菜单只接受当前会话工作区内已有的条目。
 	await assert.rejects(api.showPathMenu(first, "note.md", true), /只能读取当前会话的工作区/);
 	await assert.rejects(api.showPathMenu(second, "../first/note.md", false), /工作区路径无效/);
-	await assert.rejects(api.showPathMenu(second, "missing.md", false), /ENOENT|不存在/);
+	await assert.rejects(api.showPathMenu(second, "missing.md", false), /文件不存在或已被移动/);
+	// 回复路径核对同样只读当前会话工作区，结果与输入一一对应。
+	await assert.rejects(api.resolveReplyPaths(first, ["note.md"]), /只能读取当前会话的工作区/);
+	assert.deepEqual(await api.resolveReplyPaths(second, ["note.md", "missing.md", "../note.md"]), [
+		{ path: "note.md" },
+		{},
+		{},
+	]);
+	await assert.rejects(api.resolveReplyPaths(second, "note.md"), /路径列表无效/);
 	await assert.rejects(api.referenceFile(first, "note.md"), /会话已切换/);
 	await assert.rejects(api.referenceFile(second, "../note.md"), /工作区/);
 	await api.removeAttachment(second, "file:note.md");
@@ -772,4 +781,60 @@ test("Git 子目录仅显示授权范围内的暂存、未暂存和未跟踪文�
 	assert.equal((await gitDifference(workspace, "草稿.txt", "working")).preview.text, "尚未暂存");
 	await assert.rejects(gitDifference(workspace, "../其他工作区.txt", "staged"), /更新/);
 	await assert.rejects(gitChanges(workspace, AbortSignal.abort()));
+});
+
+test("回复中的文件名先核对根目录，再按名查找唯一或多个同名文件", async (t) => {
+	const root = await temporaryDirectory(t);
+	for (const directory of ["报告", "任务/甲", "任务/乙", ".隐藏", "node_modules/包"])
+		await mkdir(join(root, directory), { recursive: true });
+	await writeFile(join(root, "根.md"), "根");
+	await writeFile(join(root, "报告", "汇总.xlsx"), "表");
+	await writeFile(join(root, "任务", "甲", "验收.md"), "甲");
+	await writeFile(join(root, "任务", "乙", "验收.md"), "乙");
+	await writeFile(join(root, ".隐藏", "汇总.xlsx"), "隐藏");
+	await writeFile(join(root, "node_modules", "包", "说明.md"), "依赖");
+	const workspace = await approveWorkspace(root);
+	// 非 Git 目录遍历可见条目，跳过隐藏目录与 node_modules。
+	assert.deepEqual(
+		await resolveMentionedPaths(workspace, [
+			"根.md",
+			"汇总.xlsx",
+			"验收.md",
+			"乙/验收.md",
+			"说明.md",
+			"缺失.md",
+			"../根.md",
+		]),
+		[
+			{ path: "根.md" },
+			{ path: "报告/汇总.xlsx" },
+			{ candidates: ["任务/甲/验收.md", "任务/乙/验收.md"] },
+			{ path: "任务/乙/验收.md" },
+			{},
+			{},
+			{},
+		],
+	);
+	await assert.rejects(resolveMentionedPaths(workspace, Array(65).fill("根.md")), /路径列表无效/);
+	await assert.rejects(resolveMentionedPaths(workspace, ["缺失.md"], AbortSignal.abort()));
+	await assert.rejects(previewWorkspaceFile(workspace, "缺失.md"), /^Error: 文件不存在或已被移动$/);
+
+	// Git 仓库取已跟踪与未忽略的文件，可找到隐藏目录中的文件，忽略的文件不参与。
+	const git = (...args) => execFileSync("git", ["-C", root, ...args], { stdio: "pipe" });
+	git("init", "-q", "-b", "main");
+	await writeFile(join(root, ".gitignore"), "报告/\nnode_modules/\n");
+	const listed = await trackedFiles(workspace);
+	assert(listed.includes(".隐藏/汇总.xlsx") && !listed.includes("报告/汇总.xlsx"));
+	const fromGit = () => trackedFiles(workspace);
+	assert.deepEqual(await resolveMentionedPaths(workspace, ["汇总.xlsx", "验收.md"], undefined, fromGit), [
+		{ path: ".隐藏/汇总.xlsx" },
+		{ candidates: ["任务/甲/验收.md", "任务/乙/验收.md"] },
+	]);
+	// 清单来源失败时退回遍历。
+	assert.deepEqual(
+		await resolveMentionedPaths(workspace, ["汇总.xlsx"], undefined, async () => {
+			throw new Error("Git 读取失败");
+		}),
+		[{ path: "报告/汇总.xlsx" }],
+	);
 });

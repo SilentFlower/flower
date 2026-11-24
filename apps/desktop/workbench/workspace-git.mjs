@@ -58,6 +58,15 @@ async function repository(workspace, signal) {
 	return run;
 }
 
+/** 列出工作区内已跟踪与未被忽略的文件，供回复中的文件名查找使用。
+ * @param workspace 工作区身份 @param signal 取消读取信号 @returns 以 / 分隔的相对路径，不在 Git 仓库中时为 null
+ */
+export async function trackedFiles(workspace, signal) {
+	const run = await repository(workspace, signal);
+	const output = await run(["ls-files", "--cached", "--others", "--exclude-standard", "-z"]);
+	return output === null ? null : output.split("\0").filter(Boolean);
+}
+
 /** 查看当前已授权目录中的工作区和暂存区变更。
  * @param workspace 工作区身份 @param signal 取消读取信号 @returns 分支名及按来源分开的文件
  */

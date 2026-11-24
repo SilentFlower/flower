@@ -25,6 +25,10 @@ const attachmentImageLimit = 4 * 1024 * 1024;
 const attachmentImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 const textLimit = 64 * 1024;
 const directoryLimit = 160;
+const mentionLimit = 64;
+const candidateLimit = 20;
+const walkLimit = 20000;
+const walkDepth = 12;
 const outputs = /^Flower-分析-[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}\/(分析报告\.md|汇总\.xlsx|核对报告\.md)$/i;
 /** 分析工具固定生成的文件，供审批与写入共用。 */
 export const analysisFiles = Object.freeze(["分析报告.md", "汇总.xlsx"]);
@@ -206,7 +210,11 @@ function relativeParts(path) {
 async function locate(workspace, path, directory = false) {
 	const root = await checkRoot(workspace);
 	const chosen = path === "." && directory === true ? root : resolve(root, ...relativeParts(path));
-	const actual = await realpath(chosen);
+	const actual = await realpath(chosen).catch((error) => {
+		// 不把 ENOENT 与本机绝对路径原样交给界面。
+		if (error.code === "ENOENT" || error.code === "ENOTDIR") throw new Error("文件不存在或已被移动");
+		throw error;
+	});
 	if (!same(actual, chosen) || !(isChild(root, actual) || (directory === true && same(root, actual)))) {
 		throw new Error("拒绝访问工作区外的文件及链接");
 	}
@@ -215,6 +223,94 @@ async function locate(workspace, path, directory = false) {
 		directory === "any" ? info.isDirectory() || info.isFile() : directory ? info.isDirectory() : info.isFile();
 	if (!kind || info.isSymbolicLink()) throw new Error("预期的文件或目录不存在");
 	return { actual, info };
+}
+
+const isFile = (workspace, path) =>
+	locate(workspace, path).then(
+		() => true,
+		() => false,
+	);
+
+async function walkFiles(workspace, signal) {
+	const root = await checkRoot(workspace);
+	const files = [];
+	const queue = [[root, ""]];
+	let seen = 0;
+	// 广度优先，先列出靠近根目录的文件；与文件面板一样跳过隐藏与链接条目，并限制总量和深度。
+	while (queue.length && seen < walkLimit) {
+		const [directory, prefix] = queue.shift();
+		let entries;
+		try {
+			entries = await opendir(directory);
+		} catch {
+			continue;
+		}
+		for await (const item of entries) {
+			signal?.throwIfAborted();
+			if (++seen > walkLimit) break;
+			if (!visibleEntry(item) || item.name === "node_modules") continue;
+			const path = prefix ? `${prefix}/${item.name}` : item.name;
+			if (item.isFile()) files.push(path);
+			else if (path.split("/").length < walkDepth) queue.push([join(directory, item.name), path]);
+		}
+	}
+	return files;
+}
+
+async function workspaceFiles(workspace, signal, listFiles) {
+	try {
+		const listed = await listFiles?.();
+		if (listed) return listed;
+	} catch {
+		signal?.throwIfAborted();
+		// Git 不可用或清单过大时退回遍历可见目录。
+	}
+	return walkFiles(workspace, signal);
+}
+
+/**
+ * 核对回复中提到的路径。根下不存在时按「整段路径为结尾」在工作区文件中查找同名文件。
+ * @param workspace 当前会话已批准的工作区
+ * @param paths 渲染层解析出的相对路径，最多 64 项
+ * @param signal 会话切换时取消
+ * @param listFiles 可选的文件清单来源（如 Git 跟踪与未忽略文件），返回 null 时遍历可见目录
+ * @returns 与输入一一对应：{ path } 为实际文件，{ candidates } 为多个同名文件，{} 为不存在
+ */
+export async function resolveMentionedPaths(workspace, paths, signal, listFiles) {
+	if (!Array.isArray(paths) || paths.length > mentionLimit || paths.some((path) => typeof path !== "string"))
+		throw new Error("路径列表无效");
+	// Windows 本机目录不区分大小写；WSL 共享目录仍按 Linux 规则区分。
+	const fold = process.platform === "win32" && !wslKey(workspace.root);
+	const key = (value) => (fold ? value.toLowerCase() : value);
+	let files;
+	const results = [];
+	for (const path of paths) {
+		signal?.throwIfAborted();
+		let parts;
+		try {
+			parts = relativeParts(path);
+		} catch {
+			results.push({});
+			continue;
+		}
+		const name = parts.join("/");
+		if (await isFile(workspace, name)) {
+			results.push({ path: name });
+			continue;
+		}
+		files ??= await workspaceFiles(workspace, signal, listFiles);
+		const suffix = key(`/${name}`);
+		const matches = files
+			.filter((file) => key(`/${file}`).endsWith(suffix))
+			.sort((left, right) => left.length - right.length || left.localeCompare(right, "zh-CN"));
+		const found = [];
+		for (const file of matches) {
+			if (found.length >= candidateLimit) break;
+			if (await isFile(workspace, file)) found.push(file);
+		}
+		results.push(found.length === 1 ? { path: found[0] } : found.length ? { candidates: found } : {});
+	}
+	return results;
 }
 
 /** 校验工作区内已有文件或目录，返回实际路径，供系统文件管理器定位与复制路径。

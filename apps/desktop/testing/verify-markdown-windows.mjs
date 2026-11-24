@@ -262,7 +262,9 @@ try {
 		await page.evaluate((failure) => {
 			const root = document.createElement("div");
 			const scroller = document.createElement("div");
-			window.agentUI.thread(root, scroller, {}).update([{ requestId: "验证", status: "failed", failure }]);
+			// 第一档起 thread 需要「回到底部」按钮，这里只核对失败说明，传入临时按钮即可。
+			const bottom = document.createElement("button");
+			window.agentUI.thread(root, scroller, {}, bottom).update([{ requestId: "验证", status: "failed", failure }]);
 			const output = root.querySelector(".message-error");
 			return { text: output.textContent, childElements: output.childElementCount };
 		}, errorText),
@@ -290,15 +292,22 @@ try {
 	await page.waitForFunction(() => innerWidth === 660 && innerHeight === 710);
 	const scroll = await assistant().evaluate((node) => {
 		const sizes = (element) => [element.clientWidth, element.scrollWidth];
+		const bar = (element) => [element.classList.contains("soft-scroll"), getComputedStyle(element).scrollbarWidth];
 		return {
 			code: sizes(node.querySelector("pre")),
 			table: sizes(node.querySelector(".markdown-table-scroll")),
 			thread: sizes(document.getElementById("thread-scroll")),
+			bars: [bar(node.querySelector("pre")), bar(node.querySelector(".markdown-table-scroll"))],
 		};
 	});
+	// 代码块保持不换行并横向滚动；表格单元格随宽度换行，长文本不再撑出横向滚动。
 	assert(scroll.code[1] > scroll.code[0]);
-	assert(scroll.table[1] > scroll.table[0]);
+	assert(scroll.table[1] <= scroll.table[0]);
 	assert(scroll.thread[1] <= scroll.thread[0]);
+	assert.deepEqual(scroll.bars, [
+		[true, "auto"],
+		[true, "auto"],
+	]);
 	await by("thread-scroll").evaluate((pane) => {
 		const code = pane.querySelector(".markdown-reply pre");
 		pane.scrollTop += code.getBoundingClientRect().top - pane.getBoundingClientRect().top - 85;

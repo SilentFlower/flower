@@ -6,7 +6,7 @@ import * as marked from "marked";
 
 const source = readFileSync(new URL("../workbench/ui/markdown.js", import.meta.url), "utf8");
 
-function render(markdown, workspace) {
+function render(markdown, workspace, check) {
 	const window = { marked };
 	let html;
 	const document = {
@@ -23,7 +23,10 @@ function render(markdown, workspace) {
 	const root = { addEventListener() {} };
 	const paths = workspace && {
 		resolve: (text) => window.flowerMarkdown.workspacePath(workspace, text),
-		hydrate() {},
+		check,
+		hydrate(_root, refresh) {
+			assert.equal(typeof refresh, "function");
+		},
 	};
 	window.flowerMarkdown.view(root, () => assert.fail("渲染不得打开链接"), paths).update(markdown);
 	return html;
@@ -42,8 +45,8 @@ test("渲染中文强调、嵌套列表、引用、代码和 GFM 表格", () => 
 	assert.match(html, /<h1>你好<\/h1>/);
 	assert.match(html, /<ul>\s*<li><strong>查看工作区<\/strong>：列出目录\s*<ul>\s*<li><em>只读<\/em>/);
 	assert.match(html, /<blockquote>\s*<p>使用 <code>notes\.txt<\/code>/);
-	assert.match(html, /<pre[^>]*><code>&lt;代码&gt;&amp;<\/code><\/pre>/);
-	assert.match(html, /<div class="markdown-table-scroll"[^>]*><table>/);
+	assert.match(html, /<pre class="soft-scroll"[^>]*><code>&lt;代码&gt;&amp;<\/code><\/pre>/);
+	assert.match(html, /<div class="markdown-table-scroll soft-scroll"[^>]*><table>/);
 	assert.match(render("首段\n\n等待 **半个"), /<p>等待 \*\*半个<\/p>/);
 	assert.match(render("首段\n\n等待 **半个**"), /<strong>半个<\/strong>/);
 });
@@ -113,4 +116,30 @@ test("工作区路径渲染为可激活的链接、行内代码与图片，越�
 	assert.match(html, /data-markdown-url="https:\/\/example\.test\/docs"/);
 	// 未提供路径交互时（工作区面板预览）保持原有行为。
 	assert.doesNotMatch(render("`预算.xlsx` [a](a.md)"), /data-workspace-path/);
+});
+
+test("宿主核对前路径与普通代码一致，核对后按存在、同名候选与缺失渲染", () => {
+	const states = {
+		"甲.md": { state: "pending", path: "甲.md" },
+		"乙.md": { state: "file", path: "文档/乙.md" },
+		"丙.md": { state: "choices", path: "丙.md", candidates: ["a/丙.md", "b/丙.md"] },
+		"丁.md": { state: "missing" },
+	};
+	const html = render(
+		"`甲.md` `乙.md` `丙.md` `丁.md`\n\n[甲](甲.md) [丙](丙.md) [丁](丁.md)",
+		"/home/demo/ws",
+		(path) => states[path],
+	);
+	assert.match(html, /<code data-path-pending="甲.md">甲\.md<\/code>/);
+	assert.match(
+		html,
+		/<code class="path-ref" data-workspace-path="文档\/乙.md" title="文档\/乙.md" role="link" tabindex="0">乙\.md<\/code>/,
+	);
+	assert.match(html, /<code class="path-ref" data-workspace-path="丙.md" title="工作区中有 2 个同名文件"/);
+	assert.match(html, /<code>丁\.md<\/code>/);
+	assert.match(html, /<span data-path-pending="甲.md">甲<\/span>/);
+	assert.match(html, /<a href="#" data-workspace-path="丙.md" title="工作区中有 2 个同名文件">丙<\/a>/);
+	// 缺失的文件只保留链接文字，不显示 Markdown 原文。
+	assert.match(html, /<\/a> 丁<\/p>/);
+	assert.doesNotMatch(html, /\(丁\.md\)/);
 });

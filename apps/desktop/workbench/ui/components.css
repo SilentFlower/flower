@@ -499,7 +499,6 @@
 	max-width: 100%;
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
-	scrollbar-width: thin;
 }
 .markdown-reply pre {
 	padding: 0.6em 0.85em;
@@ -511,10 +510,13 @@
 	border-collapse: collapse;
 }
 .markdown-reply :is(th, td) {
+	min-width: 4.5em;
 	padding: 0.33em 0.65em;
 	border-block-end: 1px solid var(--line);
 	text-align: start;
-	white-space: nowrap;
+	vertical-align: top;
+	/* 单元格随回复宽度换行，长路径也可断开；最小列宽约三个汉字，列多到放不下时外层横向滚动，避免挤成一字一行。 */
+	overflow-wrap: anywhere;
 }
 .markdown-reply th {
 	background: var(--wash);
