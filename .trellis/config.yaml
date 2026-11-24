@@ -120,6 +120,8 @@ packages:
     path: apps/code-reviewer
   flower-compliance:
     path: packages/flower-compliance
+  flower-desktop:
+    path: apps/desktop
   flower-observer:
     path: apps/observer
   flower-ops-bot:
