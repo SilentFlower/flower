@@ -3,7 +3,7 @@
   "name": "flower-v2-desktop-ux-tier1",
   "title": "第一档 运行可见与操作手感",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": "flower-code-reviewer",
@@ -11,7 +11,7 @@
   "creator": "silentflower",
   "assignee": "silentflower",
   "createdAt": "2026-11-24",
-  "completedAt": null,
+  "completedAt": "2026-11-24",
   "branch": null,
   "base_branch": "v2",
   "worktree_path": null,
@@ -23,14 +23,14 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {},
-  "last_push_snapshot": {
-    "snapshot_at": "2026-11-24T13:45:50+08:00",
-    "branch": "v2",
-    "pushed_commits": {
-      "root": "87ca8d98"
-    },
-    "push_mode": "push",
-    "completed_steps": [
+  "closeout": {
+    "status": "closed",
+    "closedAt": "2026-11-24T07:12:05Z",
+    "blockers": []
+  },
+  "progress": {
+    "updatedAt": "2026-11-24T15:12:05+08:00",
+    "completedSteps": [
       "步骤 1 运行时契约",
       "步骤 2 Desktop 步骤展示",
       "步骤 3 推理旁路",
@@ -42,14 +42,11 @@
       "步骤 9 窗口状态",
       "步骤 10 全量检查",
       "步骤 11 Windows 实机",
-      "试用反馈补充 R10–R13"
+      "试用反馈补充 R10–R13",
+      "试用反馈补充（二）R14–R17"
     ],
-    "next_step": "第一档收尾，随后进入第二档规划",
-    "notes": "补充提交 b5aa0d2d、86918b5b、87ca8d98；候选 D:\\FlowerDesktop-UX-tier1\\candidate-2，证据 evidence-12；长会话滚动条滑块待用户目测"
-  },
-  "closeout": {
-    "status": "pending",
-    "closedAt": null,
-    "blockers": []
+    "partialStep": null,
+    "nextStep": "进入第二档规划",
+    "notes": "候选 D:\\FlowerDesktop-UX-tier1\\candidate-6，证据 evidence-16、evidence-19、evidence-21；真实网关是否转发 DeepSeek thinking 字段待用户试用确认；长会话滚动条滑块待用户目测"
   }
 }

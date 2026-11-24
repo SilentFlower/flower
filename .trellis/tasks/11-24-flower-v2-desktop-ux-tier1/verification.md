@@ -44,3 +44,16 @@
 | AC17 | 右栏图标颜色按类型区分（png、txt、xlsx 计算颜色互不相同）；Git 标签、删除线、差异行号栏与色条在浏览器夹具浅色与深色截图中检查。 |
 
 Desktop `npm test` 60 项、`npx biome check apps/desktop` 通过。
+
+## 试用反馈补充（二）（R14–R16）
+
+2026-11-24，WSL2 Linux（Node 22）与 Windows 11（Node 20.19.2）。候选 `D:\FlowerDesktop-UX-tier1\candidate-5`，ASAR SHA-256 `38d8ba9533b4310abc6f42dd43b64cf547e16f573c1255271767d36596059868`。Windows Node 直接调用源码 `resolveMentionedPaths` 只读核对 WSL 共享工作区 `\\wsl.localhost\ubuntu\root\project\flower`：经 `wsl.exe` 的 Git 清单为 `verification.md` 返回 8 个候选（1.6 秒），`README.Windows.txt` 唯一匹配到 `apps/desktop/`，`VERIFICATION.md` 按 Linux 大小写判定不存在，遍历回退 1.5 秒，预览缺失文件报「文件不存在或已被移动」。私有桌面实机：`verify-model-presets-windows.mjs`（evidence-16）通过，捕获 15 次 Chat Completions 请求；`verify-model-suite-windows.mjs`（evidence-19）通过，请求体中关闭思考为 `thinking.type=disabled`、其他档位为 `reasoning_effort`。修复前两个脚本断言旧推荐档位而失败（evidence-13、14）；模型套件另有一处「提交后草稿附件仍在」的旧断言，用改动前脚本对 candidate-2 跑基线（evidence-18）同样失败，属既有漂移，已改为核对前重新附上 notes.txt。
+
+| 验收 | 结果 |
+|---|---|
+| AC18 | `workspace-panel.test.mjs` 新增用例：根下文件原样返回；非 Git 目录遍历可见条目，唯一同名返回实际路径、两个同名返回候选，隐藏目录与 `node_modules` 不参与；Git 仓库取已跟踪与未忽略文件（含隐藏目录、排除忽略文件），Git 失败时退回遍历；超过 64 项与已取消的请求被拒绝；预览不存在的文件报「文件不存在或已被移动」。处理器测试覆盖非当前会话拒绝与越界路径。`markdown.test.mjs` 覆盖待核对、存在、同名候选、缺失四种渲染。浏览器夹具（真实 `workbench/` 页面加替身 preload）：一次批量核对 6 个路径；`verification.md` 点击后右栏列出 3 个候选，面包屑「名为 verification.md 的文件」，选中后预览、返回回到候选、再返回到根目录；`brief.md` 直接预览实际位置；核对进行中收到工具结果时，迟到的「不存在」结论不留缓存，重渲染后重新核对并链接到新文件；`missing.md` 与缺失链接显示为普通文字。 |
+| AC19 | 浏览器夹具（试用后补充：指针从圆环移入详情卡、在卡内移动保持打开，移出后关闭）：87,500 / 1,000,000 显示圆环与「9%」，详情「87.5K / 1M · 8.8%」「估算值」，悬停可见（试用后去掉窗口来源，仅兜底窗口提示上限为兜底值）；750K 为琥珀色、950K 为红色（深色）；新会话（空白页）不显示；660 像素窄窗只显示圆环，详情卡不越出视口，无横向滚动。 |
+| AC20 | `model-library.test.mjs` 经锁定 pi 与回环网关核对请求体：DeepSeek 直连与经网关的未选档位和「关闭思考」均为 `thinking.type=disabled`，其他档位不变；gpt-5.2 未选档位为 `reasoning_effort=none`；claude-sonnet-5 关闭思考不带推理字段；claude-sonnet-5-5 默认 `reasoning_effort=low`；`default` 不再是可保存档位；换凭据后回到最左档；未识别模型不发送推理字段。浏览器夹具：滑杆最左为「关闭思考」、输入框不显示档位文字，右移一档显示「低」，「恢复默认档位」回到关闭思考；不可关闭的模型默认「低」。 |
+| AC21 | 浏览器夹具（真实 `workbench/` 页面）：两列宽表在 1282 与 660 像素均无横向溢出，长句与行内代码换行；十二列表在 1282 像素完整显示，660 像素保持约三字列宽并横向滚动；表格与代码块带 `soft-scroll`、计算后的 `scrollbar-width` 为 `auto`，代码块保持 `white-space: pre`；页面无横向溢出。Windows 私有桌面 `verify-markdown-windows.mjs`（candidate-6，ASAR SHA-256 `7df4acccc51300020659836d0d797eaaaf8e1b2d248d3cc9f63c569594db8e85`，evidence-21）通过：660 像素深色下代码块 438/5478 横向滚动，表格 438/438 不溢出，两者均为 `soft-scroll`、`scrollbar-width: auto`。脚本同步了表格断言，并修正第一档起 `thread` 需要「回到底部」按钮的旧调用（既有漂移）。 |
+
+Desktop `npm test` 62 项、`npx biome check apps/desktop` 通过。

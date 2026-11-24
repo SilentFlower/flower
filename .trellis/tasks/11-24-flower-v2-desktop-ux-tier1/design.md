@@ -116,6 +116,36 @@ SessionGrant（公共部分）+= describeTool?(toolName: string, args: unknown):
 - Main 在创建窗口前同步读取 `userData/local-workbench/window-state.json`（`{x, y, width, height, maximized}`）。有效时以 `x, y, width, height` 创建并设 `useContentSize: false`，否则保持现有 1282×801 内容尺寸。`maximized` 为真时创建后 `maximize()`。
 - 保存：`resize`/`move` 防抖 500 ms 与 `close` 时，取 `getNormalBounds()`，面板外扩期间扣除外扩差值，连同 `isMaximized()` 用 `writeJson` 原子写入。全屏时不更新尺寸。
 
+## 试用反馈补充（二）R14–R16
+
+### R14 路径核对与按名查找
+
+- `paths.resolve(text)` 改为返回 `{ path, state }`：renderer 先用 `flowerMarkdown.workspacePath` 得到候选相对路径，再查会话级缓存 `replyPaths`（键 `[session, path]`）。`state` 为 `file`（`path` 为实际相对路径）、`choices`（多个同名）、`missing` 或 `pending`。
+- `markdown.js` 按状态渲染：`file`、`choices` 输出可点击元素（`data-workspace-path`，候选另带 `data-path-choices`）；`missing` 按原文；`pending` 输出普通 `<code data-path-pending>`，不带链接样式与角色。`hydrate(root, refresh)` 收集未核对的候选，批量调用宿主，结果写入缓存后调用 `refresh()` 重新渲染该回复（与 marked 延迟加载后的重渲染同一机制），流式更新时已缓存的路径同步渲染，不闪烁。
+- 该会话收到工具结果或请求进入终态时，丢弃缓存中「不存在」与「多个同名」的结论（工具可能刚写出文件），仍在核对中的条目一并移出缓存（迟到结果只写到旧条目并触发重渲染、重新核对），已确认存在的结论保留；切换会话保留缓存。
+- Main 新增 `resolve-reply-paths(session, paths)`，经 `readSelectedWorkspace` 调用 `workspace.mjs` 的 `resolveMentionedPaths(workspace, paths, signal)`：最多 64 项，逐项 `locate` 为文件则原样返回；否则按「整段路径为后缀」在工作区文件清单中匹配。清单每批只取一次：Git 仓库用 `git ls-files --cached --others --exclude-standard -z`（复用 `workspace-git.mjs` 的执行器，WSL 共享目录同样经 `wsl.exe`），非仓库或 Git 不可用时有限遍历可见条目（跳过点开头与 `node_modules`，最多 20000 项、深度 12）。匹配结果再经 `locate` 复核，最多返回 20 个候选。
+- 右栏 `preview(path, trigger, candidates)`：有候选时进入候选列表视图（面包屑「工作区 › 名为 X 的文件」），行显示文件名与所在目录，点击预览；预览中「返回」回到候选列表，再返回回到根目录。
+- `locate` 的 `realpath` 遇 `ENOENT`/`ENOTDIR` 时抛「文件不存在或已被移动」，其余错误保持原样。
+
+### R15 上下文圆环
+
+- `#context-usage` 移入 `.composer-end`，位于模型按钮前：`div.context-meter` 包住 `button.context-ring#context-usage`（SVG 圆环按 `stroke-dasharray` 显示比例，旁边为百分比文字）与详情卡 `role="tooltip"`；详情卡由容器 `:hover` 或按钮 `:focus-visible` 显示，`::after` 透明桥接区覆盖圆环与卡片间的空隙，指针移入卡片仍保持打开；按钮 `aria-describedby` 指向详情卡。
+- 比例 = `tokens / limit`，`data-level` 为 `normal`/`warn`（≥0.7）/`danger`（≥0.9），颜色分别用 `--accent`、琥珀色语义 token、`--danger`。无估算时圆环为空、文字隐藏，详情只显示上限。说明行只写「估算值 / 占用待估算」，窗口来源不展示，仅 `source === "fallback"` 时追加「未识别型号，上限为兜底值」。紧凑数字：`<1000` 原值，`<1e6` 为 `x.xK`，否则 `x.xM`，去掉末尾 `.0`。窄窗（≤760px）隐藏百分比文字。
+- 不再使用 `role="status"`，避免每次刷新被读屏器播报。
+- 当前会话的 timeline 没有任何请求时隐藏（新会话只有系统提示与工具声明的占用，显示无意义）；首个请求加入后随 `refreshContextUsage` 显示。
+
+### R16 推理档位
+
+- `model-library.mjs` 的能力计算增加关闭方式 `off`：`deepseek`（pi DeepSeek 目录模型，含经网关、服务声明与手动档位）、`none`（pi 标 `thinkingLevelMap.off === "none"`，或服务声明 / 手动声明含关闭的非 DeepSeek 模型）、`omit`（pi 支持关闭但没有标准字段，如 Claude）。内置推荐不再因协议过滤掉 `off`；DeepSeek 服务声明缺少关闭时补上。
+- `selection()` 中未选或无效的档位落到 `available[0]`；`setModelEffort` 只接受 `available` 内的档位，`default` 只作为「未选择」的存储值保留，兼容旧文件。
+- `runtimeSelection()`：所选档位为 `off` 时 `reasoning` 为空，`thinkingLevelMap.off` 按关闭方式设为 `"none"`、`null`（不发送），或删除该键并把 `compat.thinkingFormat` 设为 `deepseek`（pi 发送 `thinking.type=disabled`）。直连 DeepSeek 继续全档位用 `deepseek` 格式，经网关的其他档位维持 `openai` 格式。
+- renderer：`effortOptions()` 只含 `available`；滑杆最左即默认；「恢复默认档位」回到第 0 档；`effortNames.off` 改为「关闭思考」，删除 `default`；输入框模型按钮在 `off` 时不显示档位文字，`aria-label` 仍说明。模型编辑页的「服务默认」策略（`mode: "none"`，不发送推理字段）保持不变。
+
+### R17 回复表格换行与细滚动条
+
+- `ui/components.css` 的 `.markdown-reply :is(th, td)` 去掉 `white-space: nowrap`，改为 `overflow-wrap: anywhere`、`vertical-align: top`、`min-width: 4.5em`（`border-box`，约三个汉字的内容宽）；`.markdown-table-scroll` 保留 `overflow: auto` 作列数过多时的兜底。
+- 代码块与表格容器去掉 `scrollbar-width: thin`（它会让 `::-webkit-scrollbar` 失效），由 `markdown.js` 在 HTML 中直接输出 `soft-scroll` 类；`style.css` 用 `:where(pre, .markdown-table-scroll).soft-scroll:hover` 显示滑块。不挂 `flowerUI.softScroll` 脚本，避免流式重渲染时 `isEqualNode` 因 `data-scrolling` 属性不一致而反复替换节点。
+
 ## 测试设计
 
 - `packages/agent-runtime`：步骤与时间写入、`describeTool` 异常与截断、无钩子时与现有事件序列一致、旧快照无新字段可读。
