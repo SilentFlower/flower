@@ -17,6 +17,7 @@ import type {
 	SessionSnapshot,
 	StoredSessionSnapshot,
 	TerminalStatus,
+	ToolStep,
 } from "./types.js";
 
 export type {
@@ -43,10 +44,11 @@ export type {
 	SubjectRuntime,
 	TerminalStatus,
 	ToolResult,
+	ToolStep,
 } from "./types.js";
 
 type EventBody<T extends RuntimeEvent = RuntimeEvent> = T extends RuntimeEvent
-	? Omit<T, "sessionId" | "requestId" | "runId" | "sequence">
+	? Omit<T, "sessionId" | "requestId" | "runId" | "sequence" | "at">
 	: never;
 type Notification = readonly [RequestRecord, EventBody];
 type Observer = (event: RuntimeEvent) => void;
@@ -274,12 +276,19 @@ class SessionRunner {
 	}
 
 	private async commit(snapshot: SessionSnapshot, notifications: readonly Notification[]): Promise<void> {
+		const at = Date.now();
+		for (const [request, body] of notifications) {
+			// 起止时刻与对应事件同批落盘，宿主重启后仍可计算耗时，不额外增加写入。
+			if (body.type === "started") request.startedAt = at;
+			if (body.type === "terminal") request.endedAt = at;
+		}
 		const events: RuntimeEvent[] = notifications.map(([request, body]) => ({
 			...body,
 			sessionId: this.scope.sessionId,
 			requestId: request.requestId,
 			runId: request.runId,
 			sequence: ++snapshot.lastSequence,
+			at,
 		}));
 		try {
 			await this.options.store.save(this.scope, structuredClone(snapshot));
@@ -370,7 +379,9 @@ class SessionRunner {
 				status = "cancelled";
 			} else {
 				context.signal.addEventListener("abort", abort, { once: true });
-				unsubscribe = execution.subscribe((event) => this.recordProgress(runId, event));
+				unsubscribe = execution.subscribe((event) =>
+					this.recordProgress(runId, event, (toolName, args) => grant.describeTool?.(toolName, args)),
+				);
 				await execution.prompt(request.input);
 				// agent_end 的监听器与 SDK 重试可能尚未结束。
 				await execution.waitForIdle();
@@ -431,12 +442,17 @@ class SessionRunner {
 		});
 	}
 
-	private async recordProgress(runId: string, event: AgentEvent): Promise<void> {
+	private async recordProgress(
+		runId: string,
+		event: AgentEvent,
+		describe: (toolName: string, args: unknown) => string | undefined,
+	): Promise<void> {
 		let body: EventBody;
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 			body = { type: "text_delta", delta: event.assistantMessageEvent.delta };
 		} else if (event.type === "tool_execution_start") {
-			body = { type: "tool_started", toolName: event.toolName, toolCallId: event.toolCallId };
+			const target = toolTarget(describe, event.toolName, event.args);
+			body = { type: "tool_started", toolName: event.toolName, toolCallId: event.toolCallId, ...(target && { target }) };
 		} else if (event.type === "tool_execution_end") {
 			body = {
 				type: "tool_result",
@@ -454,6 +470,11 @@ class SessionRunner {
 			const snapshot = structuredClone(this.snapshot);
 			const record = requireRequest(snapshot.requests.find((entry) => entry.runId === runId));
 			if (body.type === "text_delta") record.text += body.delta;
+			if (body.type === "tool_started") {
+				const step: ToolStep = { toolCallId: body.toolCallId, toolName: body.toolName, startedAt: Date.now() };
+				if (body.target) step.target = body.target;
+				record.steps = [...(record.steps ?? []), step];
+			}
 			if (body.type === "tool_result") {
 				record.toolResults.push({
 					toolName: body.toolName,
@@ -461,6 +482,11 @@ class SessionRunner {
 					text: body.text,
 					isError: body.isError,
 				});
+				const step = record.steps?.find(({ toolCallId, endedAt }) => toolCallId === body.toolCallId && !endedAt);
+				if (step) {
+					step.endedAt = Date.now();
+					step.isError = body.isError;
+				}
 			}
 			await this.commit(snapshot, [[record, body]]);
 		});
@@ -511,6 +537,30 @@ function createNativeExecution(
 
 function queued(requests: RequestRecord[]): RequestRecord[] {
 	return requests.filter(({ status }) => status === "queued");
+}
+
+/**
+ * 调用宿主钩子生成工具的展示目标。
+ * @param describe 宿主提供的描述函数
+ * @param toolName 工具名
+ * @param args 模型给出的工具参数
+ * @returns 截断后的目标；宿主异常或返回空值时为 undefined
+ */
+function toolTarget(
+	describe: (toolName: string, args: unknown) => string | undefined,
+	toolName: string,
+	args: unknown,
+): string | undefined {
+	let target: unknown;
+	try {
+		target = describe(toolName, args);
+	} catch {
+		// 展示目标只是辅助信息，宿主描述失败不能中断工具执行记录。
+		return undefined;
+	}
+	if (typeof target !== "string") return undefined;
+	const trimmed = target.trim();
+	return trimmed ? Array.from(trimmed).slice(0, 120).join("") : undefined;
 }
 
 function rememberToolReceipts(snapshot: SessionSnapshot, request: RequestRecord): void {

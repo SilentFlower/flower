@@ -80,7 +80,7 @@ function fixture(
 	store: SessionStore,
 	streamFn: StreamFn,
 	tools: AgentTool[] = [],
-	overrides: Partial<Pick<Extract<SessionGrant, { model: unknown }>, "model" | "readAttachments">> = {},
+	overrides: Partial<Pick<Extract<SessionGrant, { model: unknown }>, "model" | "readAttachments" | "describeTool">> = {},
 ) {
 	const events: RuntimeEvent[] = [];
 	const terminal = new Map<string, (event: RuntimeEvent) => void>();
@@ -409,5 +409,74 @@ describe("共享运行时长会话", () => {
 		);
 		expect(await restarted.submit("核对已经写出的报告")).toMatchObject({ status: "succeeded" });
 		expect(writes).toBe(1);
+	});
+});
+
+describe("工具步骤与起止时间", () => {
+	function toolRun() {
+		const tools = ["read_a", "read_b"].map((name) => ({
+			name,
+			label: name,
+			description: name,
+			parameters: { type: "object", properties: {} },
+			async execute() {
+				if (name === "read_b") throw new Error("读取失败");
+				return { content: [{ type: "text", text: `${name} 完成` }], details: {} };
+			},
+		}));
+		let calls = 0;
+		const streamFn: StreamFn = () =>
+			calls++ === 0
+				? response(
+						tools.map(({ name }) => ({ type: "toolCall", id: `call_${name}`, name, arguments: { path: `${name}.xlsx` } })),
+						"toolUse",
+					)
+				: response([{ type: "text", text: fact }]);
+		return { tools, streamFn };
+	}
+
+	it("宿主描述写入步骤目标，异常与超长描述不影响记录，起止时间随事件落盘", async () => {
+		const { tools, streamFn } = toolRun();
+		const described: unknown[] = [];
+		const host = fixture(memory(), streamFn, tools, {
+			describeTool(toolName, args) {
+				described.push(args);
+				if (toolName === "read_b") throw new Error("描述失败");
+				return `  ${"长".repeat(130)}  `;
+			},
+		});
+		expect(await host.submit("读取两个工作簿")).toMatchObject({ status: "succeeded" });
+		expect(described).toEqual([{ path: "read_a.xlsx" }, { path: "read_b.xlsx" }]);
+		const [record] = (await host.client.getSession(session)).requests;
+		expect(record?.steps).toHaveLength(2);
+		const [first, second] = record?.steps ?? [];
+		expect(first).toMatchObject({
+			toolCallId: "call_read_a",
+			toolName: "read_a",
+			target: "长".repeat(120),
+			isError: false,
+		});
+		expect(second).toMatchObject({ toolCallId: "call_read_b", toolName: "read_b", isError: true });
+		expect(second).not.toHaveProperty("target");
+		for (const step of record?.steps ?? []) expect(step.endedAt).toBeGreaterThanOrEqual(step.startedAt);
+		expect(record?.startedAt).toEqual(expect.any(Number));
+		expect(record?.endedAt).toBeGreaterThanOrEqual(record?.startedAt ?? Number.POSITIVE_INFINITY);
+		const started = host.events.filter((event) => event.type === "tool_started");
+		expect(started.map((event) => "target" in event && event.target)).toEqual(["长".repeat(120), false]);
+		expect(host.events.every(({ at }) => typeof at === "number")).toBe(true);
+		const started_ = host.events.find((event) => event.type === "started");
+		const ended = host.events.find((event) => event.type === "terminal");
+		expect([started_?.at, ended?.at]).toEqual([record?.startedAt, record?.endedAt]);
+	});
+
+	it("宿主未提供描述时仍记录步骤，只是没有目标", async () => {
+		const { tools, streamFn } = toolRun();
+		const host = fixture(memory(), streamFn, tools);
+		expect(await host.submit("读取两个工作簿")).toMatchObject({ status: "succeeded" });
+		const [record] = (await host.client.getSession(session)).requests;
+		expect(record?.steps?.map(({ toolName, target }) => [toolName, target])).toEqual([
+			["read_a", undefined],
+			["read_b", undefined],
+		]);
 	});
 });

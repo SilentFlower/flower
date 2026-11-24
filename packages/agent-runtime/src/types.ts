@@ -35,7 +35,16 @@ export type RuntimeModelStream = (
 ) => ReturnType<StreamFn>;
 
 /** 宿主为一个会话提供的当前权限与 pi 运行能力。 */
-export type SessionGrant = { readonly workspaceId: string } & (
+export type SessionGrant = {
+	readonly workspaceId: string;
+	/**
+	 * 为工具调用生成简短的展示目标，例如文件名。异常或非字符串结果视为无目标。
+	 * @param toolName 工具名
+	 * @param args 模型给出的工具参数
+	 * @returns 展示目标，最长保留 120 字符
+	 */
+	describeTool?(toolName: string, args: unknown): string | undefined;
+} & (
 	| {
 			readonly model: Model<Api>;
 			readonly streamFn: RuntimeModelStream;
@@ -88,6 +97,19 @@ export interface ToolResult {
 	isError: boolean;
 }
 
+/** 一次工具调用的展示摘要。不保存工具参数原文，避免大参数进入会话记录。 */
+export interface ToolStep {
+	toolCallId: string;
+	toolName: string;
+	/** 宿主给出的展示目标，例如文件名。 */
+	target?: string;
+	/** 开始时刻，毫秒时间戳。 */
+	startedAt: number;
+	/** 结束时刻，未收到工具结果时缺省。 */
+	endedAt?: number;
+	isError?: boolean;
+}
+
 /** 可展示的稳定错误分类，独立于 pi 和宿主异常细节。 */
 export type FailureCode = "invalid-input" | "denied" | "not-found" | "storage" | "agent-error";
 
@@ -109,6 +131,12 @@ export interface RequestRecord {
 	userMessageIndex?: number;
 	text: string;
 	toolResults: ToolResult[];
+	/** 按开始顺序记录的工具步骤，早期记录缺省。 */
+	steps?: ToolStep[];
+	/** 开始运行的时刻，毫秒时间戳。 */
+	startedAt?: number;
+	/** 进入终态的时刻，毫秒时间戳。重启时补记的中断不写入。 */
+	endedAt?: number;
 	failure?: RuntimeFailure;
 }
 
@@ -186,12 +214,14 @@ export type RuntimeEvent = {
 	requestId: string;
 	runId?: string;
 	sequence: number;
+	/** 提交时刻，毫秒时间戳。 */
+	at: number;
 } & (
 	| { type: "queued"; position: number }
 	| { type: "started" }
 	| { type: "cancelling" }
 	| { type: "text_delta"; delta: string }
-	| { type: "tool_started"; toolName: string; toolCallId: string }
+	| { type: "tool_started"; toolName: string; toolCallId: string; target?: string }
 	| ({ type: "tool_result" } & ToolResult)
 	| { type: "terminal"; status: TerminalStatus; failure?: RuntimeFailure }
 );
