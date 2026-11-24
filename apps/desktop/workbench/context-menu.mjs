@@ -29,3 +29,17 @@ export function contextMenuItems(params, contents) {
 		items.push({ label: "复制图片", click: () => contents.copyImageAt(params.x, params.y) });
 	return items;
 }
+
+/**
+ * 回复选区的菜单：复制选中文字、引用到输入框、在侧边追问中提问。
+ * @param {(choice: "quote" | "side") => void} choose 用户选择引用或侧边追问时调用
+ * @returns {Electron.MenuItemConstructorOptions[]} 菜单项
+ */
+export function replyMenuItems(choose) {
+	return [
+		{ label: "复制", role: "copy" },
+		{ type: "separator" },
+		{ label: "引用", click: () => choose("quote") },
+		{ label: "侧边追问", click: () => choose("side") },
+	];
+}

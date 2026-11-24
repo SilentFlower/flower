@@ -255,6 +255,12 @@
 					if (owner) void host.showPathMenu(owner, entryPath, false).catch(() => {});
 				});
 				if (entry.attachable) {
+					// 可加入对话的文件行可以拖到输入框，效果与「+」相同。
+					control.draggable = true;
+					control.addEventListener("dragstart", (event) => {
+						event.dataTransfer.setData("application/x-flower-path", entryPath);
+						event.dataTransfer.effectAllowed = "copy";
+					});
 					const add = button("", (event) => void addReference(event.currentTarget), "icon-button panel-add");
 					add.append(icon("plus"));
 					add.dataset.path = [...folders, entry.name].join("/");
@@ -277,10 +283,15 @@
 			mode = next;
 			by("panel-files").setAttribute("aria-pressed", String(mode === "files"));
 			by("panel-git").setAttribute("aria-pressed", String(mode === "git"));
+			by("panel-side").setAttribute("aria-pressed", String(mode === "side"));
+			// 侧边追问有自己的消息区与输入框，文件浏览区随之隐藏。
+			view.hidden = mode === "side";
+			by("side-chat-view").hidden = mode !== "side";
 		}
 		for (const [id, next] of [
 			["panel-files", "files"],
 			["panel-git", "git"],
+			["panel-side", "side"],
 		])
 			by(id).onclick = () => {
 				setMode(next);
@@ -430,6 +441,11 @@
 			}
 			if (panel.hidden) return;
 			previewAdd.hidden = true;
+			if (mode === "side") {
+				status();
+				by("panel-title").textContent = "侧边追问";
+				return;
+			}
 			back.hidden = mode === "git" ? !change : !folders.length && !file && !choices;
 			refresh.hidden = !selected;
 			by("panel-title").textContent = mode === "git" ? "Git 变更" : file ? "文件预览" : "工作区文件";
@@ -719,8 +735,8 @@
 			drag.zone.append(element("span"));
 			drag.ghost = element("div", "panel-drag-ghost");
 			drag.ghost.append(
-				icon(mode === "git" ? "git" : "folder"),
-				element("span", "", mode === "git" ? "Git 变更" : "文件"),
+				icon(mode === "git" ? "git" : mode === "side" ? "side-chat" : "folder"),
+				element("span", "", mode === "git" ? "Git 变更" : mode === "side" ? "侧边追问" : "文件"),
 			);
 			for (const node of [drag.zone, drag.ghost]) node.setAttribute("aria-hidden", "true");
 			document.body.append(drag.zone, drag.ghost);
@@ -823,6 +839,28 @@
 				folders = [];
 				file = "";
 				opener = toggle;
+				void load();
+			},
+			/**
+			 * 切到侧边追问页并打开右栏。
+			 * @param {HTMLElement} [trigger] 收起时返回焦点的按钮
+			 * @returns {void}
+			 */
+			showSide(trigger) {
+				setMode("side");
+				opener = trigger ?? toggle;
+				if (panel.hidden) display(true);
+				else void load();
+			},
+			/**
+			 * 当前会话有无侧边追问：没有时隐藏标签，正在显示时回到文件页。
+			 * @param {boolean} available 是否有侧边追问
+			 * @returns {void}
+			 */
+			sideAvailable(available) {
+				by("panel-side").hidden = !available;
+				if (available || mode !== "side") return;
+				setMode("files");
 				void load();
 			},
 			/** 从输入框打开当前工作区的文件列表。@param id 动作所属会话 @param trigger 返回焦点的按钮 @returns 无 */

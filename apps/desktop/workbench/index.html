@@ -13,6 +13,7 @@
 	<link rel="stylesheet" href="./ui/model-editor.css">
 	<link rel="stylesheet" href="./ui/workspace-panel.css">
 	<script src="./ui/foundation.js" defer></script>
+	<script src="./ui/toast.js" defer></script>
 	<script src="../node_modules/marked/lib/marked.umd.js" defer></script>
 	<script src="./ui/markdown.js" defer></script>
 	<script src="./ui/theme-settings.js" defer></script>
@@ -21,11 +22,15 @@
 	<script src="./ui/image-viewer.js" defer></script>
 	<script src="./ui/attachments.js" defer></script>
 	<script src="./ui/agent.js" defer></script>
+	<script src="./ui/side-chat.js" defer></script>
 	<script src="./ui/select.js" defer></script>
 	<script src="./renderer.js" defer></script>
 </head>
 <body>
 	<svg class="icon-definitions" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+		<symbol id="icon-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r=".8"/><circle cx="15" cy="6" r=".8"/><circle cx="9" cy="12" r=".8"/><circle cx="15" cy="12" r=".8"/><circle cx="9" cy="18" r=".8"/><circle cx="15" cy="18" r=".8"/></symbol>
+		<symbol id="icon-quote" viewBox="0 0 24 24"><path d="M5 7h5v5c0 3-1.5 4.5-4 5M14 7h5v5c0 3-1.5 4.5-4 5"/></symbol>
+		<symbol id="icon-side-chat" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M14 4v16M6.5 9h4.5m-4.5 4h3"/></symbol>
 		<symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
 		<symbol id="icon-pin" viewBox="0 0 24 24"><path d="m15 3 6 6-3 1-3 5 .5 2.5-9-9L9 9l5-3zM10 14l-6 6"/></symbol>
 		<symbol id="icon-trash" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></symbol>
@@ -165,7 +170,9 @@
 						</footer>
 					</section>
 					<p class="sr-only" id="write-approval-live" role="status"></p>
+					<section id="queue" class="composer-queue" aria-label="排队消息" hidden></section>
 					<div id="composer" class="composer">
+						<div id="mention-list" class="mention-list" role="listbox" aria-label="工作区文件" hidden></div>
 						<div id="attachment" class="file-chips" role="group" aria-label="本次消息的附件" hidden></div>
 						<label class="sr-only" for="prompt">任务</label>
 						<textarea id="prompt" data-theme-prompt rows="1" maxlength="16000" placeholder="描述你想完成的工作…" aria-describedby="input-hint"></textarea>
@@ -207,6 +214,7 @@
 				<div class="panel-tabs" role="group" aria-label="右栏视图">
 					<button type="button" class="button" id="panel-files" aria-pressed="true"><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg>文件</button>
 					<button type="button" class="button" id="panel-git" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#icon-git"/></svg>Git 变更</button>
+					<button type="button" class="button" id="panel-side" aria-pressed="false" hidden><svg class="icon" aria-hidden="true"><use href="#icon-side-chat"/></svg>侧边追问</button>
 				</div>
 				<button type="button" id="workspace-panel-dock" class="button icon-button" aria-label="移到聊天区左侧" title="移到聊天区左侧"><svg class="icon" aria-hidden="true"><use href="#icon-dock"/></svg></button>
 				<button type="button" id="workspace-panel-expand" class="button icon-button" aria-label="放大文件面板" title="放大文件面板" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#icon-panel-expand"/></svg></button>
@@ -223,9 +231,37 @@
 				<div id="panel-content"></div>
 				<p id="panel-status" role="status" hidden></p>
 			</section>
+			<section id="side-chat-view" class="side-chat" aria-labelledby="side-chat-reference" hidden>
+				<div class="side-chat-head">
+					<p id="side-chat-reference"></p>
+					<button type="button" class="button icon-button" id="side-chat-new" aria-label="新建侧边追问" title="新建侧边追问"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg></button>
+					<button type="button" class="button icon-button" id="side-chat-close" aria-label="关闭侧边追问" title="关闭侧边追问"><svg class="icon" aria-hidden="true"><use href="#icon-trash"/></svg></button>
+				</div>
+				<div class="side-chat-scroll" id="side-chat-scroll">
+					<p class="side-chat-empty" id="side-chat-empty">基于主会话已完成的内容提问，主会话继续运行，互不影响。只读，不生成文件。</p>
+					<div id="side-chat-timeline" class="side-chat-timeline" aria-label="侧边追问记录"></div>
+				</div>
+				<div class="side-chat-composition">
+					<button type="button" class="button icon-button back-to-bottom" id="side-chat-bottom" aria-label="回到底部" title="回到底部" hidden><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button>
+					<div class="composer side-chat-composer">
+						<label class="sr-only" for="side-chat-prompt">侧边追问</label>
+						<textarea id="side-chat-prompt" rows="2" maxlength="16000" placeholder="基于主会话继续追问…"></textarea>
+						<div class="composer-toolbar">
+							<span class="side-chat-note">只读，不生成文件</span>
+							<button class="button icon-button send" id="side-chat-send" type="button" aria-label="发送侧边追问" title="发送侧边追问" disabled><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button>
+						</div>
+					</div>
+				</div>
+			</section>
 		</aside>
 	</main>
+	<section id="toasts" class="toasts" aria-label="提示" aria-live="polite"></section>
+	<div id="selection-actions" class="selection-actions" role="toolbar" aria-label="选中文字操作" hidden>
+		<button class="button" type="button" data-selection="quote"><svg class="icon" aria-hidden="true"><use href="#icon-quote"/></svg>引用</button>
+		<button class="button" type="button" data-selection="side"><svg class="icon" aria-hidden="true"><use href="#icon-side-chat"/></svg>侧边追问</button>
+	</div>
 	<div id="sidebar-options" role="menu" popover="auto" aria-label="侧栏操作"></div>
+	<div id="queue-options" role="menu" popover="auto" aria-label="排队消息操作"></div>
 	<div id="session-filter" role="dialog" popover="auto" aria-labelledby="session-filter-title">
 		<h2 id="session-filter-title">搜索条件</h2>
 		<div class="theme-select" id="session-status-select"></div>

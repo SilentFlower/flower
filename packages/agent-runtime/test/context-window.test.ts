@@ -480,3 +480,156 @@ describe("工具步骤与起止时间", () => {
 		]);
 	});
 });
+
+describe("运行中插话", () => {
+	/** 逐字输出正文的模型响应，回复记录随 text_delta 增长。 */
+	function streamed(text: string, toolCalls: AssistantMessage["content"] = []) {
+		const stopReason = toolCalls.length ? "toolUse" : "stop";
+		const result: AssistantMessage = {
+			role: "assistant",
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			timestamp: Date.now(),
+			content: [{ type: "text", text }, ...toolCalls],
+			stopReason,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+		};
+		const partial = { ...result, content: [{ type: "text" as const, text }] };
+		const output = createAssistantMessageEventStream();
+		output.push({ type: "start", partial: { ...result, content: [] } });
+		output.push({ type: "text_delta", contentIndex: 0, delta: text, partial });
+		output.push({ type: "done", reason: stopReason, message: result });
+		output.end(result);
+		return output;
+	}
+
+	/** 第一步调用一个等待放行的工具，期间插话；之后按收到的用户消息作答。 */
+	function gatedRun() {
+		let release = () => {};
+		let entered = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const waiting = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const tools = [
+			{
+				name: "wait",
+				label: "wait",
+				description: "wait",
+				parameters: { type: "object", properties: {} },
+				async execute(_id: string, _args: unknown, signal?: AbortSignal) {
+					entered();
+					await new Promise<void>((resolve, reject) => {
+						void gate.then(resolve);
+						signal?.addEventListener("abort", () => reject(new Error("已取消")), { once: true });
+					});
+					return { content: [{ type: "text" as const, text: "等待结束" }], details: {} };
+				},
+			},
+		];
+		const seen: string[] = [];
+		let calls = 0;
+		const streamFn: StreamFn = (_model, context) => {
+			const users = context.messages.filter(({ role }) => role === "user").map((message) => JSON.stringify(message));
+			seen.push(users.at(-1) ?? "");
+			return calls++ === 0
+				? streamed("开始核对。", [{ type: "toolCall", id: "call_wait", name: "wait", arguments: {} }])
+				: streamed("已按二月核对。");
+		};
+		return { tools, streamFn, release, waiting, seen };
+	}
+
+	async function started(host: ReturnType<typeof fixture>) {
+		while (!host.events.some(({ type }) => type === "started")) await new Promise((resolve) => setTimeout(resolve, 5));
+		const event = host.events.find(({ type }) => type === "started");
+		return { requestId: event?.requestId ?? "", runId: event?.runId ?? "" };
+	}
+
+	it("插话在当前一步结束后送达，记录原文、附件与回复中的位置，并进入后续上下文", async () => {
+		const run = gatedRun();
+		const host = fixture(memory(), run.streamFn, run.tools);
+		const { requestId } = await host.client.submit(session, "核对全年预算");
+		const { runId } = await started(host);
+		await run.waiting;
+		await host.client.steer(session, runId, "steer-1", "改为只看二月", [{ id: "asset:1", name: "二月.xlsx" }]);
+		await expect(host.client.steer(session, runId, "steer-1", "重复")).rejects.toThrow("已经提交");
+		run.release();
+		expect(await host.result(requestId)).toMatchObject({ status: "succeeded" });
+		const types = host.events.filter((event) => event.requestId === requestId).map(({ type }) => type);
+		expect(types.indexOf("steered")).toBeGreaterThan(types.indexOf("tool_result"));
+		expect(types.indexOf("steered")).toBeLessThan(types.indexOf("terminal"));
+		expect(host.events.find(({ type }) => type === "steered")).toMatchObject({ steerId: "steer-1", runId });
+		// 第二次模型调用看到的最后一条用户消息就是插话，附件内容随之读取。
+		expect(run.seen[1]).toContain("改为只看二月");
+		expect(run.seen[1]).toContain(fact);
+		const snapshot = await host.client.getSession(session);
+		const [record] = snapshot.requests;
+		expect(record?.steers).toEqual([
+			{
+				steerId: "steer-1",
+				input: "改为只看二月",
+				attachments: [{ id: "asset:1", name: "二月.xlsx" }],
+				at: expect.any(Number),
+				textOffset: "开始核对。".length,
+			},
+		]);
+		expect(record?.text).toBe("开始核对。已按二月核对。");
+		expect(record?.userMessageIndex).toBe(0);
+		expect(snapshot.messages.filter(({ role }) => role === "user")).toHaveLength(2);
+		await expect(host.client.steer(session, runId, "steer-2", "已结束")).rejects.toThrow("运行已结束");
+	});
+
+	it("运行在送达前取消时不记录插话，也不发出送达事件", async () => {
+		const run = gatedRun();
+		const host = fixture(memory(), run.streamFn, run.tools);
+		const { requestId } = await host.client.submit(session, "核对全年预算");
+		const { runId } = await started(host);
+		await run.waiting;
+		await host.client.steer(session, runId, "steer-1", "改为只看二月");
+		await host.client.cancelRunning(session, runId);
+		expect(await host.result(requestId)).toMatchObject({ status: "cancelled" });
+		expect(host.events.some(({ type }) => type === "steered")).toBe(false);
+		const [record] = (await host.client.getSession(session)).requests;
+		expect(record).not.toHaveProperty("steers");
+		await expect(host.client.steer(session, "missing-run", "steer-2", "无效")).rejects.toThrow("不存在此请求或运行");
+	});
+
+	it("宿主执行体不支持插话时拒绝，不影响当前运行", async () => {
+		let stop = () => {};
+		const done = new Promise<void>((resolve) => {
+			stop = resolve;
+		});
+		const events: RuntimeEvent[] = [];
+		const client = createAgentRuntime({
+			host: "enterprise-node",
+			store: memory(),
+			authorize: () => ({
+				workspaceId: "workspace-a",
+				createExecution: () => ({
+					prompt: () => done,
+					subscribe: () => () => {},
+					abort: stop,
+					waitForIdle: async () => {},
+					getMessages: () => [],
+				}),
+			}),
+		}).bindSubject(subject, (event) => events.push(event));
+		await client.submit(session, "评审");
+		while (!events.some(({ type }) => type === "started")) await new Promise((resolve) => setTimeout(resolve, 5));
+		const runId = events.find(({ type }) => type === "started")?.runId ?? "";
+		await expect(client.steer(session, runId, "steer-1", "补充")).rejects.toThrow("不支持插话");
+		await client.cancelRunning(session, runId);
+		while (!events.some(({ type }) => type === "terminal")) await new Promise((resolve) => setTimeout(resolve, 5));
+		expect(events.find(({ type }) => type === "terminal")).toMatchObject({ status: "cancelled" });
+	});
+});

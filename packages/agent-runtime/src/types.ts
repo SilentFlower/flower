@@ -79,6 +79,13 @@ export interface RuntimeExecution {
 	waitForIdle(): Promise<void>;
 	/** 取得本次运行收敛后的消息。 */
 	getMessages(): readonly AgentMessage[];
+	/**
+	 * 把用户插话排入当前运行，在当前一步结束后送入模型。宿主不支持时缺省。
+	 * @param input 插话原文
+	 * @param attachments 插话附带的资料引用
+	 * @returns 已排入执行体后兑现
+	 */
+	steer?(input: string, attachments?: readonly RuntimeAttachment[]): Promise<void>;
 	/** 释放本轮 SDK 生命周期资源。 */
 	dispose?(): void | Promise<void>;
 }
@@ -110,6 +117,18 @@ export interface ToolStep {
 	isError?: boolean;
 }
 
+/** 已送达当前运行的用户插话。 */
+export interface SteerRecord {
+	/** 宿主提交插话时给出的标识，用于对应送达事件。 */
+	steerId: string;
+	input: string;
+	attachments?: readonly RuntimeAttachment[];
+	/** 送达时刻，毫秒时间戳。 */
+	at: number;
+	/** 送达时回复正文的长度，宿主据此把插话显示在回复的对应位置。 */
+	textOffset: number;
+}
+
 /** 可展示的稳定错误分类，独立于 pi 和宿主异常细节。 */
 export type FailureCode = "invalid-input" | "denied" | "not-found" | "storage" | "agent-error";
 
@@ -137,6 +156,8 @@ export interface RequestRecord {
 	startedAt?: number;
 	/** 进入终态的时刻，毫秒时间戳。重启时补记的中断不写入。 */
 	endedAt?: number;
+	/** 按送达顺序记录的插话，早期记录与没有插话的请求缺省。 */
+	steers?: SteerRecord[];
 	failure?: RuntimeFailure;
 }
 
@@ -222,6 +243,7 @@ export type RuntimeEvent = {
 	| { type: "cancelling" }
 	| { type: "text_delta"; delta: string }
 	| { type: "tool_started"; toolName: string; toolCallId: string; target?: string }
+	| { type: "steered"; steerId: string }
 	| ({ type: "tool_result" } & ToolResult)
 	| { type: "terminal"; status: TerminalStatus; failure?: RuntimeFailure }
 );
@@ -275,6 +297,23 @@ export interface SubjectRuntime {
 
 	/** 估算会话当前模型可见的历史。@param sessionId 本主体会话 @returns 当前窗口与估算，缺少模型时为空 */
 	getContextUsage(sessionId: string): Promise<RuntimeContextUsage | undefined>;
+
+	/**
+	 * 向运行中的请求插话。送达后请求记录追加插话并发出 steered 事件；运行在送达前结束时不记录。
+	 * @param sessionId 当前主体可访问的会话
+	 * @param runId 运行开始时分配的运行 ID
+	 * @param steerId 宿主为本次插话分配的标识
+	 * @param input 插话原文
+	 * @param attachments 插话附带的资料引用
+	 * @returns 已排入当前运行后兑现；运行已结束或执行体不支持插话时拒绝
+	 */
+	steer(
+		sessionId: string,
+		runId: string,
+		steerId: string,
+		input: string,
+		attachments?: readonly RuntimeAttachment[],
+	): Promise<void>;
 }
 
 /** 用于宿主绑定已核验主体的共享运行时。 */

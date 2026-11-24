@@ -813,3 +813,65 @@
 		border-color: Highlight;
 	}
 }
+
+/* 侧边追问：顶部参考说明，中间消息可滚动，底部精简输入框。 */
+#side-chat-view:not([hidden]) {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+.side-chat-head {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 8px 10px 8px 16px;
+	border-bottom: 1px solid var(--line);
+}
+#side-chat-reference {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	color: var(--muted);
+	font-size: 12px;
+}
+.side-chat-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	overflow-anchor: none;
+	padding: 14px 16px;
+}
+.side-chat-empty {
+	margin: 4px 0 0;
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.6;
+}
+.side-chat-timeline {
+	display: grid;
+	gap: 20px;
+}
+.side-chat-composition {
+	position: relative;
+	padding: 6px 10px 12px;
+}
+.side-chat-composer textarea {
+	max-height: 160px;
+}
+.side-chat-note {
+	color: var(--muted);
+	font-size: 12px;
+	padding-inline-start: 6px;
+}
+#workspace-panel #side-chat-send {
+	margin-inline-start: auto;
+	width: 32px;
+	min-height: 32px;
+	background: var(--accent);
+	color: var(--on-accent);
+}
+#workspace-panel #side-chat-send:disabled {
+	background: var(--wash);
+	color: var(--muted);
+}

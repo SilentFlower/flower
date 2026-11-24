@@ -344,6 +344,477 @@ window.agentUI = (() => {
 		});
 	}
 
+	/**
+	 * 输入框上方的排队消息：显示首行与附件数，可行内编辑、删除、拖动或键盘排序、插话，暂停时显示「继续」。
+	 * @param {HTMLElement} root 队列区域
+	 * @param {object} actions 编辑、删除、排序、继续、插话与更多菜单
+	 * @returns {(view?: {items: object[], paused: boolean, steerable: boolean}) => void} 按 Main 的队列视图更新
+	 */
+	function queueBar(root, actions) {
+		const head = element("div", "queue-head");
+		const title = element("span", "queue-title");
+		const paused = element("span", "queue-paused", "已暂停");
+		const resume = button("继续", () => actions.resume(), "quiet queue-resume");
+		head.append(title, paused, resume);
+		const list = element("ol", "queue-list");
+		window.flowerUI.softScroll(list);
+		root.append(head, list);
+		const rows = new Map();
+		let items = [];
+		let editing;
+		let dragged;
+
+		function reorder(ids) {
+			if (ids.join("\n") !== items.map(({ id }) => id).join("\n")) actions.reorder(ids);
+		}
+		function move(id, step) {
+			const ids = items.map((item) => item.id);
+			const index = ids.indexOf(id);
+			const target = index + step;
+			if (index < 0 || target < 0 || target >= ids.length) return;
+			[ids[index], ids[target]] = [ids[target], ids[index]];
+			reorder(ids);
+		}
+		async function editor(item, entry) {
+			// 先占位再请 Main 暂缓派发这一条，连续点击只进入一次；已发出或正在插话时不进入编辑。
+			if (editing) return;
+			editing = item.id;
+			if (!(await actions.hold(item.id))) {
+				editing = undefined;
+				return;
+			}
+			if (editing !== item.id || !rows.has(item.id) || !entry.row.isConnected) {
+				if (editing === item.id) editing = undefined;
+				return void actions.hold();
+			}
+			const form = element("form", "queue-editor");
+			const field = element("textarea");
+			field.value = item.input;
+			field.maxLength = 16000;
+			field.rows = 3;
+			field.setAttribute("aria-label", "编辑排队消息");
+			let kept = [...item.attachments];
+			const files = element("div", "queue-editor-files");
+			const showFiles = () =>
+				files.replaceChildren(
+					...kept.map((ref) => {
+						const chip = element("span", "file-chip", ref.name);
+						const remove = button(
+							"",
+							() => {
+								kept = kept.filter(({ id }) => id !== ref.id);
+								showFiles();
+								field.focus();
+							},
+							"chip-remove",
+						);
+						remove.setAttribute("aria-label", `移除 ${ref.name}`);
+						remove.title = remove.getAttribute("aria-label");
+						remove.append(icon("panel-close"));
+						chip.append(remove);
+						return chip;
+					}),
+				);
+			showFiles();
+			const close = () => {
+				editing = undefined;
+				actions.hold();
+				form.replaceWith(entry.row);
+				entry.signature = "";
+				update();
+				entry.row.querySelector(".queue-edit")?.focus();
+			};
+			const save = button("保存", () => form.requestSubmit(), "primary");
+			save.type = "submit";
+			const cancel = button("取消", close, "secondary");
+			const footer = element("div", "queue-editor-actions");
+			footer.append(cancel, save);
+			form.append(field, files, footer);
+			form.addEventListener("submit", async (event) => {
+				event.preventDefault();
+				if (!field.value.trim()) return field.focus();
+				if (
+					await actions.edit(
+						item.id,
+						field.value,
+						kept.map(({ id }) => id),
+					)
+				)
+					close();
+			});
+			field.addEventListener("keydown", (event) => {
+				if (event.isComposing || event.keyCode === 229) return;
+				if (event.key === "Escape") {
+					event.preventDefault();
+					close();
+				} else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+					event.preventDefault();
+					form.requestSubmit();
+				}
+			});
+			entry.row.replaceWith(form);
+			field.focus();
+			field.setSelectionRange(field.value.length, field.value.length);
+		}
+		function row(item) {
+			let entry = rows.get(item.id);
+			if (!entry) {
+				const node = element("li", "queue-item");
+				node.dataset.id = item.id;
+				node.draggable = true;
+				const grip = icon("grip");
+				grip.classList.add("queue-grip");
+				const text = element("span", "queue-text");
+				const files = element("span", "queue-files");
+				const steering = element("span", "queue-steering", "插话中…");
+				const steer = button("插话", () => actions.steer(item.id), "quiet queue-steer");
+				steer.title = "在当前这一步结束后送入正在进行的回复";
+				const edit = button("", () => void editor(entry.item, entry), "quiet icon-button queue-edit");
+				edit.setAttribute("aria-label", "编辑");
+				edit.title = "编辑";
+				edit.append(icon("pencil"));
+				const remove = button("", () => actions.remove(item.id), "quiet icon-button");
+				remove.setAttribute("aria-label", "删除");
+				remove.title = "删除";
+				remove.append(icon("trash"));
+				const more = button(
+					"",
+					() => actions.menu(entry.item.id, more, items.indexOf(entry.item), items.length),
+					"quiet icon-button",
+				);
+				more.setAttribute("aria-label", "更多操作");
+				more.setAttribute("aria-haspopup", "menu");
+				more.title = "更多操作";
+				more.append(icon("more"));
+				node.append(grip, text, files, steering, steer, edit, remove, more);
+				// Alt + ↑/↓ 在键盘上调整顺序，与拖动等效。
+				node.addEventListener("keydown", (event) => {
+					if (!event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+					event.preventDefault();
+					move(entry.item.id, event.key === "ArrowUp" ? -1 : 1);
+				});
+				entry = { row: node, text, files, steering, steer, edit, remove, more, signature: "" };
+				rows.set(item.id, entry);
+			}
+			entry.item = item;
+			return entry;
+		}
+		function update(
+			view = { items, paused: root.dataset.paused === "true", steerable: root.dataset.steerable === "true" },
+		) {
+			items = view.items ?? [];
+			root.hidden = !items.length;
+			root.dataset.paused = String(Boolean(view.paused));
+			root.dataset.steerable = String(Boolean(view.steerable));
+			title.textContent = `排队 ${items.length} 条`;
+			paused.hidden = resume.hidden = !view.paused;
+			for (const id of rows.keys()) if (!items.some((item) => item.id === id)) rows.delete(id);
+			if (editing && !rows.has(editing)) editing = undefined;
+			const nodes = items.map((item, index) => {
+				const entry = row(item);
+				const signature = JSON.stringify([item, view.steerable, index, items.length]);
+				if (entry.signature !== signature) {
+					entry.signature = signature;
+					const first = item.input.trim().split(/\r?\n/)[0];
+					entry.text.textContent = first;
+					entry.row.title = item.input;
+					entry.files.replaceChildren(
+						...(item.attachments.length ? [icon("clip"), document.createTextNode(String(item.attachments.length))] : []),
+					);
+					entry.files.hidden = !item.attachments.length;
+					entry.files.title = item.attachments.map(({ name }) => name).join("、");
+					entry.steering.hidden = !item.steering;
+					entry.steer.hidden = item.steering || !view.steerable;
+					for (const control of [entry.edit, entry.remove, entry.more]) control.disabled = item.steering;
+					entry.row.draggable = !item.steering;
+					entry.row.dataset.steering = String(Boolean(item.steering));
+				}
+				// 正在编辑的行保留输入框，不被状态推送替换。
+				return editing === item.id ? (entry.row.isConnected ? entry.row : list.querySelector(".queue-editor")) : entry.row;
+			});
+			let cursor = list.firstElementChild;
+			for (const node of nodes) {
+				if (!node) continue;
+				if (node !== cursor) list.insertBefore(node, cursor);
+				cursor = node.nextElementSibling;
+			}
+			while (cursor) {
+				const next = cursor.nextElementSibling;
+				cursor.remove();
+				cursor = next;
+			}
+		}
+
+		list.addEventListener("dragstart", (event) => {
+			const node = event.target.closest?.(".queue-item");
+			if (!node) return;
+			dragged = node.dataset.id;
+			event.dataTransfer.effectAllowed = "move";
+			event.dataTransfer.setData("application/x-flower-queue", dragged);
+			node.toggleAttribute("data-dragging", true);
+		});
+		list.addEventListener("dragover", (event) => {
+			if (!dragged) return;
+			event.preventDefault();
+			const target = event.target.closest?.(".queue-item");
+			for (const node of list.querySelectorAll("[data-drop]")) if (node !== target) node.removeAttribute("data-drop");
+			if (!target || target.dataset.id === dragged) return;
+			const box = target.getBoundingClientRect();
+			target.dataset.drop = event.clientY < box.top + box.height / 2 ? "before" : "after";
+		});
+		list.addEventListener("drop", (event) => {
+			if (!dragged) return;
+			event.preventDefault();
+			const target = list.querySelector("[data-drop]");
+			if (target) {
+				const ids = items.map(({ id }) => id).filter((id) => id !== dragged);
+				const index = ids.indexOf(target.dataset.id) + (target.dataset.drop === "after" ? 1 : 0);
+				ids.splice(index, 0, dragged);
+				reorder(ids);
+			}
+		});
+		list.addEventListener("dragend", () => {
+			dragged = undefined;
+			for (const node of list.querySelectorAll("[data-drop], [data-dragging]")) {
+				node.removeAttribute("data-drop");
+				node.removeAttribute("data-dragging");
+			}
+		});
+		update.move = move;
+		return update;
+	}
+
+	/**
+	 * 把选中文字转为 Markdown 引用块并插入到光标处，前后留空行，光标停在引用之后。
+	 * @param {string} value 输入框原文
+	 * @param {number} start 选区起点
+	 * @param {number} end 选区终点
+	 * @param {string} text 被引用的文字
+	 * @param {number} limit 输入框字数上限
+	 * @returns {{value: string, caret: number} | undefined} 插入后的内容与光标；超出上限时为 undefined
+	 */
+	function quoteInsertion(value, start, end, text, limit) {
+		const block = text
+			.replace(/\r\n?/g, "\n")
+			.trim()
+			.split("\n")
+			.map((line) => (line ? `> ${line}` : ">"))
+			.join("\n");
+		const before = value.slice(0, start);
+		const lead = !before || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+		const insert = `${lead}${block}\n\n`;
+		const next = before + insert + value.slice(end);
+		if (next.length > limit) return;
+		return { value: next, caret: before.length + insert.length };
+	}
+
+	/**
+	 * 回复选区工具条：选区完全位于同一条回复的正文内时，在选区末端上方显示「引用」「侧边追问」。
+	 * @param {HTMLElement} scroll 会话滚动区域
+	 * @param {HTMLElement} toolbar 工具条，按钮带 data-selection="quote|side"
+	 * @param {{quote(text: string): void, side(text: string): void}} actions 引用与侧边追问
+	 * @returns {{current(): {text: string} | undefined}} 当前有效的回复选区
+	 */
+	function selectionActions(scroll, toolbar, actions) {
+		let frame = 0;
+		let picked;
+		function current() {
+			const selection = document.getSelection();
+			if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+			const range = selection.getRangeAt(0);
+			const holder = (node) =>
+				(node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest(".markdown-reply");
+			const start = holder(range.startContainer);
+			const end = holder(range.endContainer);
+			const reply = start?.closest(".assistant-message");
+			if (!end || !reply || reply !== end.closest(".assistant-message") || !scroll.contains(reply)) return;
+			const text = selection.toString().trim();
+			return text ? { text, range } : undefined;
+		}
+		function hide() {
+			toolbar.hidden = true;
+			picked = undefined;
+		}
+		function sync() {
+			frame = 0;
+			picked = current();
+			if (!picked || scroll.hidden) return hide();
+			const rects = picked.range.getClientRects();
+			const last = rects[rects.length - 1] ?? picked.range.getBoundingClientRect();
+			const area = scroll.getBoundingClientRect();
+			// 选区末端已滚出会话区时不显示，避免工具条浮在输入区或标题栏上。
+			if (last.bottom < area.top || last.top > area.bottom) return hide();
+			toolbar.hidden = false;
+			const above = last.top - toolbar.offsetHeight - 6;
+			const top = above >= area.top ? above : Math.min(last.bottom + 6, area.bottom - toolbar.offsetHeight);
+			const left = Math.min(
+				Math.max(area.left + 6, last.right - toolbar.offsetWidth / 2),
+				area.right - toolbar.offsetWidth - 6,
+			);
+			toolbar.style.top = `${top}px`;
+			toolbar.style.left = `${left}px`;
+		}
+		const schedule = () => {
+			if (!frame) frame = requestAnimationFrame(sync);
+		};
+		document.addEventListener("selectionchange", schedule);
+		scroll.addEventListener("scroll", schedule, { passive: true });
+		window.addEventListener("resize", schedule);
+		// 按下按钮时保留选区。
+		toolbar.addEventListener("mousedown", (event) => event.preventDefault());
+		toolbar.addEventListener("click", (event) => {
+			const choice = event.target.closest("[data-selection]")?.dataset.selection;
+			if (!choice || !picked) return;
+			const { text } = picked;
+			document.getSelection()?.removeAllRanges();
+			hide();
+			actions[choice]?.(text);
+		});
+		document.addEventListener("keydown", (event) => {
+			if (event.key === "Escape" && !toolbar.hidden) hide();
+		});
+		return { current };
+	}
+
+	/**
+	 * 取光标前正在输入的 @ 查询：@ 位于行首或空白之后，查询中不含空白与 @。
+	 * @param {string} value 输入框原文
+	 * @param {number} caret 光标位置
+	 * @returns {{start: number, query: string} | undefined} @ 的位置与查询
+	 */
+	function mentionQuery(value, caret) {
+		const match = /(^|\s)@([^\s@]{0,80})$/.exec(value.slice(0, caret));
+		if (!match) return;
+		return { start: caret - match[2].length - 1, query: match[2] };
+	}
+
+	/**
+	 * 输入框 @ 补全工作区文件。列表打开时方向键、Enter、Tab 与 Esc 由补全处理，不触发历史召回与发送；输入法组合中不触发。
+	 * @param {HTMLTextAreaElement} input 输入框
+	 * @param {HTMLElement} list 候选列表
+	 * @param {{search(query: string): Promise<string[] | undefined>, pick(path: string): void}} actions 查询与选中
+	 * @returns {{close(): void}} 关闭列表
+	 */
+	function mentionPicker(input, list, actions) {
+		let composing = false;
+		let current;
+		let options = [];
+		let active = -1;
+		let stamp = 0;
+		let timer;
+		window.flowerUI.softScroll(list);
+		input.setAttribute("aria-autocomplete", "list");
+		input.setAttribute("aria-controls", list.id);
+		input.setAttribute("aria-expanded", "false");
+		function close() {
+			clearTimeout(timer);
+			stamp++;
+			current = undefined;
+			options = [];
+			active = -1;
+			list.hidden = true;
+			list.replaceChildren();
+			input.setAttribute("aria-expanded", "false");
+			input.removeAttribute("aria-activedescendant");
+		}
+		function highlight(index) {
+			active = index;
+			for (const [position, node] of [...list.children].entries())
+				node.setAttribute("aria-selected", String(position === index));
+			const node = list.children[index];
+			if (!node) return input.removeAttribute("aria-activedescendant");
+			input.setAttribute("aria-activedescendant", node.id);
+			node.scrollIntoView({ block: "nearest" });
+		}
+		function show(paths) {
+			if (!paths) return close();
+			options = paths;
+			list.hidden = false;
+			input.setAttribute("aria-expanded", "true");
+			list.replaceChildren(
+				...(paths.length
+					? paths.map((path, index) => {
+							const slash = path.lastIndexOf("/");
+							const option = element("div", "mention-option");
+							option.id = `mention-option-${index}`;
+							option.setAttribute("role", "option");
+							option.title = path;
+							option.append(
+								element("span", "mention-name", path.slice(slash + 1)),
+								element("span", "mention-path", slash > 0 ? path.slice(0, slash) : ""),
+							);
+							return option;
+						})
+					: [element("div", "mention-empty", "没有匹配的文件")]),
+			);
+			highlight(paths.length ? 0 : -1);
+		}
+		function refresh() {
+			if (composing) return;
+			const next = input.selectionStart === input.selectionEnd && mentionQuery(input.value, input.selectionStart);
+			if (!next) return close();
+			current = next;
+			clearTimeout(timer);
+			const ticket = ++stamp;
+			// 连续输入时合并查询，迟到的结果按序号丢弃。
+			timer = setTimeout(async () => {
+				let paths;
+				try {
+					paths = await actions.search(next.query);
+				} catch {
+					paths = [];
+				}
+				if (ticket === stamp) show(paths);
+			}, 120);
+		}
+		function choose(index) {
+			const path = options[index];
+			if (!path || !current) return;
+			const { start } = current;
+			input.value = input.value.slice(0, start) + input.value.slice(input.selectionStart);
+			input.setSelectionRange(start, start);
+			close();
+			input.dispatchEvent(new Event("input", { bubbles: true }));
+			actions.pick(path);
+		}
+		input.addEventListener("input", refresh);
+		input.addEventListener("compositionstart", () => {
+			composing = true;
+			close();
+		});
+		input.addEventListener("compositionend", () => {
+			composing = false;
+			refresh();
+		});
+		input.addEventListener("blur", close);
+		input.addEventListener("keyup", (event) => {
+			if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) refresh();
+		});
+		// 捕获阶段先于输入框的普通按键监听执行，列表打开时截获导航与确认键。
+		input.addEventListener(
+			"keydown",
+			(event) => {
+				if (list.hidden || event.isComposing || composing || event.keyCode === 229) return;
+				const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
+				const confirm = (event.key === "Enter" || event.key === "Tab") && !event.shiftKey;
+				if (step === undefined && !confirm && event.key !== "Escape") return;
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				if (step !== undefined) {
+					if (options.length) highlight((active + step + options.length) % options.length);
+				} else if (confirm && options.length) choose(active);
+				else close();
+			},
+			{ capture: true },
+		);
+		list.addEventListener("mousedown", (event) => event.preventDefault());
+		list.addEventListener("click", (event) => {
+			const option = event.target.closest(".mention-option");
+			if (option) choose([...list.children].indexOf(option));
+		});
+		return { close };
+	}
+
 	/** 将毫秒耗时格式化为中文时长。@param {number} ms 毫秒 @returns {string} 如「2 分 13 秒」 */
 	function duration(ms) {
 		const seconds = Math.max(1, Math.round(ms / 1000));
@@ -493,6 +964,37 @@ window.agentUI = (() => {
 		thought.setAttribute("aria-live", "polite");
 		const text = element("div", "message-text markdown-reply");
 		const markdown = window.flowerMarkdown.view(text, actions.openLink, actions.paths);
+		// 每条插话后接一段回复正文，按送达时的正文位置切分。
+		const segments = [];
+		function showSteers(steers, full) {
+			const cuts = steers.map(({ textOffset }) => Math.min(Math.max(0, textOffset ?? full.length), full.length));
+			markdown.update(full.slice(0, cuts[0] ?? full.length));
+			while (segments.length < steers.length) {
+				const bubble = element("div", "steer-message");
+				const words = element("p", "steer-text");
+				const files = element("div", "message-file file-chips");
+				const showFiles = window.flowerAttachments.view(files, undefined, id, actions.previewAttachment);
+				bubble.append(element("span", "steer-label", "插话"), words, files);
+				const body = element("div", "message-text markdown-reply");
+				const view = window.flowerMarkdown.view(body, actions.openLink, actions.paths);
+				(segments.at(-1)?.body ?? text).after(bubble, body);
+				segments.push({ bubble, words, showFiles, body, view });
+			}
+			while (segments.length > steers.length) {
+				const last = segments.pop();
+				last.showFiles.dispose();
+				last.bubble.remove();
+				last.body.remove();
+			}
+			for (const [index, steer] of steers.entries()) {
+				const segment = segments[index];
+				if (segment.words.textContent !== steer.input) segment.words.textContent = steer.input;
+				segment.showFiles(steer.attachments ?? []);
+				const part = full.slice(cuts[index], cuts[index + 1] ?? full.length);
+				segment.view.update(part);
+				segment.body.hidden = !part;
+			}
+		}
 		const failure = element("p", "message-text message-error");
 		const steps = toolSteps();
 		const deliveries = deliverables((path) => actions.open(id, path), actions.preview, actions.paths?.menu);
@@ -501,7 +1003,10 @@ window.agentUI = (() => {
 		return {
 			node,
 			reply: text,
-			dispose: showFiles.dispose,
+			dispose() {
+				showFiles.dispose();
+				for (const segment of segments) segment.showFiles.dispose();
+			},
 			update(next) {
 				record = next;
 				node.dataset.status = record.status;
@@ -524,7 +1029,7 @@ window.agentUI = (() => {
 				retry.hidden = edit.hidden = !unfinished;
 				copyInput.hidden = !record.input;
 				copy.hidden = !record.text || !record.status || ["queued", "running", "cancelling"].includes(record.status);
-				markdown.update(record.text ?? "");
+				showSteers(record.steers ?? [], record.text ?? "");
 				failure.hidden = !record.failure;
 				if (failure.textContent !== (record.failure ?? "")) failure.textContent = record.failure ?? "";
 				steps.update(record.steps ?? [], record);
@@ -811,5 +1316,17 @@ window.agentUI = (() => {
 		};
 	}
 
-	return { sessionList, bindComposer, thread, inputRecall, navigatorTurn, turnPreview };
+	return {
+		sessionList,
+		bindComposer,
+		thread,
+		inputRecall,
+		navigatorTurn,
+		turnPreview,
+		queueBar,
+		quoteInsertion,
+		selectionActions,
+		mentionQuery,
+		mentionPicker,
+	};
 })();

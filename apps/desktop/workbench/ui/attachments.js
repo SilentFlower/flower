@@ -102,12 +102,14 @@
 	/** 绑定输入卡的文件拖入和图片粘贴。@param composer 输入卡 @param host 桌面接口 @param workspace 取得或选择当前会话 @param action 操作与错误反馈包装 @returns 无 */
 	function bind(composer, host, workspace, action) {
 		const files = (event) => event.dataTransfer?.types.includes("Files");
+		// 从工作区文件面板拖来的文件行，携带工作区相对路径。
+		const panelFile = (event) => event.dataTransfer?.types.includes("application/x-flower-path");
 		for (const type of ["dragover", "drop"])
 			window.addEventListener(type, (event) => {
 				if (files(event)) event.preventDefault();
 			});
 		composer.addEventListener("dragover", (event) => {
-			if (!files(event)) return;
+			if (!files(event) && !panelFile(event)) return;
 			event.preventDefault();
 			event.dataTransfer.dropEffect = "copy";
 			composer.dataset.drag = "true";
@@ -117,6 +119,15 @@
 		});
 		composer.addEventListener("drop", (event) => {
 			delete composer.dataset.drag;
+			if (panelFile(event)) {
+				event.preventDefault();
+				const path = event.dataTransfer.getData("application/x-flower-path");
+				void action(async () => {
+					const id = await workspace();
+					if (id && path) await host.referenceFile(id, path);
+				})();
+				return;
+			}
 			if (!files(event)) return;
 			event.preventDefault();
 			const dropped = [...event.dataTransfer.files];

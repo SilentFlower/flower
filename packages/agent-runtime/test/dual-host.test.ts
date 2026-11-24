@@ -519,6 +519,32 @@ describe("共享 pi 核心的双宿主验证", () => {
 		expect(JSON.stringify((await host.client.getSession("model")).messages)).not.toContain("中止的模型请求");
 	});
 
+	it("企业宿主运行中插话：工具读取期间排入，当前一步结束后送达并随请求记录保存", async () => {
+		const host = await enterprise();
+		host.holdRead("steer");
+		const a = await host.client.submit("steer", "插话请求");
+		const started = await host.trace.event("steer", "started", a.requestId);
+		await host.trace.probe("steer", "read_chunk");
+		await host.client.steer("steer", eventRunId(started), "steer-1", "补充：只看第一行");
+		host.releaseRead("steer");
+		const steered = await host.trace.event("steer", "steered", a.requestId);
+		const terminal = await host.trace.event("steer", "terminal", a.requestId);
+		expect(steered.event).toMatchObject({ type: "steered", steerId: "steer-1", runId: eventRunId(started) });
+		expect(terminal.event).toMatchObject({ status: "succeeded" });
+		const events = host.trace.rows
+			.filter((frame): frame is EventFrame => frame.kind === "event" && frame.event.sessionId === "steer")
+			.map(({ event }) => event);
+		expectSequence(events);
+		const [record] = (await host.client.getSession("steer")).requests;
+		expect(record?.steers).toEqual([
+			expect.objectContaining({ steerId: "steer-1", input: "补充：只看第一行", textOffset: expect.any(Number) }),
+		]);
+		expect(JSON.stringify(host.stats().modelCalls.at(-1)?.messages)).toContain("补充：只看第一行");
+		await expect(host.client.steer("steer", eventRunId(started), "steer-2", "已结束")).rejects.toMatchObject({
+			code: "invalid-input",
+		});
+	});
+
 	it("真实 Agent 的 agent_end 监听器释放前，队首不会开始", async () => {
 		const original = NativeAgent.prototype.subscribe;
 		const seen = Promise.withResolvers<void>();

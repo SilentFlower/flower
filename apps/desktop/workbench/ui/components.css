@@ -126,7 +126,9 @@
 	}
 }
 
+/* 定位 @ 补全浮层。 */
 .composer {
+	position: relative;
 	display: grid;
 	gap: var(--composer-gap, 5px);
 	padding: var(--composer-padding, 8px 8px 7px);

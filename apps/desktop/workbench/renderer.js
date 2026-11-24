@@ -1,6 +1,7 @@
 const ui = window.flower;
 const { agentUI, flowerUI } = window;
 const by = (id) => document.getElementById(id);
+const toast = window.flowerToast.mount(by("toasts"));
 const activeStatuses = new Set(["queued", "running", "cancelling"]);
 let state;
 let session;
@@ -141,11 +142,15 @@ function openSidebarMenu(type, key, trigger) {
 			return control;
 		}),
 	);
-	sidebarOptions.showPopover();
+	showMenu(sidebarOptions, trigger);
+}
+/** 在触发按钮旁打开菜单，空间不足时翻到上方，并聚焦第一项。@param {HTMLElement} menu 菜单 @param {HTMLElement} trigger 触发按钮 @returns {void} */
+function showMenu(menu, trigger) {
+	menu.showPopover();
 	const rect = trigger.getBoundingClientRect();
-	sidebarOptions.style.left = `${Math.max(6, Math.min(innerWidth - sidebarOptions.offsetWidth - 6, rect.right - sidebarOptions.offsetWidth))}px`;
-	sidebarOptions.style.top = `${rect.bottom + sidebarOptions.offsetHeight < innerHeight - 6 ? rect.bottom + 3 : Math.max(6, rect.top - sidebarOptions.offsetHeight - 3)}px`;
-	sidebarOptions.firstElementChild.focus();
+	menu.style.left = `${Math.max(6, Math.min(innerWidth - menu.offsetWidth - 6, rect.right - menu.offsetWidth))}px`;
+	menu.style.top = `${rect.bottom + menu.offsetHeight < innerHeight - 6 ? rect.bottom + 3 : Math.max(6, rect.top - menu.offsetHeight - 3)}px`;
+	menu.querySelector("button:not(:disabled)")?.focus();
 }
 function menuNavigation(event) {
 	const buttons = [...event.currentTarget.querySelectorAll("button")];
@@ -162,6 +167,60 @@ function menuNavigation(event) {
 	}
 }
 sidebarOptions.addEventListener("keydown", menuNavigation);
+const queueOptions = by("queue-options");
+queueOptions.addEventListener("keydown", menuNavigation);
+/** 排队消息的更多操作。@param {string} item 排队消息 ID @param {HTMLElement} trigger 触发按钮 @param {number} index 位置 @param {number} count 总数 @returns {void} */
+function openQueueMenu(item, trigger, index, count) {
+	const entries = [
+		["up", "上移", index > 0, () => updateQueue.move(item, -1)],
+		["down", "下移", index < count - 1, () => updateQueue.move(item, 1)],
+		["side", "侧边追问", true, () => void sideChat.fromQueue(item, trigger)],
+	];
+	queueOptions.replaceChildren(
+		...entries.map(([operation, title, enabled, run]) => {
+			const control = flowerUI.button(
+				title,
+				() => {
+					queueOptions.hidePopover();
+					trigger.focus();
+					run();
+				},
+				"sidebar-menu-item",
+			);
+			control.setAttribute("role", "menuitem");
+			control.dataset.operation = operation;
+			control.disabled = !enabled;
+			return control;
+		}),
+	);
+	showMenu(queueOptions, trigger);
+}
+const updateQueue = agentUI.queueBar(by("queue"), {
+	resume: () => action(() => ui.resumeQueue(session))(),
+	steer: (item) => action(() => ui.steerQueueItem(session, item))(),
+	remove: (item) => action(() => ui.removeQueueItem(session, item))(),
+	reorder: (ids) => action(() => ui.reorderQueue(session, ids))(),
+	/** 开始编辑时返回是否成功暂缓；不传 ID 表示结束编辑。 */
+	async hold(item) {
+		try {
+			await ui.holdQueueItem(session, item);
+			return true;
+		} catch (error) {
+			if (item) toast(modelError(error, "这条排队消息已发送或已删除。"), { tone: "error" });
+			return false;
+		}
+	},
+	async edit(item, input, keep) {
+		try {
+			await ui.editQueueItem(session, item, input, keep);
+			return true;
+		} catch (error) {
+			toast(modelError(error, "无法保存修改。"), { tone: "error" });
+			return false;
+		}
+	},
+	menu: openQueueMenu,
+});
 by("sidebar-cancel").onclick = () => sidebarDialog.close();
 sidebarDialog.addEventListener("close", () => {
 	const trigger = sidebarEdit?.trigger;
@@ -315,14 +374,14 @@ const thread = agentUI.thread(
 		copy: (id) =>
 			action(async () => {
 				await ui.copyReply(session, id);
-				flowerUI.feedback(by("feedback"), "已复制回复原文。");
+				toast("已复制回复原文。");
 			})(),
 		copyInput: (id) =>
 			action(async () => {
 				const input = timelines.get(session)?.requests.get(id)?.input;
 				if (!input) return;
 				await ui.copyText(input);
-				flowerUI.feedback(by("feedback"), "已复制提问原文。");
+				toast("已复制提问原文。");
 			})(),
 		retry: (id) =>
 			action(async () => {
@@ -330,7 +389,7 @@ const thread = agentUI.thread(
 				const original = timelines.get(selected)?.requests.get(id);
 				const record = await ui.retryRequest(selected, id);
 				const timeline = timelines.get(selected);
-				if (!timeline) return;
+				if (!timeline || record.queued) return;
 				const current = timeline.requests.get(record.requestId);
 				timeline.requests.set(record.requestId, {
 					...record,
@@ -390,6 +449,43 @@ function confirmAction(title, detail, apply) {
 		);
 	});
 }
+const sideChat = window.createSideChat(ui, {
+	panel: workspacePanel,
+	toast,
+	confirm: confirmAction,
+	apply: applyEvent,
+	errorText: modelError,
+});
+/** 把回复中的选中文字以引用块插入输入框。@param {string} text 选中文字 @returns {void} */
+function quoteIntoPrompt(text) {
+	const prompt = by("prompt");
+	const result = agentUI.quoteInsertion(
+		prompt.value,
+		prompt.selectionStart,
+		prompt.selectionEnd,
+		text,
+		prompt.maxLength,
+	);
+	if (!result) return toast("引用后超过 16000 字，未插入。", { tone: "error" });
+	prompt.value = result.value;
+	prompt.focus();
+	prompt.setSelectionRange(result.caret, result.caret);
+	prompt.dispatchEvent(new Event("input", { bubbles: true }));
+}
+const replySelection = agentUI.selectionActions(by("thread-scroll"), by("selection-actions"), {
+	quote: quoteIntoPrompt,
+	side: (text) => void sideChat.open(text),
+});
+// 回复选区上的右键改用专门菜单；路径、交付文件等已自行处理的右键与选区外的位置仍按原样。
+let menuSelection;
+by("timeline").addEventListener("contextmenu", (event) => {
+	if (event.defaultPrevented) return;
+	const picked = replySelection.current();
+	if (!picked?.range.intersectsNode(event.target)) return;
+	event.preventDefault();
+	menuSelection = picked.text;
+	void ui.showReplyMenu();
+});
 for (const node of document.querySelectorAll("[data-flower]")) node.append(flowerUI.mark(node.dataset.flower));
 agentUI.bindComposer(by("prompt"), by("send"), () => {
 	const inputs = [];
@@ -400,14 +496,18 @@ agentUI.bindComposer(by("prompt"), by("send"), () => {
 	return inputs;
 });
 
+agentUI.mentionPicker(by("prompt"), by("mention-list"), {
+	search: (query) => (session ? ui.workspaceFiles(session, query) : Promise.resolve(undefined)),
+	pick: (path) => action(() => ui.referenceFile(session, path))(),
+});
+
 function action(fn) {
 	return async () => {
 		flowerUI.feedback(by("feedback"), "");
 		try {
 			await fn();
 		} catch (error) {
-			const text = error?.message?.replace(/^Error invoking remote method '[^']+': Error: /, "") ?? "操作未完成";
-			flowerUI.feedback(by("feedback"), text, "error");
+			toast(modelError(error, "操作未完成"), { tone: "error" });
 		}
 	};
 }
@@ -792,7 +892,7 @@ async function reloadHistory(id) {
 		timeline.failed = true;
 		if (id === session) {
 			renderRequests();
-			flowerUI.feedback(by("feedback"), "暂时无法读取此会话历史。", "error");
+			toast("暂时无法读取此会话历史。", { tone: "error" });
 		}
 	} finally {
 		if (timeline.reading === stamp) timeline.reading = undefined;
@@ -927,6 +1027,8 @@ function update(next) {
 	by("workspace").title = selected ? `切换工作区 · ${selected.path}` : workspaceLabel;
 	by("workspace").setAttribute("aria-label", selected ? `切换工作区：${workspaceLabel}` : workspaceLabel);
 	showDraftFiles(selected?.attachments, session);
+	updateQueue(next.queue);
+	sideChat.setState(session, next.sideChats, next.runtimeRevision);
 	by("composer-workspace").querySelector("span").textContent = selected ? "切换工作区…" : "选择工作区…";
 	if (old !== session) {
 		const prompt = by("prompt");
@@ -1016,10 +1118,13 @@ by("write-cancel-task").addEventListener(
 );
 function syncSend() {
 	const send = by("send");
+	const selected = state?.sessions.find(({ id }) => id === session);
 	const label = !session
 		? "提交任务（先选择工作区）"
 		: model
-			? "提交任务"
+			? selected?.busy || state?.queue?.items.length
+				? "加入队列（当前任务结束后发送）"
+				: "提交任务"
 			: state?.modelSettings && !state.modelSettings.keyUnavailable
 				? "提交任务（先选择模型）"
 				: "提交任务（先配置模型）";
@@ -1030,21 +1135,13 @@ function syncSend() {
 	send.disabled = !state?.ready || effortSaving || !by("prompt").value.trim();
 }
 
-function receive(event) {
-	if (!event?.sessionId) return;
-	const { sessionId, requestId, type } = event;
-	if (type === "terminal" && !timelines.has(sessionId)) return;
-	const timeline = timelineFor(sessionId);
-	const { requests } = timeline;
-	if (type !== "terminal") timeline.active.add(requestId);
-	const record = requests.get(event.requestId) ?? {
-		input: "",
-		requestId: event.requestId,
-		text: "",
-		status: "queued",
-		steps: [],
-	};
-	requests.set(event.requestId, record);
+/**
+ * 按运行事件更新请求记录的状态、正文、插话与工具步骤。主会话与侧边追问共用。
+ * @param {object} record 请求记录
+ * @param {object} event 运行时事件
+ * @returns {void}
+ */
+function applyEvent(record, event) {
 	record.eventRevision = ++eventRevision;
 	if (event.runId) record.runId = event.runId;
 	switch (event.type) {
@@ -1061,6 +1158,18 @@ function receive(event) {
 		case "text_delta":
 			record.text += event.delta;
 			break;
+		case "steered":
+			// 送达位置以此刻已收到的正文长度为准，终态后由历史记录校正。
+			record.steers = [
+				...(record.steers ?? []),
+				{
+					steerId: event.steerId,
+					input: event.input ?? "",
+					attachments: event.attachments ?? [],
+					textOffset: record.text.length,
+				},
+			];
+			break;
 		case "tool_started":
 			record.steps.push({
 				toolCallId: event.toolCallId,
@@ -1072,21 +1181,41 @@ function receive(event) {
 		case "tool_result": {
 			const step = record.steps.find(({ toolCallId, endedAt }) => toolCallId === event.toolCallId && !endedAt);
 			if (step) Object.assign(step, { endedAt: event.at, isError: event.isError });
-			forgetMissingPaths(sessionId);
 			break;
 		}
 		case "terminal":
-			forgetMissingPaths(sessionId);
-			timeline.active.delete(requestId);
 			record.status = event.status;
 			record.failure = event.failure?.message;
 			record.endedAt = event.at;
-			// 后台终态已经落盘。下次打开时读取，避免在后台为整段历史再分配内存。
-			invalidateHistory(timeline);
-			pruneTimelines();
-			if (sessionId === session) void reloadHistory(sessionId);
-			if (sessionId === session) void refreshContextUsage();
 			break;
+	}
+}
+
+function receive(event) {
+	if (!event?.sessionId || sideChat.receive(event)) return;
+	const { sessionId, requestId, type } = event;
+	if (type === "terminal" && !timelines.has(sessionId)) return;
+	const timeline = timelineFor(sessionId);
+	const { requests } = timeline;
+	if (type !== "terminal") timeline.active.add(requestId);
+	const record = requests.get(event.requestId) ?? {
+		input: "",
+		requestId: event.requestId,
+		text: "",
+		status: "queued",
+		steps: [],
+	};
+	requests.set(event.requestId, record);
+	applyEvent(record, event);
+	if (type === "tool_result") forgetMissingPaths(sessionId);
+	if (type === "terminal") {
+		forgetMissingPaths(sessionId);
+		timeline.active.delete(requestId);
+		// 后台终态已经落盘。下次打开时读取，避免在后台为整段历史再分配内存。
+		invalidateHistory(timeline);
+		pruneTimelines();
+		if (sessionId === session) void reloadHistory(sessionId);
+		if (sessionId === session) void refreshContextUsage();
 	}
 	if (sessionId === session) {
 		// 同一绘制帧内的分片共用一次排版，完整原文仍逐片追加。
@@ -1743,6 +1872,7 @@ by("send").addEventListener(
 		timeline.submitting++;
 		try {
 			const record = await ui.submit(selected, text);
+			if (record.queued) return;
 			const { requests } = timeline;
 			const current = requests.get(record.requestId);
 			requests.set(record.requestId, {
@@ -1773,6 +1903,15 @@ const unsubscribe = ui.subscribe((message) => {
 	if (message.kind === "state") update(message.state);
 	else if (message.kind === "event") receive(message.event);
 	else if (message.kind === "reasoning") receiveReasoning(message);
+	else if (message.kind === "reply-menu" && menuSelection) {
+		const text = menuSelection;
+		menuSelection = undefined;
+		if (message.choice === "quote") quoteIntoPrompt(text);
+		else if (message.choice === "side") void sideChat.open(text);
+	} else if (message.kind === "notice") {
+		const title = message.session !== session && state?.sessions.find(({ id }) => id === message.session)?.title;
+		toast(title ? `${title}：${message.text}` : message.text, { tone: message.tone });
+	}
 	// 点击系统通知后回到对应会话，与侧栏点击走同一路径。
 	else if (message.kind === "focus-session" && message.id !== session) action(() => ui.selectSession(message.id))();
 });

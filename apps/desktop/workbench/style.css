@@ -1925,7 +1925,8 @@ summary:focus-visible {
 		right: 23px;
 	}
 }
-#sidebar-options {
+#sidebar-options,
+#queue-options {
 	position: fixed;
 	inset: auto;
 	margin: 0;
@@ -1933,6 +1934,7 @@ summary:focus-visible {
 	min-width: 144px;
 }
 #sidebar-options,
+#queue-options,
 #sidebar-dialog,
 #confirm-dialog {
 	border: 1px solid var(--line);
@@ -1986,4 +1988,312 @@ summary:focus-visible {
 #sidebar-apply.destructive {
 	background: var(--danger);
 	color: var(--surface);
+}
+/* Toast：标题栏下方靠右，最多三条纵向排列；不遮挡输入区与发送按钮。 */
+.toasts {
+	position: fixed;
+	top: calc(var(--titlebar-height) + 8px);
+	right: 16px;
+	z-index: 30;
+	display: grid;
+	gap: 8px;
+	width: min(360px, calc(100vw - 32px));
+	pointer-events: none;
+}
+.toast {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 6px 6px 14px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--surface);
+	color: var(--ink);
+	box-shadow: 0 6px 22px rgb(0 0 0 / 12%);
+	font-size: 13px;
+	pointer-events: auto;
+}
+.toast-text {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+.toast[data-tone="error"] {
+	border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+}
+.toast[data-tone="error"] .toast-text {
+	color: var(--danger);
+}
+.toast .toast-action {
+	flex: none;
+	color: var(--accent);
+	font-weight: 600;
+}
+.toast .toast-close {
+	flex: none;
+	width: 28px;
+	min-height: 28px;
+	padding: 0;
+}
+.toast .toast-close .icon {
+	width: 14px;
+	height: 14px;
+}
+@media (prefers-reduced-motion: no-preference) {
+	.toast {
+		animation: toast-in 160ms ease-out;
+	}
+	.toast[data-repeat] {
+		animation: toast-repeat 240ms ease-out;
+	}
+}
+@keyframes toast-in {
+	from {
+		opacity: 0;
+		translate: 0 -6px;
+	}
+}
+@keyframes toast-repeat {
+	50% {
+		scale: 1.02;
+	}
+}
+/* 排队消息：贴在输入框上方，与输入框等宽，行内显示首行、附件数与操作。 */
+.composer-queue:not([hidden]) {
+	display: grid;
+	gap: 2px;
+	margin-bottom: 6px;
+	padding: 6px 6px 4px;
+	border: 1px solid var(--line);
+	border-radius: 16px;
+	background: var(--surface);
+	font-size: 13px;
+}
+.queue-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 26px;
+	padding-inline: 8px 2px;
+	color: var(--muted);
+	font-size: 12px;
+}
+.queue-paused {
+	color: var(--warn);
+}
+.queue-head .queue-resume {
+	margin-inline-start: auto;
+	min-height: 26px;
+	padding-block: 2px;
+	color: var(--accent);
+}
+.queue-list {
+	display: grid;
+	gap: 1px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	max-height: 168px;
+	overflow: auto;
+}
+.queue-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	min-height: 32px;
+	padding-inline: 4px 2px;
+	border-radius: var(--radius);
+}
+.queue-item:hover,
+.queue-item:focus-within {
+	background: var(--wash);
+}
+.queue-item[data-dragging] {
+	opacity: 0.5;
+}
+.queue-item[data-drop="before"]::before,
+.queue-item[data-drop="after"]::after {
+	content: "";
+	position: absolute;
+	inset-inline: 6px;
+	height: 2px;
+	border-radius: 1px;
+	background: var(--accent);
+}
+.queue-item[data-drop="before"]::before {
+	top: -1px;
+}
+.queue-item[data-drop="after"]::after {
+	bottom: -1px;
+}
+.queue-grip {
+	width: 14px;
+	height: 14px;
+	color: var(--muted);
+	cursor: grab;
+}
+.queue-item[data-steering="true"] .queue-grip {
+	cursor: default;
+	opacity: 0.4;
+}
+.queue-text {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.queue-files {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	color: var(--muted);
+	font-size: 12px;
+}
+.queue-files .icon {
+	width: 13px;
+	height: 13px;
+}
+.queue-steering {
+	color: var(--accent);
+	font-size: 12px;
+}
+.queue-item .button {
+	min-height: 28px;
+	padding-block: 2px;
+}
+.queue-item .button.icon-button {
+	width: 28px;
+	padding: 0;
+}
+.queue-item .button .icon {
+	width: 15px;
+	height: 15px;
+}
+.queue-item .queue-steer {
+	color: var(--accent);
+	font-size: 12px;
+}
+.queue-editor {
+	display: grid;
+	gap: 6px;
+	padding: 6px 4px;
+}
+.queue-editor textarea {
+	width: 100%;
+	min-height: 64px;
+	max-height: 180px;
+	resize: vertical;
+	padding: 8px 10px;
+	border: 1px solid var(--edge);
+	border-radius: var(--radius);
+	background: var(--surface);
+	color: var(--ink);
+	font: inherit;
+}
+.queue-editor-files {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+.queue-editor-files:empty {
+	display: none;
+}
+.queue-editor-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 6px;
+}
+/* 插话：在回复中送达的位置显示用户补充的要求。 */
+.steer-message {
+	justify-self: end;
+	display: grid;
+	justify-items: end;
+	gap: 4px;
+	max-width: min(87%, 590px);
+	margin-block: 4px;
+}
+.steer-label {
+	color: var(--muted);
+	font-size: 12px;
+}
+.steer-text {
+	margin: 0;
+	padding: 7px 12px;
+	border-radius: 16px;
+	background: var(--wash);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+/* 回复选区工具条：浮在选区末端上方，按下按钮不清除选区。 */
+.selection-actions:not([hidden]) {
+	position: fixed;
+	z-index: 25;
+	display: flex;
+	gap: 2px;
+	padding: 3px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--surface);
+	box-shadow: 0 6px 22px rgb(0 0 0 / 14%);
+}
+.selection-actions .button {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-height: 28px;
+	padding: 3px 9px;
+	font-size: 13px;
+}
+.selection-actions .icon {
+	width: 15px;
+	height: 15px;
+}
+/* @ 补全：浮在输入框上方，按文件名与所在目录两行显示。 */
+.mention-list:not([hidden]) {
+	position: absolute;
+	bottom: calc(100% + 6px);
+	left: 0;
+	z-index: 4;
+	width: min(420px, 100%);
+	max-height: 260px;
+	overflow: auto;
+	padding: 4px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--surface);
+	box-shadow: 0 8px 28px rgb(0 0 0 / 14%);
+}
+.mention-option {
+	display: grid;
+	gap: 1px;
+	padding: 5px 9px;
+	border-radius: var(--radius);
+	cursor: pointer;
+	font-size: 13px;
+}
+.mention-option[aria-selected="true"] {
+	background: var(--hover);
+}
+.mention-name,
+.mention-path {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mention-path {
+	color: var(--muted);
+	font-size: 12px;
+}
+.mention-path:empty {
+	display: none;
+}
+.mention-empty {
+	padding: 6px 9px;
+	color: var(--muted);
+	font-size: 13px;
 }

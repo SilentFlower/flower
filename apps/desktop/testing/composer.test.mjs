@@ -51,3 +51,34 @@ test("长粘贴按字数、行数与输入框上限转为附件", () => {
 	assert.equal(longPaste("字".repeat(1000), field("草".repeat(15001), 0, 1000)), false);
 	assert.equal(longPaste("", field()), false);
 });
+
+test("引用选中文字：逐行加引用符，前后留空行，光标停在引用之后，超出上限不插入", () => {
+	const { quoteInsertion } = load("agent.js").agentUI;
+	assert.deepEqual(
+		{ ...quoteInsertion("", 0, 0, "  报价 537\r\n\r\n预算 500  ", 16000) },
+		{
+			value: "> 报价 537\n>\n> 预算 500\n\n",
+			caret: "> 报价 537\n>\n> 预算 500\n\n".length,
+		},
+	);
+	// 已有文字时与前文隔一空行，替换选中的部分。
+	const result = quoteInsertion("请核对：旧文字", 4, 7, "差额 37", 16000);
+	assert.equal(result.value, "请核对：\n\n> 差额 37\n\n");
+	assert.equal(quoteInsertion("第一段\n", 4, 4, "引用", 16000).value, "第一段\n\n> 引用\n\n");
+	assert.equal(quoteInsertion("草".repeat(15995), 15995, 15995, "超出上限", 16000), undefined);
+});
+
+test("@ 查询只在行首或空白之后识别，查询中不含空白与 @", () => {
+	const { mentionQuery } = load("agent.js").agentUI;
+	const at = (value, caret = value.length) => {
+		const found = mentionQuery(value, caret);
+		return found && { ...found };
+	};
+	assert.deepEqual(at("@"), { start: 0, query: "" });
+	assert.deepEqual(at("请看 @预算"), { start: 3, query: "预算" });
+	assert.deepEqual(at("第一行\n@报价.pdf"), { start: 4, query: "报价.pdf" });
+	assert.equal(at("邮箱 a@b.com"), undefined);
+	assert.equal(at("@预算 表"), undefined);
+	assert.deepEqual(at("@预算 表", 3), { start: 0, query: "预算" });
+	assert.equal(at("@@"), undefined);
+});

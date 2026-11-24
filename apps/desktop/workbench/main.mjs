@@ -28,7 +28,7 @@ import {
 import { draftAttachments, fileReference, mergeAttachments } from "./attachment-drafts.mjs";
 import { historyReference, sentImage } from "./attachment-history.mjs";
 import { createAttention } from "./attention.mjs";
-import { contextMenuItems, revealLabel } from "./context-menu.mjs";
+import { contextMenuItems, replyMenuItems, revealLabel } from "./context-menu.mjs";
 import { listAvailableModels, openModelStream } from "./gateway.mjs";
 import {
 	describeEffortPreset,
@@ -43,6 +43,7 @@ import {
 	writeModelLibrary,
 } from "./model-library.mjs";
 import { createRuntimeHost } from "./runtime-host.mjs";
+import { createSessionQueue, storedQueue } from "./session-queue.mjs";
 import { readJson, writeJson } from "./storage.mjs";
 import { containsBounds, expandedBounds, restoredBounds, roundingCorrection } from "./window-fit.mjs";
 import { readWindowState, restorableBounds, savedBounds, writeWindowState } from "./window-state.mjs";
@@ -54,10 +55,12 @@ import {
 	isWorkspacePath,
 	listWorkspaceEntries,
 	previewWorkspaceFile,
+	rankWorkspaceFiles,
 	reportFiles,
 	resolveArtifact,
 	resolveMentionedPaths,
 	workspaceEntryPath,
+	workspaceFiles,
 } from "./workspace.mjs";
 import { gitChanges, gitDifference, trackedFiles } from "./workspace-git.mjs";
 
@@ -111,7 +114,14 @@ export function launchWorkbench() {
 	let window;
 	let host;
 	let ready;
-	let workbench = { workspaces: [], deletions: [], sessions: [], selected: "", draftWriteMode: "auto" };
+	let workbench = {
+		workspaces: [],
+		deletions: [],
+		sessions: [],
+		sideChats: [],
+		selected: "",
+		draftWriteMode: "auto",
+	};
 	let workspaceSelection = new AbortController();
 	let settings;
 	let model;
@@ -135,8 +145,30 @@ export function launchWorkbench() {
 	// 侧栏扩展前后的窗口外框。open 为 false 表示最大化期间已收起，退出最大化后再还原。
 	let panelExpansion;
 	const approvals = new Map();
+	// 已关闭但仍有运行收尾的侧边追问，终态写盘后再清理一次记录文件。
+	const retiredSideChats = new Set();
 	const modelCatalogs = new Map();
 	const modelDiscovery = new WeakMap();
+	const queue = createSessionQueue({
+		find: (id) => workbench.sessions.find((entry) => entry.id === id),
+		list: () => workbench.sessions,
+		persist: record,
+		submit: submitRequest,
+		steer: (id, runId, item) => {
+			if (!host) throw new Error("工作进程已关闭");
+			return host.call("steer", {
+				session: id,
+				runId,
+				steerId: item.id,
+				input: item.input,
+				...(item.attachments?.length && { attachments: item.attachments }),
+			});
+		},
+		running: (id) => [...activeRequests.values()].find((entry) => entry.session === id && entry.running && entry.runId),
+		busy: sessionBusy,
+		notify: (id, text) => send({ kind: "notice", session: id, tone: "error", text }),
+		serialize: serializeTaskChange,
+	});
 
 	function catalogFor(service) {
 		const saved = modelCatalogs.get(service?.id);
@@ -162,6 +194,8 @@ export function launchWorkbench() {
 			writeApproval: waiting.find(({ session }) => session === workbench.selected),
 			modelSettings: publicService(settings, catalogFor(settings)),
 			modelServices: library.services.map((service) => publicService(service, catalogFor(service))),
+			queue: workbench.selected ? queue.view(workbench.selected) : undefined,
+			sideChats: workbench.sideChats.map(({ id, parent, turns }) => ({ id, parent, turns, busy: sessionBusy(id) })),
 			gatewayError: workbenchError || gatewayError,
 			workspaces: workbench.workspaces.map(({ workspace, title, pinned }) => ({
 				workspaceId: workspace.id,
@@ -213,10 +247,34 @@ export function launchWorkbench() {
 			for (const { workspace } of sessions) {
 				if (!spaces.has(workspace.id)) spaces.set(workspace.id, { workspace, title: workspace.name });
 			}
+			// 每个主会话最多一个侧边追问；主会话已不存在的侧边追问记录一并清理。
+			const sideChats = [];
+			const orphans = [];
+			for (const side of stored?.sideChats ?? []) {
+				if (!uid.test(side?.id) || typeof side.workspace?.id !== "string" || typeof side.workspace.root !== "string")
+					continue;
+				const parent = sessions.find((entry) => entry.id === side.parent);
+				if (parent?.workspace.id === side.workspace.id && !sideChats.some((entry) => entry.parent === side.parent))
+					sideChats.push({ id: side.id, parent: side.parent, workspace: side.workspace, turns: Number(side.turns) || 0 });
+				else orphans.push(side.id);
+			}
 			workbench = {
 				workspaces: [...spaces.values()],
-				deletions: (stored?.deletions ?? []).filter((id) => uid.test(id) && !sessions.some((entry) => entry.id === id)),
-				sessions: sessions.map((entry) => ({ ...entry, writeMode: storedWriteMode(entry.writeMode) })),
+				sideChats,
+				deletions: [
+					...(stored?.deletions ?? []).filter((id) => uid.test(id) && !sessions.some((entry) => entry.id === id)),
+					...orphans,
+				],
+				// 上次运行已结束，留下的排队消息等用户确认后再发送。
+				sessions: sessions.map((entry) => {
+					const items = storedQueue(entry);
+					return {
+						...entry,
+						writeMode: storedWriteMode(entry.writeMode),
+						queue: items.length ? items : undefined,
+						queuePaused: items.length ? true : undefined,
+					};
+				}),
 				selected: sessions.some(({ id }) => id === stored?.selected) ? stored.selected : "",
 				draftWriteMode: storedWriteMode(stored?.draftWriteMode),
 			};
@@ -252,6 +310,8 @@ export function launchWorkbench() {
 
 	function selectWorkspaceSession(id) {
 		if (workbench.selected === id) return;
+		// 行内编辑只发生在当前会话，切走后不再暂缓其队列。
+		if (workbench.selected) queue.release(workbench.selected);
 		workspaceSelection.abort(new Error("会话已切换，请重新读取工作区。"));
 		workspaceSelection = new AbortController();
 		workbench.selected = id;
@@ -412,10 +472,17 @@ export function launchWorkbench() {
 					if (active) active.running = false;
 				}
 				if (type === "terminal") activeRequests.delete(requestId);
+				if (type === "terminal" && retiredSideChats.delete(session)) {
+					workbench.deletions.push(session);
+					void cleanDeleted().catch(() => {});
+				}
 				if (type === "terminal" || type === "cancelling") dismissApprovals((prompt) => prompt.requestId === requestId);
-				const visible = event.type === "tool_result" ? { ...event, text: [] } : event;
+				// 插话送达时附上原文，界面无须等待历史重读即可显示；终态后派发下一条排队消息。
+				const steered = queue.receive(event);
+				const visible = event.type === "tool_result" ? { ...event, text: [] } : steered ? { ...event, ...steered } : event;
 				send({ kind: "event", event: visible });
-				if (type === "terminal") noticeTerminal(session, event);
+				// 侧边追问在右栏中进行，不单独提醒。
+				if (type === "terminal" && workbench.sessions.some(({ id }) => id === session)) noticeTerminal(session, event);
 				if (added || type === "started" || type === "terminal") announce();
 			},
 			onReasoning(frame) {
@@ -427,6 +494,7 @@ export function launchWorkbench() {
 				host = undefined;
 				ready = undefined;
 				activeRequests.clear();
+				queue.pauseAll();
 				runtimeRevision++;
 				gatewayError = "工作进程已关闭，请重新发起任务。";
 				announce();
@@ -808,6 +876,7 @@ export function launchWorkbench() {
 				if (members.some((entry) => sessionBusy(entry.id))) throw new Error("请先结束此处正在运行或排队的任务。");
 				const deleted = new Set(members.map((entry) => entry.id));
 				workbench.sessions = workbench.sessions.filter((entry) => !deleted.has(entry.id));
+				for (const side of workbench.sideChats.filter((entry) => deleted.has(entry.parent))) dropSideChat(side);
 				if (space) workbench.workspaces = workbench.workspaces.filter((entry) => entry !== item);
 				if (deleted.has(workbench.selected))
 					selectWorkspaceSession(
@@ -822,6 +891,128 @@ export function launchWorkbench() {
 				await cleanDeleted().catch(() => {
 					throw new Error("已从侧栏移除。部分本机记录将在下次启动时清理。");
 				});
+		}),
+	);
+	/** 当前主会话的侧边追问。@param {string} parent 主会话 ID @returns {object} 侧边追问记录 */
+	function sideChatOf(parent) {
+		findSession(parent);
+		if (parent !== workbench.selected) throw new Error("会话已切换，请在当前会话操作。");
+		const side = workbench.sideChats.find((entry) => entry.parent === parent);
+		if (!side) throw new Error("侧边追问已关闭。");
+		return side;
+	}
+	/** 侧边追问以只读权限登记到运行时。@param {object} side 侧边追问记录 @returns {Promise<object>} 运行时 */
+	async function getSideRuntime(side) {
+		const runtime = await prepare();
+		await runtime.call("register", { session: side.id, workspace: side.workspace, readOnly: true });
+		return runtime;
+	}
+	/**
+	 * 从列表移除侧边追问并登记删除；仍在运行时先停止，终态写盘后再清理一次。
+	 * @param {object} side 侧边追问记录
+	 * @returns {void}
+	 */
+	function dropSideChat(side) {
+		workbench.sideChats = workbench.sideChats.filter((entry) => entry !== side);
+		workbench.deletions.push(side.id);
+		for (const [requestId, active] of activeRequests) {
+			if (active.session !== side.id) continue;
+			retiredSideChats.add(side.id);
+			if (active.runId) void cancelRun(side.id, requestId, active.runId).catch(() => {});
+			else void host?.call("cancel-queued", { session: side.id, requestId }).catch(() => {});
+		}
+	}
+	handle("open-side-chat", (parent) =>
+		serializeTaskChange(async () => {
+			requireWritableWorkbench();
+			const owner = findSession(parent);
+			if (parent !== workbench.selected) throw new Error("会话已切换，请在当前会话操作。");
+			// 主会话的消息只在请求成功时整体替换，记录文件中就是已完成的上下文，运行中的一轮不会带入。
+			const snapshot = await readJson(join(sessionsDirectory, `${parent}.json`));
+			const turns = snapshot?.requests.filter(({ status }) => status === "succeeded").length ?? 0;
+			if (!turns) throw new Error("请先等待主会话完成一次回答。");
+			const previous = structuredClone(workbench);
+			const old = workbench.sideChats.find((entry) => entry.parent === parent);
+			if (old) dropSideChat(old);
+			const side = { id: randomUUID(), parent, workspace: owner.workspace, turns };
+			await writeJson(join(sessionsDirectory, `${side.id}.json`), {
+				version: 1,
+				workspaceId: snapshot.workspaceId ?? snapshot.requests[0]?.workspaceId,
+				lastSequence: 0,
+				requests: [],
+				messages: snapshot.messages ?? [],
+				...(snapshot.contextCheckpoint && { contextCheckpoint: snapshot.contextCheckpoint }),
+				artifacts: [],
+				operations: [],
+				desktopMessages: {},
+			});
+			workbench.sideChats.push(side);
+			try {
+				await persistChange(previous);
+			} catch (error) {
+				await rm(join(sessionsDirectory, `${side.id}.json`), { force: true }).catch(() => {});
+				throw error;
+			}
+			if (old) await cleanDeleted().catch(() => {});
+			return { id: side.id, parent, turns };
+		}),
+	);
+	handle("side-chat-history", (parent) =>
+		serializeTaskChange(async () => {
+			const side = sideChatOf(parent);
+			const runtime = await getSideRuntime(side);
+			return runtime.call("history", { session: side.id });
+		}),
+	);
+	/**
+	 * 向侧边追问提交一条文字消息；侧边追问不排队，回答期间拒绝新消息。
+	 * @param {object} side 侧边追问记录
+	 * @param {string} text 消息原文
+	 * @returns {Promise<object>} 请求记录
+	 */
+	async function submitSideChat(side, text) {
+		if (typeof text !== "string" || !text.trim() || text.length > 16000)
+			throw new Error("请输入有效任务说明，最多 16000 字符");
+		if (!model) throw new Error("请先配置模型。");
+		if (sessionBusy(side.id)) throw new Error("侧边追问正在回答，请稍候或先停止。");
+		const runtime = await getSideRuntime(side);
+		return runtime.call("submit", { session: side.id, input: text });
+	}
+	handle("submit-side-chat", (parent, text) => serializeTaskChange(() => submitSideChat(sideChatOf(parent), text)));
+	handle("queue-to-side-chat", (parent, itemId) =>
+		serializeTaskChange(async () => {
+			const owner = queueOwner(parent, itemId);
+			const side = sideChatOf(parent);
+			if (sessionBusy(side.id)) throw new Error("侧边追问正在回答，请稍候或先停止。");
+			const item = await queue.take(parent, itemId);
+			let record;
+			try {
+				record = await submitSideChat(side, item.input);
+			} catch (error) {
+				await queue.restore(parent, item);
+				throw error;
+			}
+			// 侧边追问只收文字，附件留在主会话的附件目录，不再被引用时回收。
+			await discardUnused(owner, item.attachments ?? []);
+			return { record, dropped: item.attachments?.length ?? 0 };
+		}),
+	);
+	handle("cancel-side-chat", (parent, requestId, runId) => {
+		const side = sideChatOf(parent);
+		if (typeof requestId !== "string" || !uid.test(requestId) || (runId !== undefined && !uid.test(String(runId))))
+			throw new Error("无效请求标识");
+		if (!host) throw new Error("工作进程已关闭");
+		if (runId) return cancelRun(side.id, requestId, runId);
+		return host.call("cancel-queued", { session: side.id, requestId });
+	});
+	handle("close-side-chat", (parent) =>
+		serializeTaskChange(async () => {
+			requireWritableWorkbench();
+			const side = sideChatOf(parent);
+			const previous = structuredClone(workbench);
+			dropSideChat(side);
+			await persistChange(previous);
+			await cleanDeleted().catch(() => {});
 		}),
 	);
 	handle("git-changes", (id) => readSelectedWorkspace(id, gitChanges));
@@ -854,10 +1045,27 @@ export function launchWorkbench() {
 			});
 		}),
 	);
+	// 选择经消息交还渲染层，不依赖菜单点击与关闭回调的先后。
+	handle("show-reply-menu", () => {
+		Menu.buildFromTemplate(replyMenuItems((choice) => send({ kind: "reply-menu", choice }))).popup({ window });
+	});
 	handle("resolve-reply-paths", (id, paths) =>
 		readSelectedWorkspace(id, (workspace, signal) =>
 			resolveMentionedPaths(workspace, paths, signal, () => trackedFiles(workspace, signal)),
 		),
+	);
+	// @ 补全逐字查询，同一工作区的文件清单缓存 30 秒，避免每次按键都遍历或调用 Git。
+	const fileLists = new Map();
+	handle("workspace-files", (id, query) =>
+		readSelectedWorkspace(id, async (workspace, signal) => {
+			if (typeof query !== "string" || query.length > 200) throw new Error("查询无效");
+			let cached = fileLists.get(workspace.id);
+			if (!cached || Date.now() - cached.at > 30_000) {
+				cached = { at: Date.now(), files: await workspaceFiles(workspace, signal, () => trackedFiles(workspace, signal)) };
+				fileLists.set(workspace.id, cached);
+			}
+			return rankWorkspaceFiles(cached.files, query);
+		}),
 	);
 	handle("preview-workspace-file", (id, path) =>
 		readSelectedWorkspace(id, async (workspace, signal) => ({
@@ -883,13 +1091,21 @@ export function launchWorkbench() {
 			throw error;
 		}
 	}
-	// 历史请求仍然引用的副本要保留，草稿取消和部分导入失败则可以回收。
+	// 历史请求、插话与排队消息仍然引用的副本要保留，草稿取消和部分导入失败则可以回收。
 	async function discardUnused(owner, refs) {
-		const draft = new Set(draftAttachments(owner).map(({ id }) => id));
-		const candidates = refs.filter((ref) => ref.id.startsWith("asset:") && !draft.has(ref.id));
+		const kept = new Set(
+			[...draftAttachments(owner), ...storedQueue(owner).flatMap((item) => item.attachments ?? [])].map(({ id }) => id),
+		);
+		const candidates = refs.filter((ref) => ref.id.startsWith("asset:") && !kept.has(ref.id));
 		if (!candidates.length) return;
 		const snapshot = await readJson(join(sessionsDirectory, `${owner.id}.json`));
-		const used = new Set(snapshot?.requests.flatMap((request) => (request.attachments ?? []).map(({ id }) => id)));
+		const used = new Set(
+			snapshot?.requests.flatMap((request) =>
+				[...(request.attachments ?? []), ...(request.steers ?? []).flatMap((steer) => steer.attachments ?? [])].map(
+					({ id }) => id,
+				),
+			),
+		);
 		for (const ref of candidates) if (!used.has(ref.id)) await removeStoredAttachment(sessionsDirectory, owner.id, ref);
 	}
 	function addPaths(id, paths, fromPanel = false) {
@@ -1086,36 +1302,90 @@ export function launchWorkbench() {
 		return { runtime, record, refs };
 	}
 
+	/**
+	 * 把一条消息直接提交给运行时。
+	 * @param {string} id 会话 ID
+	 * @param {{input: string, attachments?: object[]}} item 消息原文与附件
+	 * @returns {Promise<object>} 运行时请求记录
+	 */
+	async function submitRequest(id, { input, attachments = [] }) {
+		if (!model) throw new Error("请先配置模型。");
+		requireImageSupport(attachments);
+		const runtime = await getSessionRuntime(id);
+		return runtime.call("submit", { session: id, input, ...(attachments.length && { attachments }) });
+	}
+
 	handle("submit", (id, text) =>
 		serializeTaskChange(async () => {
 			if (typeof text !== "string" || !text.trim() || text.length > 16000) {
 				throw new Error("请输入有效任务说明，最多 16000 字符");
 			}
 			if (!model) throw new Error("请先配置模型。");
-			const runtime = await getSessionRuntime(id);
 			const owner = draftOwner(id);
 			const refs = draftAttachments(owner);
-			if (!refs.length) return runtime.call("submit", { session: id, input: text });
 			requireImageSupport(refs);
-			await writeDraft(owner, []);
+			// 附件随消息离开草稿；提交或入队失败时放回。
+			if (refs.length) await writeDraft(owner, []);
 			try {
-				const result = await runtime.call("submit", { session: id, input: text, attachments: refs });
-				return result;
+				return await queue.accept(owner, text, refs);
 			} catch (error) {
-				await writeDraft(owner, refs);
+				if (refs.length) await writeDraft(owner, refs);
 				throw error;
 			}
 		}),
 	);
 	handle("retry-request", (id, requestId) =>
 		serializeTaskChange(async () => {
-			const { runtime, record, refs } = await retryableRequest(id, requestId);
+			const { record, refs } = await retryableRequest(id, requestId);
 			if (!model) throw new Error("请先配置模型。");
 			requireImageSupport(refs);
-			// 以原输入和原附件新建一轮，原记录保留在历史中，当前草稿不受影响。
-			return runtime.call("submit", { session: id, input: record.input, ...(refs.length && { attachments: refs }) });
+			// 以原输入和原附件新建一轮，原记录保留在历史中，当前草稿不受影响；会话忙时排队。
+			return queue.accept(findSession(id), record.input, refs);
 		}),
 	);
+	/** 校验排队消息标识并取当前会话。@param {string} id 会话 ID @param {string} itemId 排队消息 ID @returns {object} 会话记录 */
+	function queueOwner(id, itemId) {
+		if (typeof itemId !== "string" || !uid.test(itemId)) throw new Error("无效的排队消息。");
+		return draftOwner(id);
+	}
+	handle("edit-queue-item", (id, itemId, input, keep) =>
+		serializeTaskChange(async () => {
+			const owner = queueOwner(id, itemId);
+			await discardUnused(owner, await queue.edit(id, itemId, input, keep));
+		}),
+	);
+	handle("remove-queue-item", (id, itemId) =>
+		serializeTaskChange(async () => {
+			const owner = queueOwner(id, itemId);
+			const removed = await queue.take(id, itemId);
+			await discardUnused(owner, removed.attachments ?? []);
+		}),
+	);
+	handle("hold-queue-item", (id, itemId) => {
+		if (itemId === undefined || itemId === null) {
+			draftOwner(id);
+			return queue.hold(id);
+		}
+		queueOwner(id, itemId);
+		return queue.hold(id, itemId);
+	});
+	handle("reorder-queue", (id, ids) =>
+		serializeTaskChange(() => {
+			draftOwner(id);
+			return queue.reorder(id, ids);
+		}),
+	);
+	handle("resume-queue", (id) =>
+		serializeTaskChange(() => {
+			draftOwner(id);
+			return queue.resume(id);
+		}),
+	);
+	// 插话可能要读取附件，不占用会话变更的串行队列。
+	handle("steer-queue-item", (id, itemId) => {
+		queueOwner(id, itemId);
+		return queue.steer(id, itemId);
+	});
 	handle("restore-request-draft", (id, requestId) =>
 		serializeTaskChange(async () => {
 			const { record, refs } = await retryableRequest(id, requestId);
@@ -1137,6 +1407,8 @@ export function launchWorkbench() {
 		}
 		findSession(id);
 		if (!host) throw new Error("工作进程已关闭");
+		// 用户主动停止后队列暂停，避免下一条消息立即开始。
+		queue.pause(id);
 		if (runId) return cancelRun(id, requestId, runId);
 		const record = await host.call("cancel-queued", { session: id, requestId });
 		return record.status === "running" && record.runId ? cancelRun(id, requestId, record.runId) : record;
@@ -1222,6 +1494,8 @@ export function launchWorkbench() {
 		});
 		window.webContents.on("dom-ready", () => {
 			if (window.webContents.mainFrame?.url !== page.href) return;
+			// 页面重新加载后不再有进行中的行内编辑。
+			queue.release();
 			// 重新加载的页面从收起状态开始，先撤销上一页留下的侧栏扩展。
 			if (panelExpansion) {
 				panelExpansion.open = false;

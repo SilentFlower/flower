@@ -257,7 +257,14 @@ async function walkFiles(workspace, signal) {
 	return files;
 }
 
-async function workspaceFiles(workspace, signal, listFiles) {
+/**
+ * 列出工作区文件：优先使用给定清单（如 Git 跟踪与未忽略文件），不可用时有限遍历可见目录。
+ * @param workspace 当前会话已批准的工作区
+ * @param signal 会话切换时取消
+ * @param listFiles 可选的文件清单来源，返回 null 时遍历
+ * @returns 工作区相对路径
+ */
+export async function workspaceFiles(workspace, signal, listFiles) {
 	try {
 		const listed = await listFiles?.();
 		if (listed) return listed;
@@ -266,6 +273,30 @@ async function workspaceFiles(workspace, signal, listFiles) {
 		// Git 不可用或清单过大时退回遍历可见目录。
 	}
 	return walkFiles(workspace, signal);
+}
+
+/**
+ * 输入框 @ 补全：只保留可加入对话的文件，依次按文件名前缀、文件名包含、路径包含排序，同级按路径长度与名称。
+ * @param {string[]} files 工作区相对路径
+ * @param {string} query 输入的关键字，为空时返回靠近根目录的文件
+ * @param {number} [limit] 返回上限
+ * @returns {string[]} 匹配的相对路径
+ */
+export function rankWorkspaceFiles(files, query, limit = 50) {
+	if (typeof query !== "string" || query.length > 200) throw new Error("查询无效");
+	const needle = query.trim().toLocaleLowerCase();
+	const rank = (file) => {
+		const lower = file.toLocaleLowerCase();
+		const name = lower.slice(lower.lastIndexOf("/") + 1);
+		return name.startsWith(needle) ? 0 : name.includes(needle) ? 1 : lower.includes(needle) ? 2 : -1;
+	};
+	return files
+		.filter(canAttachWorkspaceFile)
+		.map((file) => [rank(file), file])
+		.filter(([score]) => score >= 0)
+		.sort(([left, a], [right, b]) => left - right || a.length - b.length || a.localeCompare(b, "zh-CN"))
+		.slice(0, limit)
+		.map(([, file]) => file);
 }
 
 /**

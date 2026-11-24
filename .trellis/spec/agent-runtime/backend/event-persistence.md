@@ -77,3 +77,52 @@ await this.commit(snapshot, [[record, body]]);
 // worker：只在宿主旁路累积并节流，运行时不感知
 if (entry.session && frame.event.type === "thinking_delta") reasoning.push(entry.session, frame.event.delta);
 ```
+
+---
+
+## Scenario: 运行中插话（steer）
+
+### 1. Scope / Trigger
+
+- 触发：改动 `SubjectRuntime.steer`、`RuntimeExecution.steer`、`recordProgress` 的用户消息处理，或 `RequestRecord.steers` / `steered` 事件。
+- 插话经 pi `agent.steer` 在当前 turn 结束后注入（最后一个 turn 结束时也会再走一轮），是第一个新增的事件种类，code-reviewer 不提供执行体 `steer`。
+
+### 2. Signatures
+
+```ts
+SubjectRuntime.steer(sessionId, runId, steerId, input, attachments?): Promise<void>; // 已排入执行体即兑现
+RuntimeExecution.steer?(input: string, attachments?: readonly RuntimeAttachment[]): Promise<void>;
+RequestRecord.steers?: SteerRecord[]; // { steerId, input, attachments?, at, textOffset }
+RuntimeEvent += { type: "steered"; steerId: string };
+```
+
+### 3. Contracts
+
+- 校验在串行区内完成：请求必须是 `running` 且 `active.runId` 匹配、执行体已装配并提供 `steer`、`steerId` 未在待送达或已送达中出现。附件读取与 `execution.steer` 在串行区外执行，避免阻塞进度提交（pi 逐个 await 监听器）。
+- 多条插话经 `active.steerTail` 按提交顺序逐条排入执行体，保证执行体队列顺序与 `active.steering` 一致；排入失败时移出 `steering` 并拒绝。
+- 送达识别：每轮第一条用户 `message_start` 是请求本身（`active.prompted`），其后的用户 `message_start` 按顺序对应 `steering` 队首。送达时在同一次提交中追加 `steers[]`（`textOffset = record.text.length`）并发出 `steered`，不另起提交。
+- 运行已取消（`controller.signal.aborted`）后 pi 仍可能在工具失败后注入排队的插话，此时不算送达：不出队、不写记录、不发事件。宿主据此在终态时判定未送达。
+- 运行成功后插话已在 pi 消息序列中，随 `messages` 进入后续上下文；`userMessageIndex` 仍指本轮首条用户消息。失败、取消、中断的请求即使已送达插话，其正文也不进入上下文。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 运行已结束或 `runId` 不是当前运行 | `RuntimeError("invalid-input", "当前运行已结束，无法插话")` |
+| `runId` 不存在 | `RuntimeError("not-found")` |
+| 执行体未提供 `steer`（如 code-reviewer 的 `createExecution`） | `RuntimeError("invalid-input", "当前运行不支持插话")`，当前运行不受影响 |
+| 重复的 `steerId` | `RuntimeError("invalid-input", "这条插话已经提交")` |
+| 附件读取失败或纯文本模型收到图片 | 拒绝并移出待送达，`RuntimeError` 说明原样交给宿主 |
+| 送达前取消、失败或重启 | 不记录、无 `steered`，宿主负责放回 |
+
+### 5. Scenarios and Examples
+
+- Normal：工具执行中插话 → 工具结果后下一次模型调用的最后一条用户消息是插话 → `steered` 位于 `tool_result` 之后、`terminal` 之前，记录 `textOffset` 等于此前已输出正文长度。
+- Base：插话后立刻取消 → `cancelled`，记录没有 `steers`，事件中没有 `steered`。
+- Incorrect use：按 `message_start` 角色为 user 就出队，把请求自身的提示当作第一条插话，或在取消后仍记为送达。
+- Correct handling：跳过本轮首条用户消息，并在 `signal.aborted` 后直接返回。
+
+### 6. Tests Required
+
+- `packages/agent-runtime/test/context-window.test.ts`「运行中插话」：送达位置、附件读入、重复与已结束拒绝；送达前取消不记录；`createExecution` 执行体拒绝。
+- `packages/agent-runtime/test/dual-host.test.ts`「企业宿主运行中插话」：读取闸点期间插话，`steered` 送达且事件序号连续，记录含插话，模型最后一次调用含插话原文。

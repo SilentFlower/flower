@@ -19,7 +19,7 @@ export async function startMockModel({
 	effortByModel = new Map(),
 } = {}) {
 	const models = [model, ...alternatives];
-	const observations = { model: [], discovery: [], attempts: [], requestFields: [], interrupted: 0 };
+	const observations = { model: [], discovery: [], attempts: [], requestFields: [], tools: [], interrupted: 0 };
 	let origin;
 	const server = createServer(async (req, res) => {
 		try {
@@ -58,6 +58,8 @@ export async function startMockModel({
 				hasAnthropicHeaders: Boolean(req.headers["anthropic-version"] || req.headers["x-api-key"]),
 				tokenMatches,
 			});
+			// 每次请求声明的工具名，用于核对只读会话的工具集。
+			observations.tools.push((input.tools ?? []).map((tool) => tool.function?.name));
 			observations.attempts.push({
 				model: input.model,
 				hasAuthorization: Boolean(req.headers.authorization),

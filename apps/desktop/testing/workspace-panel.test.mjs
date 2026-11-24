@@ -18,6 +18,7 @@ import {
 	canAttachWorkspaceFile,
 	listWorkspaceEntries,
 	previewWorkspaceFile,
+	rankWorkspaceFiles,
 	readAttachmentEvidence,
 	resolveArtifact,
 	resolveMentionedPaths,
@@ -837,4 +838,26 @@ test("回复中的文件名先核对根目录，再按名查找唯一或多个�
 		}),
 		[{ path: "报告/汇总.xlsx" }],
 	);
+});
+
+test("@ 补全只列可加入对话的文件，按文件名前缀、文件名包含、路径包含排序", () => {
+	const files = [
+		"归档/二月/预算明细.xlsx",
+		"预算.xlsx",
+		"财务/年度预算.xlsx",
+		"预算说明/readme.md",
+		"预算.bin",
+		"汇总.PDF",
+	];
+	assert.deepEqual(rankWorkspaceFiles(files, "预算"), [
+		"预算.xlsx",
+		"归档/二月/预算明细.xlsx",
+		"财务/年度预算.xlsx",
+		"预算说明/readme.md",
+	]);
+	assert.deepEqual(rankWorkspaceFiles(files, "pdf"), ["汇总.PDF"]);
+	assert.equal(rankWorkspaceFiles(files, "").length, 5);
+	assert.deepEqual(rankWorkspaceFiles(files, "", 2), ["汇总.PDF", "预算.xlsx"]);
+	assert.throws(() => rankWorkspaceFiles(files, "长".repeat(201)), /查询无效/);
+	assert.throws(() => rankWorkspaceFiles(files, 1), /查询无效/);
 });

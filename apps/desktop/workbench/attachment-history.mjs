@@ -9,7 +9,11 @@ import { fileReference } from "./attachment-drafts.mjs";
 export function historyReference(snapshot, requestId, key) {
 	const record = snapshot?.requests.find((entry) => entry.requestId === requestId);
 	const legacy = snapshot?.desktopMessages?.[requestId]?.file;
-	const refs = record?.attachments ?? (typeof legacy === "string" ? [fileReference(legacy)] : []);
+	// 插话的附件同样归属这条消息。
+	const refs = [
+		...(record?.attachments ?? (typeof legacy === "string" ? [fileReference(legacy)] : [])),
+		...(record?.steers ?? []).flatMap((steer) => steer.attachments ?? []),
+	];
 	const ref = refs.find((entry) => entry.id === key);
 	if (!record || !ref) throw new Error("附件不属于这条消息。");
 	return { record, ref };

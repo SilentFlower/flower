@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Agent, type AgentEvent, type AgentMessage, type StreamFn } from "@earendil-works/pi-agent-core";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { createContextWindow, estimateRuntimeUsage, modelMessages } from "./context-window.js";
 import type {
 	AgentRuntime,
@@ -15,6 +16,7 @@ import type {
 	SessionGrant,
 	SessionScope,
 	SessionSnapshot,
+	SteerRecord,
 	StoredSessionSnapshot,
 	TerminalStatus,
 	ToolStep,
@@ -40,6 +42,7 @@ export type {
 	SessionScope,
 	SessionSnapshot,
 	SessionStore,
+	SteerRecord,
 	StoredSessionSnapshot,
 	SubjectRuntime,
 	TerminalStatus,
@@ -52,6 +55,19 @@ type EventBody<T extends RuntimeEvent = RuntimeEvent> = T extends RuntimeEvent
 	: never;
 type Notification = readonly [RequestRecord, EventBody];
 type Observer = (event: RuntimeEvent) => void;
+type PendingSteer = Pick<SteerRecord, "steerId" | "input" | "attachments">;
+/** 当前运行的取消、执行体与待送达插话。 */
+interface ActiveRun {
+	runId: string;
+	controller: AbortController;
+	execution?: RuntimeExecution;
+	/** 已排入执行体、尚未送达的插话，顺序与执行体队列一致。 */
+	steering: PendingSteer[];
+	/** 插话按提交顺序逐条排入执行体，附件读取较慢的插话不会被后来者越过。 */
+	steerTail: Promise<void>;
+	/** 本轮请求自身的用户消息是否已开始。 */
+	prompted: boolean;
+}
 
 /** 宿主可识别的运行时异常。 */
 export class RuntimeError extends Error {
@@ -106,6 +122,8 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
 				cancelRunning: (sessionId, runId) => getRunner(sessionId).cancelRunning(runId),
 				getSession: (sessionId) => getRunner(sessionId).getSession(),
 				getContextUsage: (sessionId) => getRunner(sessionId).getContextUsage(),
+				steer: (sessionId, runId, steerId, input, attachments) =>
+					getRunner(sessionId).steer(runId, steerId, input, attachments),
 			};
 		},
 	};
@@ -117,7 +135,7 @@ class SessionRunner {
 	private snapshot?: SessionSnapshot;
 	private fault?: RuntimeError;
 	private readonly observers = new Map<string, Observer>();
-	private active?: { runId: string; controller: AbortController };
+	private active?: ActiveRun;
 
 	constructor(
 		private readonly scope: SessionScope,
@@ -178,6 +196,46 @@ class SessionRunner {
 			await this.commit(snapshot, [[request, { type: "cancelling" }]]);
 			this.active?.controller.abort();
 			return structuredClone(request);
+		});
+	}
+
+	steer(runId: string, steerId: string, input: string, attachments?: readonly RuntimeAttachment[]): Promise<void> {
+		assertPresent(runId);
+		assertPresent(steerId);
+		const refs = attachments?.map(({ id, name }) => {
+			assertPresent(id);
+			assertPresent(name);
+			return { id, name };
+		});
+		return this.withAccess((snapshot) => {
+			assertPresent(input);
+			const request = requireRequest(snapshot.requests.find((entry) => entry.runId === runId));
+			const active = this.active;
+			if (request.status !== "running" || active?.runId !== runId) {
+				throw new RuntimeError("invalid-input", "当前运行已结束，无法插话");
+			}
+			const execution = active.execution;
+			if (!execution?.steer) throw new RuntimeError("invalid-input", "当前运行不支持插话");
+			if (
+				active.steering.some((entry) => entry.steerId === steerId) ||
+				request.steers?.some((entry) => entry.steerId === steerId)
+			) {
+				throw new RuntimeError("invalid-input", "这条插话已经提交");
+			}
+			const pending: PendingSteer = { steerId, input, ...(refs?.length ? { attachments: refs } : {}) };
+			active.steering.push(pending);
+			// 附件读取可能较慢，放在串行区外，避免阻塞运行进度的提交。
+			const queued = active.steerTail.then(() => execution.steer?.(input, pending.attachments));
+			active.steerTail = queued.catch(() => undefined);
+			return { active, pending, queued };
+		}, false).then(async ({ active, pending, queued }) => {
+			try {
+				await queued;
+			} catch (error) {
+				const index = active.steering.indexOf(pending);
+				if (index >= 0) active.steering.splice(index, 1);
+				throw error instanceof RuntimeError ? error : new RuntimeError("invalid-input", "插话未能送入当前运行");
+			}
 		});
 	}
 
@@ -329,7 +387,7 @@ class SessionRunner {
 				request.status = "running";
 				await this.commit(snapshot, [[request, { type: "started" }], ...positions(snapshot)]);
 				const controller = new AbortController();
-				this.active = { controller, runId };
+				this.active = { controller, runId, steering: [], steerTail: Promise.resolve(), prompted: false };
 				this.background(
 					this.run(
 						grant,
@@ -375,6 +433,7 @@ class SessionRunner {
 				projection = createContextWindow(grant.streamFn, checkpoint);
 				execution = createNativeExecution(grant, context, projection.streamFn);
 			}
+			if (this.active?.runId === runId) this.active.execution = execution;
 			if (context.signal.aborted) {
 				status = "cancelled";
 			} else {
@@ -448,7 +507,21 @@ class SessionRunner {
 		describe: (toolName: string, args: unknown) => string | undefined,
 	): Promise<void> {
 		let body: EventBody;
-		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+		let steer: PendingSteer | undefined;
+		if (event.type === "message_start" && event.message.role === "user") {
+			const active = this.active;
+			if (active?.runId !== runId) return;
+			// 每轮第一条用户消息是请求本身，其后的用户消息按排入顺序对应插话。
+			if (!active.prompted) {
+				active.prompted = true;
+				return;
+			}
+			// 取消后 pi 仍可能在工具失败后注入排队的插话，但这一轮不会进入上下文，不算送达。
+			if (active.controller.signal.aborted) return;
+			steer = active.steering.shift();
+			if (!steer) return;
+			body = { type: "steered", steerId: steer.steerId };
+		} else if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 			body = { type: "text_delta", delta: event.assistantMessageEvent.delta };
 		} else if (event.type === "tool_execution_start") {
 			const target = toolTarget(describe, event.toolName, event.args);
@@ -470,6 +543,10 @@ class SessionRunner {
 			const snapshot = structuredClone(this.snapshot);
 			const record = requireRequest(snapshot.requests.find((entry) => entry.runId === runId));
 			if (body.type === "text_delta") record.text += body.delta;
+			if (steer) {
+				const delivered: SteerRecord = { ...steer, at: Date.now(), textOffset: record.text.length };
+				record.steers = [...(record.steers ?? []), delivered];
+			}
 			if (body.type === "tool_started") {
 				const step: ToolStep = { toolCallId: body.toolCallId, toolName: body.toolName, startedAt: Date.now() };
 				if (body.target) step.target = body.target;
@@ -527,6 +604,19 @@ function createNativeExecution(
 				throw new RuntimeError("invalid-input", "当前模型不支持图片附件，请使用支持图片的模型。");
 			}
 			await agent.prompt({ role: "user", content: [{ type: "text", text: input }, ...evidence], timestamp: Date.now() });
+		},
+		async steer(input, attachments) {
+			const content: (TextContent | ImageContent)[] = [{ type: "text", text: input }];
+			if (attachments?.length) {
+				if (!grant.readAttachments) throw new RuntimeError("invalid-input", "当前宿主未配置附件读取。");
+				const evidence = await grant.readAttachments(attachments, context.signal);
+				context.signal.throwIfAborted();
+				if (!grant.model.input.includes("image") && evidence.some(({ type }) => type === "image")) {
+					throw new RuntimeError("invalid-input", "当前模型不支持图片附件，请使用支持图片的模型。");
+				}
+				content.push(...evidence);
+			}
+			agent.steer({ role: "user", content, timestamp: Date.now() });
 		},
 		subscribe: (listener) => agent.subscribe(listener),
 		abort: () => agent.abort(),

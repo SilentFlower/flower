@@ -110,3 +110,149 @@ export function runtimeSelection(service, catalog) // → { model: { thinkingLev
 
 - `testing/model-library.test.mjs`：经锁定 pi 与 `mock-model.mjs` 断言请求体中 `reasoning_effort`、`thinking` 的有无与取值，覆盖 DeepSeek 直连/网关、gpt-5.2、claude-sonnet-5（omit）、claude-sonnet-5-5（不可关闭）、未识别模型、`"default"` 被拒。
 - Windows：`verify-model-suite-windows.mjs`、`verify-model-presets-windows.mjs` 断言推荐档位文案（如「关闭思考 · 低 · 高 · 最高」）、滑杆 `aria-valuetext` 与回环请求字段；推荐档位变化时必须同步这两个脚本。
+
+---
+
+## Scenario: 本机排队消息与插话
+
+### 1. Scope / Trigger
+
+- 触发：改动 `session-queue.mjs`、Main 的 `submit` / `retry-request` / `cancel` / 队列处理器、`onEvent` 中的 `queue.receive`，或渲染层 `agentUI.queueBar`。
+- Desktop 不再依赖运行时的 `queued` 记录：同一会话同一时刻最多一条活动请求，其余消息在 Main 排队。
+
+### 2. Signatures
+
+```js
+// workbench.json 会话项（可缺省）
+{ queue?: [{ id, input, attachments?, createdAt }], queuePaused?: true }
+// preload → Main（均校验当前选中会话）
+submit(session, input)              // → 运行时请求记录 | { queued: itemId }
+editQueueItem(session, item, input, keepAttachmentIds) / removeQueueItem(session, item)
+reorderQueue(session, ids) / resumeQueue(session) / holdQueueItem(session, item | null)
+steerQueueItem(session, item)       // 不进入 serializeTaskChange，附件读取可能较慢
+// state().queue（仅当前会话）
+{ items: [{ id, input, attachments, steering }], paused, steerable }
+```
+
+### 3. Contracts
+
+- 分流：会话空闲、队列空且未暂停才直接提交；否则入队（最多 20 条），附件随消息离开草稿，失败放回草稿。暂停中再次发送即恢复，新消息排队尾。
+- 派发：运行时 `terminal` 事件在 Main 删除活动请求后交给 `queue.receive`，经 `serializeTaskChange` 派发队首。队首发送失败时保留并暂停，发 `{ kind: "notice", tone: "error" }`。
+- 暂停：`cancel` 处理器先同步置 `queuePaused`（保证随后的终态不派发）；工作进程退出 `pauseAll`；启动加载时有队列一律暂停。
+- 编辑暂缓：行内编辑前 `holdQueueItem(item)`，队首正在编辑时不派发；保存（`edit` 内解除）、放弃（`hold(null)`）、切换会话（`selectWorkspaceSession`）或页面 `dom-ready` 时解除并补派发。
+- 插话：`steerQueueItem` 把消息 ID 作为 `steerId` 交给运行时，送达前保留在队列并标 `steering`（只在内存）；`steered` 事件到达时移出队列，Main 给事件附上 `input` / `attachments` 再转发渲染层；运行结束仍未送达的回到队首并暂停。
+- 附件回收：`discardUnused` 的保留集合包含草稿、全部排队消息与历史请求的 `attachments` 及 `steers[].attachments`。
+- worker 对 `RuntimeError` 原样返回说明（如「当前运行已结束，无法插话」），其余异常仍返回固定提示。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 排队消息 ID 不是 UUID | 「无效的排队消息。」 |
+| 消息已发送或已删除 | 「这条排队消息已发送或已删除。」 |
+| 编辑或删除正在插话的消息 | 「这条消息正在插话，送达后会从队列移除。」 |
+| 重排的 ID 集合与当前队列不一致 | 「队列已变化，请重新排序。」 |
+| 会话没有运行中的请求时插话 | 「当前没有运行中的任务，无法插话。」 |
+| 第 21 条入队 | 「排队消息最多 20 条，请等待当前任务结束。」 |
+
+### 5. Scenarios and Examples
+
+- Normal：运行中发送两条 → `{ queued }`，时间线不出现「已排队」；终态后自动发送第一条，再终态发送第二条。
+- Base：取消当前运行 → 队列暂停，终态不派发；`resumeQueue` 后发送队首。
+- Incorrect use：在渲染层记录编辑状态而不告知 Main，当前任务恰好结束时修改前的原文被发出，保存时报「已发送或已删除」。
+- Correct handling：进入编辑前先 `holdQueueItem`，成功后才显示编辑框；连续点击先占位，只发一次暂缓请求。
+
+### 6. Tests Required
+
+- `testing/session-queue.test.mjs`：直接提交与入队、按序派发、暂停与恢复、发送失败暂停、行内编辑保留位置与附件、重排校验、20 条上限、插话送达移出与未送达回队首、编辑暂缓与解除、`pauseAll`。
+- `testing/queue-side-chat.test.mjs`（真实 Main、preload、worker 与回环模型）：插话送达的 `textOffset`、取消后暂停与继续、编辑暂缓后按改后原文发送、重启后队列保留且暂停。
+
+---
+
+## Scenario: 侧边追问会话
+
+### 1. Scope / Trigger
+
+- 触发：改动 Main 的 `open-side-chat` / `close-side-chat` / `side-chat-history` / `submit-side-chat` / `queue-to-side-chat` / `cancel-side-chat`、`dropSideChat`、worker 的只读授权，或 `ui/side-chat.js`。
+
+### 2. Signatures
+
+```js
+// workbench.json：每个主会话最多一个，不在 sessions 中
+sideChats: [{ id, parent, workspace, turns }]
+// worker register 帧
+{ type: "register", session, workspace, readOnly: true }
+// state()
+sideChats: [{ id, parent, turns, busy }]
+```
+
+### 3. Contracts
+
+- 分叉：读取主会话记录文件，至少一条成功请求；以其 `workspaceId`（旧记录取首条请求的）、`messages`、`contextCheckpoint` 写出新会话文件，`requests` 与 `desktopMessages` 为空。主会话的 `messages` 只在成功时整体替换，文件中就是已完成的上下文。
+- 只读：worker 对 `readOnly` 会话去掉 `write_report`，写入审批固定返回 `"read"`（`analyze_excel` 的 `createOutputs` 因此报只读），系统提示追加侧边追问说明。
+- 只收文字、不排队：回答中提交被拒；`queue-to-side-chat` 取出排队消息作为文字发送，失败时放回队首，附件不随行并在不再被引用时回收。
+- 删除：替换、关闭、删除主会话或工作区都走 `dropSideChat`：移出列表、登记 `deletions`、取消其活动请求；仍在运行的登记 `retiredSideChats`，其终态写盘后再登记一次删除并清理，防止收尾提交重新写出文件。启动时父会话已不存在的侧边追问直接登记删除。
+- 事件：侧边追问的终态不触发系统通知与未读标记；渲染层按 `state().sideChats` 的 ID 把事件交给侧边追问，`runtimeRevision` 变化时重读其历史。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 主会话尚无成功请求 | 「请先等待主会话完成一次回答。」 |
+| 非当前选中会话 | 「会话已切换，请在当前会话操作。」 |
+| 没有侧边追问 | 「侧边追问已关闭。」 |
+| 侧边追问回答中再次提交 | 「侧边追问正在回答，请稍候或先停止。」 |
+| 写出会话文件后保存 workbench.json 失败 | 删除新文件并回滚列表 |
+
+### 5. Scenarios and Examples
+
+- Normal：主会话运行中打开 → 只带入已完成的轮次；侧边追问回答，主会话继续运行，主会话历史不变。
+- Base：重启后侧边追问仍在，首次读取历史时以只读权限重新登记。
+- Incorrect use：把侧边追问放进 `workbench.sessions`，会出现在侧栏、搜索与中断横幅中，并被当作普通会话通知。
+- Correct handling：单独保存在 `sideChats`，所有入口经 `sideChatOf(parent)` 定位。
+
+### 6. Tests Required
+
+- `testing/queue-side-chat.test.mjs`：首轮完成前打开被拒；分叉文件含主会话消息；侧边请求的系统提示含侧边说明且工具不含 `write_report`；关闭删除文件；删除主会话连带删除。
+
+---
+
+## Scenario: 输入框 @ 补全的文件清单
+
+### 1. Scope / Trigger
+
+- 触发：改动 `workspace-files` IPC、`workspace.mjs` 的 `workspaceFiles` / `rankWorkspaceFiles`，或 `agentUI.mentionPicker`。
+
+### 2. Signatures
+
+```js
+workspaceFiles(session, query)                       // preload → Main，readSelectedWorkspace 限当前会话
+export async function workspaceFiles(workspace, signal, listFiles) // Git 清单优先，失败或 null 时遍历
+export function rankWorkspaceFiles(files, query, limit = 50)
+```
+
+### 3. Contracts
+
+- 清单与回复路径核对共用 `workspaceFiles`；Main 按工作区缓存 30 秒，避免逐字查询都调用 Git 或遍历。
+- 只返回 `canAttachWorkspaceFile` 为真的文件；排序依次为文件名前缀、文件名包含、路径包含，同级按路径长度再按 `zh-CN`。
+- 渲染层：`@` 位于行首或空白后才触发，查询不含空白与 `@`；输入法组合中不触发；列表打开时在捕获阶段截获 ↑/↓/Enter/Tab/Esc 并 `stopImmediatePropagation`，不触发历史召回与发送；确认后删除 `@查询` 再调用 `referenceFile`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| `query` 不是字符串或超过 200 字 | 「查询无效」 |
+| 非当前选中会话 | 「只能读取当前会话的工作区。」 |
+| 首页没有会话 | 渲染层不请求，列表不打开 |
+
+### 5. Scenarios and Examples
+
+- Normal：输入「@预算」→ 列出「预算.xlsx」「归档/预算明细.xlsx」「财务/年度预算.xlsx」，回车加入附件。
+- Incorrect use：在冒泡阶段监听方向键，`bindComposer` 先处理，空输入框时召回了历史输入。
+- Correct handling：补全监听用 `{ capture: true }` 并在处理后 `stopImmediatePropagation`。
+
+### 6. Tests Required
+
+- `testing/workspace-panel.test.mjs`：`rankWorkspaceFiles` 排序、过滤与上限、查询校验。
+- `testing/composer.test.mjs`：`mentionQuery` 的行首、空白与邮箱地址判定。
+- `testing/queue-side-chat.test.mjs`：经真实 Main 只返回可加入对话的文件。
