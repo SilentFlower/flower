@@ -24,10 +24,10 @@
   "notes": "",
   "meta": {},
   "last_push_snapshot": {
-    "snapshot_at": "2026-11-24T13:16:49+08:00",
+    "snapshot_at": "2026-11-24T13:45:50+08:00",
     "branch": "v2",
     "pushed_commits": {
-      "root": "2234a70b"
+      "root": "87ca8d98"
     },
     "push_mode": "push",
     "completed_steps": [
@@ -41,9 +41,10 @@
       "步骤 8 长粘贴与历史召回",
       "步骤 9 窗口状态",
       "步骤 10 全量检查",
-      "步骤 11 Windows 实机"
+      "步骤 11 Windows 实机",
+      "试用反馈补充 R10–R13"
     ],
     "next_step": "第一档收尾，随后进入第二档规划",
-    "notes": "提交 adbdd112、29574d73、02521d59、2234a70b；Windows 验收证据 D:\\FlowerDesktop-UX-tier1\\evidence-11；后台通知的“窗口在后台”状态为模拟"
+    "notes": "补充提交 b5aa0d2d、86918b5b、87ca8d98；候选 D:\\FlowerDesktop-UX-tier1\\candidate-2，证据 evidence-12；长会话滚动条滑块待用户目测"
   }
 }
