@@ -1,0 +1,79 @@
+{
+  "id": "flower-v2-desktop-title-permission",
+  "name": "flower-v2-desktop-title-permission",
+  "title": "Desktop 权限改名与会话自动标题",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": "flower-code-reviewer",
+  "priority": "P2",
+  "creator": "silentflower",
+  "assignee": "silentflower",
+  "createdAt": "2026-11-24",
+  "completedAt": "2026-11-24",
+  "closeout": {
+    "status": "closed",
+    "closedAt": "2026-11-24T13:24:01Z",
+    "blockers": []
+  },
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "intentRouting": {
+      "autoCreated": true,
+      "createdAt": "2026-11-24T11:53:45Z",
+      "contextKey": "claude_fa4989bd-d528-465e-b87a-c22852626559",
+      "implementationStarted": false,
+      "baseline": {
+        "head": "c9daeda9b016933da398621ca55ef6d077d635be",
+        "status": [
+          {
+            "status": " M",
+            "path": ".trellis/tasks/11-24-flower-v2-desktop-ux/prd.md"
+          }
+        ],
+        "repositories": [
+          {
+            "root": ".",
+            "head": "c9daeda9b016933da398621ca55ef6d077d635be",
+            "status": [
+              {
+                "status": " M",
+                "path": ".trellis/tasks/11-24-flower-v2-desktop-ux/prd.md"
+              }
+            ],
+            "worktreeDiffSha256": "97660ce4099cfa14e63b01ac27669d720de68ebf277c5287f5209601561b864c",
+            "indexDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "untracked": [],
+            "conflicts": [],
+            "integration": [],
+            "fingerprint": "39900fcf4e9e2037b2afcf35c330fb6c5bd4000ae1e7b0d940b25a3ee3fe2af5"
+          }
+        ],
+        "fingerprint": "5ab9a8dc2cb4cb5026f66b374232610fd22a12e45960f1ba42960cb25c14a700"
+      }
+    }
+  },
+  "progress": {
+    "updatedAt": "2026-11-24T13:24:01Z",
+    "completedSteps": [
+      "权限三档改名：只读 / 请求批准 / 帮我批准",
+      "新会话首条消息自动命名（临时标题 + 当前模型生成）",
+      "会话菜单「用 AI 重命名」",
+      "写入权限 Windows 脚本跟进第二档排队与关窗确认",
+      "测试、文档与 Windows 实机验收"
+    ],
+    "partialStep": null,
+    "nextStep": "「完全访问」档另行评估（需先扩展助手能力）",
+    "notes": "Windows 候选 candidate-6 复用第一档已验收的 Electron 45.3.2 运行时组装，正式发版仍需 package:windows"
+  }
+}
