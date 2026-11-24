@@ -1,0 +1,46 @@
+{
+  "id": "flower-v2-desktop-ux-tier2-navigator",
+  "name": "flower-v2-desktop-ux-tier2-navigator",
+  "title": "第二档 会话导航条",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": "flower-code-reviewer",
+  "priority": "P2",
+  "creator": "silentflower",
+  "assignee": "silentflower",
+  "createdAt": "2026-11-24",
+  "completedAt": "2026-11-24",
+  "closeout": {
+    "status": "closed",
+    "closedAt": "2026-11-24T07:54:20Z",
+    "blockers": []
+  },
+  "branch": null,
+  "base_branch": "v2",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "11-24-flower-v2-desktop-ux-tier2",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {},
+  "progress": {
+    "updatedAt": "2026-11-24T07:54:20+00:00",
+    "completedSteps": [
+      "步骤 1 纯逻辑与单测",
+      "步骤 2 结构与集成",
+      "步骤 3 样式",
+      "步骤 4 浏览器夹具",
+      "步骤 5 文档与 Windows 候选",
+      "全面检查",
+      "Spec 更新"
+    ],
+    "partialStep": null,
+    "nextStep": "用户试用 candidate-7 反馈",
+    "notes": "候选 D:\\FlowerDesktop-UX-tier1\\candidate-7，夹具 37/37，Windows 回归 evidence-22、evidence-23"
+  }
+}

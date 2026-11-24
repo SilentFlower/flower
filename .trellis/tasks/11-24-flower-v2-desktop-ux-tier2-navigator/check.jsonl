@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/flower-desktop/frontend/index.md", "reason": "核对滚动容器、悬停浮层与 scrollbar-width 禁用规则"}
+{"file": "apps/desktop/workbench/ui/README.md", "reason": "核对组件表是否补充会话导航条"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "thread() 内导航逻辑与现有阅读位置逻辑的复用检查"}
