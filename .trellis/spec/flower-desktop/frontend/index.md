@@ -30,5 +30,7 @@
 ## Pre-Development Checklist
 
 - 新增 Main 的 electron 具名导入（如 `Notification`）时，同步补到 `testing/workspace-panel.test.mjs` 的假 electron 模块导出列表，否则该测试在导入阶段失败。
+- 新的滚动容器调用 `flowerUI.softScroll(node)` 使用自动隐藏细滚动条，不要再写 `scrollbar-width: thin`：Chromium 中标准属性 `scrollbar-width` 一旦设置，`::-webkit-scrollbar` 样式整体失效，Windows 上会回到带箭头的原生滚动条。
+- 替换共用选择器的样式块时连同逗号前的选择器一起检查，例如 `.sidebar-heading, .session-list h2 { … }`，只替换后半段会把前一个选择器接到新规则上。
 - 新增 preload 接口要在 `preload.cjs` 与 `main.mjs` 的 `handle` 两侧同时出现，处理器先校验会话为当前选中会话、路径经 `workspace.mjs` 的 `locate` 校验。
 - 改动后运行 `cd apps/desktop && npm test`、`npx biome check apps/desktop`；涉及 Windows 行为时按 [Windows Verification](./windows-verification.md) 打包并实机验收。
