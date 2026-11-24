@@ -103,5 +103,5 @@ code-reviewer 走 `createExecution` 授权：`steer` 在无 `execution.steer` �
 - 分隔定位：`compactionMark` 移到 `request-history.mjs` 以便单测。成功请求既无 `userMessageIndex` 也无 `flowerRequestId` 时跳过（位置字段与检查点同版引入，缺位置的只会是会话开头的旧轮次），不再整体放弃。历史行增加 `compactedBy`，只在带分隔的那一行有值。
 - 删除会话：撤回 R8.2 的撤销机制（`pendingDeletes`、`finishDelete`、`stopSessions`、`undo-delete-session` 与 preload `undoDeleteSession`），单个会话回到与移除工作区相同的确认后删除路径，运行或排队中拒绝；`retiredSessions` 恢复为只服务侧边追问的 `retiredSideChats`。
 - 侧边追问标签：`.panel-tabs .button` 的 `display: flex` 会盖过 `hidden`，补 `[hidden] { display: none }`。`sideAvailable` 改按是否有当前主会话；页内发送时若无侧边追问先 `openSideChat` 再 `submitSideChat`，新建失败时原文放回输入框，Main 侧契约不变。
-- 标题栏开关：`#workspace-panel-toggle` 移入 `.chrome-content`，`margin-inline-start: auto` 靠右、停靠左侧时 `order: -1`，并设 `app-region: no-drag`；去掉 `--chat-tools-height` 及首页留白的扣减。
+- 浮动开关：`#workspace-panel-toggle` 留在 `.conversation` 内，`.conversation` 设 `position: relative`，开关 `position: absolute; top: 6px; right: 14px`（停靠左侧时 `left: 14px`）、会话区同色底，不再占 36 像素的行；网关提示两侧让出 48 像素。去掉 `--chat-tools-height` 及首页留白的扣减。
 - 底部渐隐：`thread()` 的 `syncBottom` 在下方还有内容时给滚动容器加 `data-more`，CSS 用 `mask-image` 在底部 44 像素渐隐；回到底部按钮有新内容时显示「新消息」文字，改为胶囊。
