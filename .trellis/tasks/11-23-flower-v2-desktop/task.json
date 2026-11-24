@@ -1,0 +1,31 @@
+{
+  "id": "flower-v2-desktop",
+  "name": "flower-v2-desktop",
+  "title": "Flower v2 新 Desktop 应用",
+  "description": "交付使用共享核心的桌面产品，并验收首个完整用户场景。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": "flower-code-reviewer",
+  "priority": "P2",
+  "creator": "silentflower",
+  "assignee": "silentflower",
+  "createdAt": "2026-11-23",
+  "completedAt": null,
+  "closeout": {
+    "status": "pending",
+    "closedAt": null,
+    "blockers": []
+  },
+  "branch": null,
+  "base_branch": "v2",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "11-23-flower-v2",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

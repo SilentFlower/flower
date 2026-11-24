@@ -1,0 +1,30 @@
+{
+  "id": "flower-v2-desktop-ux",
+  "name": "flower-v2-desktop-ux",
+  "title": "Desktop 交互打磨（借鉴 Cindy 与 QoneAgent）",
+  "description": "按三档借鉴 Cindy 与 QoneAgent 的运行态与会话交互",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": "flower-code-reviewer",
+  "priority": "P2",
+  "creator": "silentflower",
+  "assignee": "silentflower",
+  "createdAt": "2026-11-24",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "v2",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "11-24-flower-v2-desktop-ux-tier1",
+    "11-24-flower-v2-desktop-ux-tier2",
+    "11-24-flower-v2-desktop-ux-tier3"
+  ],
+  "parent": "11-23-flower-v2",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

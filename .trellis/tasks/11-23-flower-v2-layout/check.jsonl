@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/11-23-flower-v2-layout/prd.md","reason":"核验目录、七个包、旧包清理和保留入口。"}
+{"file":".trellis/spec/flower-code-reviewer/frontend/index.md","reason":"复核 npm 与镜像启动契约、公司分支 CI 范围。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"校验 npm、TypeScript、Trellis、Docker 和文档的跨层路径。"}
+{"file":".trellis/spec/flower-tools-gitlab/backend/index.md","reason":"从仓外公开工具核对 GitLab 整体和行内评论转义。"}

@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/flower-ops-bot/frontend/state-management.md", "reason": "旧会话读回和按会话隔离"}
+{"file": ".trellis/spec/flower-code-reviewer/frontend/index.md", "reason": "评审 CLI、打包和镜像消费者"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对版本与 SDK 在各入口的一致性"}

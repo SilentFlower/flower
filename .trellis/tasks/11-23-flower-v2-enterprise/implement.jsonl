@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/11-23-flower-v2/design.md","reason":"沿用父设计第 5.3 节的 reviewer 首批接入、发布边界与镜像契约。"}
+{"file":".trellis/tasks/11-23-flower-v2-runtime/design.md","reason":"扩展现有执行适配时沿用主体与工作区绑定、排队、取消、持久化和终态契约。"}
+{"file":".trellis/spec/flower-code-reviewer/frontend/component-guidelines.md","reason":"保留 CLI 参数、MR 上下文、评论规则、退化路径和评审结果。"}
+{"file":".trellis/spec/flower-code-reviewer/frontend/hook-guidelines.md","reason":"保留 pi 扩展注册顺序、合规短路和工具执行上下文。"}
+{"file":".trellis/spec/flower-providers/frontend/hook-guidelines.md","reason":"复用 havefun provider 注册、模型协议和认证装配。"}
+{"file":".trellis/spec/flower-tools-gitlab/frontend/component-guidelines.md","reason":"沿用 GitLab 工具定义和客户端的副作用边界。"}
+{"file":".trellis/spec/flower-telemetry/backend/sink-guidelines.md","reason":"复用 NDJSON、JSONL、冲刷及观测故障处理契约。"}

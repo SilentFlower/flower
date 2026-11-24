@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/11-23-flower-v2-layout/design.md","reason":"落实三个应用路径、内容归属和跨层构建契约。"}
+{"file":".trellis/spec/flower-code-reviewer/frontend/directory-structure.md","reason":"保留 reviewer 的 CLI、skills、Dockerfile 和入口层职责。"}
+{"file":".trellis/spec/flower-ops-bot/frontend/directory-structure.md","reason":"保留钉钉服务、会话处理与 Redis 入口。"}
+{"file":".trellis/spec/flower-tools-gitlab/backend/index.md","reason":"将评论转义及原单测移入 GitLab 包，由两种评论工具共用。"}

@@ -1,0 +1,31 @@
+{
+  "id": "flower-v2-enterprise",
+  "name": "flower-v2-enterprise",
+  "title": "Flower v2 企业服务接入",
+  "description": "在现有 Flower 企业入口验证运行时和业务行为的兼容性。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": "flower-code-reviewer",
+  "priority": "P2",
+  "creator": "silentflower",
+  "assignee": "silentflower",
+  "createdAt": "2026-11-23",
+  "completedAt": null,
+  "closeout": {
+    "status": "pending",
+    "closedAt": null,
+    "blockers": []
+  },
+  "branch": null,
+  "base_branch": "v2",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "11-23-flower-v2",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

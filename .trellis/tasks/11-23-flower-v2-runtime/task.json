@@ -1,0 +1,31 @@
+{
+  "id": "flower-v2-runtime",
+  "name": "flower-v2-runtime",
+  "title": "Flower v2 共享 pi 运行时",
+  "description": "定义并验证企业服务与桌面可共同使用的会话、工具和运行事件。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": "flower-code-reviewer",
+  "priority": "P2",
+  "creator": "silentflower",
+  "assignee": "silentflower",
+  "createdAt": "2026-11-23",
+  "completedAt": null,
+  "closeout": {
+    "status": "pending",
+    "closedAt": null,
+    "blockers": []
+  },
+  "branch": null,
+  "base_branch": "v2",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "11-23-flower-v2",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
