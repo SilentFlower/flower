@@ -30,3 +30,7 @@ tmp/
 
 # skill-garden 安装时生成的 workflow.md 备份(本地回滚用)
 .trellis/workflow.md.bak
+
+# Python 字节码缓存(Codex hook 等运行时自动生成)
+__pycache__/
+*.pyc
