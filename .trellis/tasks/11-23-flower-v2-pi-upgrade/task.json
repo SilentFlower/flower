@@ -22,5 +22,10 @@
   "parent": "11-23-flower-v2",
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {},
+  "closeout": {
+    "status": "pending",
+    "closedAt": null,
+    "blockers": []
+  }
 }

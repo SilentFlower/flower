@@ -46,5 +46,10 @@
     ],
     "next_step": "第一档收尾，随后进入第二档规划",
     "notes": "补充提交 b5aa0d2d、86918b5b、87ca8d98；候选 D:\\FlowerDesktop-UX-tier1\\candidate-2，证据 evidence-12；长会话滚动条滑块待用户目测"
+  },
+  "closeout": {
+    "status": "pending",
+    "closedAt": null,
+    "blockers": []
   }
 }

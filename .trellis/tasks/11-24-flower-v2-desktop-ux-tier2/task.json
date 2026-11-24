@@ -22,5 +22,10 @@
   "parent": "11-24-flower-v2-desktop-ux",
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {},
+  "closeout": {
+    "status": "pending",
+    "closedAt": null,
+    "blockers": []
+  }
 }
