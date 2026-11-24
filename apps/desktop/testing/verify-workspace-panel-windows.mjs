@@ -78,16 +78,22 @@ try {
 	);
 	await page.locator("#workspace:not(:disabled)").waitFor();
 	async function checkToggle() {
-		// 开关位于标题栏内、窗口按钮左侧，且能接收点击。
+		// 开关浮在会话区右上角、标题栏下方，不占行（会话内容紧贴会话区顶部），且能接收点击。
 		const position = await by("workspace-panel-toggle").evaluate((node) => {
 			const rect = node.getBoundingClientRect();
-			const chrome = document.querySelector(".desktop-chrome").getBoundingClientRect();
+			const conversation = node.closest(".conversation").getBoundingClientRect();
+			const body = document.querySelector("#conversation-body").getBoundingClientRect();
 			return {
-				inside: rect.top >= chrome.top && rect.bottom <= chrome.bottom,
+				gap: rect.top - document.querySelector(".desktop-chrome").getBoundingClientRect().bottom,
+				right: Math.round(conversation.right - rect.right),
+				overlay: body.top - conversation.top < 2,
 				hit: node.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)),
 			};
 		});
-		assert(position.inside && position.hit, JSON.stringify(position));
+		assert(
+			position.gap >= 4 && position.gap <= 9 && position.right === 14 && position.overlay && position.hit,
+			JSON.stringify(position),
+		);
 	}
 	await checkToggle();
 	await by("workspace-panel-toggle").click();

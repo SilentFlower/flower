@@ -277,10 +277,12 @@ try {
 	await page.locator("#interrupted-banner").waitFor({ state: "hidden" });
 	results.push("运行中关闭后重启，侧栏顶部列出被中断的会话；会话内按钮为「继续任务」，可忽略横幅");
 
-	step("标题栏开关与底部渐隐");
+	step("浮动开关与底部渐隐");
 	const toggleBox = await page.locator("#workspace-panel-toggle").boundingBox();
 	const chromeBox = await page.locator(".desktop-chrome").boundingBox();
-	assert.ok(toggleBox.y + toggleBox.height <= chromeBox.y + chromeBox.height, "文件浏览器开关应在标题栏内");
+	const bodyBox = await page.locator("#conversation-body").boundingBox();
+	assert.ok(toggleBox.y >= chromeBox.y + chromeBox.height, "文件浏览器开关应在标题栏下方");
+	assert.ok(bodyBox.y < toggleBox.y, "会话内容应从开关下方滚过，开关不占行");
 	const scrollable = await page.locator("#thread-scroll").evaluate((node) => node.scrollHeight > node.clientHeight + 80);
 	if (scrollable) {
 		await page.locator("#thread-scroll").evaluate((node) => (node.scrollTop = 0));
@@ -289,7 +291,9 @@ try {
 		await page.locator("#thread-scroll").evaluate((node) => (node.scrollTop = node.scrollHeight));
 		await until(async () => (await page.locator("#thread-scroll").getAttribute("data-more")) === null, "贴底时仍渐隐");
 	}
-	results.push(`文件浏览器开关位于标题栏；${scrollable ? "回看时输入框上方渐隐，贴底时取消" : "会话较短，未触发渐隐"}`);
+	results.push(
+		`文件浏览器开关浮在会话区右上角、不占行；${scrollable ? "回看时输入框上方渐隐，贴底时取消" : "会话较短，未触发渐隐"}`,
+	);
 
 	step("窄窗与深色");
 	await app.evaluate(({ BrowserWindow, nativeTheme }) => {

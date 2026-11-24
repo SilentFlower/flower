@@ -2,19 +2,24 @@
 	grid-column: 2 / -1;
 }
 
-/* 文件浏览器开关放在标题栏右端（停靠左侧时在左端），会话区不再为它单留一行。 */
+/* 文件浏览器开关浮在会话区右上角（停靠左侧时在左上角），不占行，会话内容从其下方滚过；
+   右侧留出 14 像素避开滚动条，底色与会话区相同，压住滚过的文字。 */
 #workspace-panel-toggle {
-	flex: 0 0 28px;
+	position: absolute;
+	top: 6px;
+	right: 14px;
+	z-index: 4;
 	width: 28px;
 	height: 28px;
 	min-height: 28px;
-	margin-inline-start: auto;
 	padding: 0;
 	border-radius: 50%;
+	background: var(--canvas);
 	color: var(--muted);
-	/* 标题栏整体用于拖动窗口，按钮须单独接收点击。 */
-	-webkit-app-region: no-drag;
-	app-region: no-drag;
+}
+
+#workspace-panel-toggle:hover {
+	background: var(--hover);
 }
 
 #workspace-panel-toggle[aria-expanded="true"] {
@@ -701,8 +706,8 @@
 }
 
 .workbench[data-panel-side="left"] #workspace-panel-toggle {
-	order: -1;
-	margin-inline-start: 0;
+	right: auto;
+	left: 14px;
 }
 
 .workbench[data-panel-side="left"] #workspace-panel-toggle .icon {

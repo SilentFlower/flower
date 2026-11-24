@@ -1015,6 +1015,7 @@ summary:focus-visible {
 
 .conversation {
 	grid-area: 2 / 2;
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
@@ -1023,7 +1024,8 @@ summary:focus-visible {
 	background: var(--canvas);
 }
 .gateway-notice {
-	margin: 8px clamp(16px, calc(2.55 * var(--layout-vw, 1vw)), 30px) 0;
+	/* 两侧让出浮在会话区顶角的文件浏览器开关。 */
+	margin: 8px 48px 0;
 	padding: 7px 10px;
 	border: 1px solid var(--line);
 	border-radius: var(--radius);

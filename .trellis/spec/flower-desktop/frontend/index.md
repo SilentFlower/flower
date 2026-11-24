@@ -39,7 +39,6 @@
 - `.conversation-body` 同时是尺寸查询容器（`container-type: inline-size`）。会话版式（消息列正文最宽 914、`.timeline`/`.composition` 的 `--gutter` 50，输入区内边距 `--gutter - 10`）按 `@container (max-width: 699px)` 收到 20，不要改用视口媒体查询：侧栏折叠与右栏并排时会话区宽度与窗口宽度不成比例。首页编辑卡由 `.workbench[data-home="true"] .composition` 覆盖 `--gutter`、`max-width` 与 `padding-inline`，改会话版式时保持首页尺寸不变。
 - 在会话区（`#timeline` 等）新增 `contextmenu` 监听时先判断 `event.defaultPrevented`：路径链接与交付卡片已在子元素上 `preventDefault` 并弹出自己的菜单，祖先再弹会出现两个菜单。回复选区菜单还要求右键目标与选区相交（`range.intersectsNode`）。
 - 给带 `display` 规则的元素（如 `.panel-tabs .button { display: flex }`）用 `hidden` 属性切换显隐时，同时补 `<选择器>[hidden] { display: none }`：作者样式的 `display` 盖过 `hidden` 的默认样式，元素仍然可见可点。测试与 Windows 验收用 `isVisible()` 断言，不要只读 `hidden` 属性。
-- 标题栏 `.chrome-content` 整体是 `app-region: drag`，放进去的按钮（如 `#workspace-panel-toggle`）要设 `-webkit-app-region: no-drag` 与 `app-region: no-drag`，否则在 Windows 上点击只会拖动窗口。
 - 替换共用选择器的样式块时连同逗号前的选择器一起检查，例如 `.sidebar-heading, .session-list h2 { … }`，只替换后半段会把前一个选择器接到新规则上。
 - 新增 preload 接口要在 `preload.cjs` 与 `main.mjs` 的 `handle` 两侧同时出现，处理器先校验会话为当前选中会话、路径经 `workspace.mjs` 的 `locate` 校验。
 - 改动后运行 `cd apps/desktop && npm test`、`npx biome check apps/desktop`；涉及 Windows 行为时按 [Windows Verification](./windows-verification.md) 打包并实机验收。
