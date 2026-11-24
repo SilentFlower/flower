@@ -601,6 +601,13 @@
 	min-width: 0;
 	font-size: 13px;
 }
+.document-meta {
+	flex: none;
+	color: var(--muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
 .deliverable .button {
 	flex: none;
 	font-size: 12px;

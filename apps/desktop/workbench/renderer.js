@@ -123,6 +123,14 @@ function openSidebarMenu(type, key, trigger) {
 					trigger.focus();
 					if (["pin", "create"].includes(operation))
 						return action(() => ui.manageSidebar(type, key, operation, !item.pinned))();
+					// 删除会话不再确认，Toast 提供 8 秒撤销；移除工作区涉及多个会话，仍先确认。
+					if (operation === "delete" && !space)
+						return action(async () => {
+							await ui.manageSidebar(type, key, operation);
+							toast(`已删除「${label}」`, {
+								action: { label: "撤销", run: () => action(() => ui.undoDeleteSession(key))() },
+							});
+						})();
 					sidebarEdit = { type, key, operation, members, trigger };
 					const rename = operation === "rename";
 					by("sidebar-dialog-title").textContent = rename ? `重命名${noun}` : title;
@@ -376,6 +384,7 @@ const thread = agentUI.thread(
 		},
 		cancel: (id, runId) => action(() => ui.cancel(session, id, runId))(),
 		open: (id, path) => action(() => ui.openArtifact(session, id, path))(),
+		artifactInfo: (path) => ui.artifactInfo(session, path).catch(() => undefined),
 		previewAttachment: workspacePanel.previewAttachment,
 		preview: (path, trigger) => workspacePanel.preview(path, trigger),
 		openLink: (url) => action(() => ui.openReplyLink(url))(),
@@ -1016,6 +1025,14 @@ function showContextUsage(usage) {
 	]
 		.filter(Boolean)
 		.join(" · ");
+	// 本会话实际附加的口径：个人全局指令与工作区 FLOWER.md。
+	const applied = usage?.instructions;
+	const notes = [
+		applied?.personal ? "已应用全局指令" : "",
+		applied?.workspace ? `已读取 FLOWER.md${applied.workspace.truncated ? "（只读取前 8000 字）" : ""}` : "",
+	].filter(Boolean);
+	by("context-instructions").textContent = notes.join(" · ");
+	by("context-instructions").hidden = !notes.length;
 	by("context-usage").setAttribute(
 		"aria-label",
 		usage
@@ -1816,6 +1833,39 @@ function openModelSettings(trigger) {
 	by(state.modelSettings ? "model-title" : "service-name").focus();
 }
 
+// 全局指令：与外观设置一样从模型设置标题栏进入，关闭后焦点回到设置入口。
+const instructionsDialog = by("instructions-dialog");
+function syncInstructionsCount() {
+	const length = [...by("instructions-text").value].length;
+	by("instructions-count").textContent = `${length} / 4000 字`;
+}
+by("settings-instructions").addEventListener("click", () => {
+	if (instructionsDialog.open) return;
+	by("model-dialog").close();
+	by("instructions-text").value = state?.instructions ?? "";
+	syncInstructionsCount();
+	flowerUI.feedback(by("instructions-feedback"), "");
+	instructionsDialog.showModal();
+	by("instructions-text").focus();
+});
+by("instructions-text").addEventListener("input", syncInstructionsCount);
+for (const id of ["instructions-close", "instructions-cancel"])
+	by(id).addEventListener("click", () => instructionsDialog.close());
+instructionsDialog.addEventListener("close", () => {
+	const focused = document.activeElement;
+	if (focused === document.body || instructionsDialog.contains(focused)) by("theme-open").focus();
+});
+by("instructions-form").addEventListener("submit", async (event) => {
+	event.preventDefault();
+	try {
+		await ui.saveInstructions(by("instructions-text").value);
+		instructionsDialog.close();
+		toast("已保存全局指令，下一轮起生效。");
+		void refreshContextUsage();
+	} catch (error) {
+		flowerUI.feedback(by("instructions-feedback"), modelError(error, "无法保存全局指令。"), "error");
+	}
+});
 by("settings").addEventListener("click", () => {
 	picker.hidePopover();
 	openModelSettings(by("model-picker-open"));

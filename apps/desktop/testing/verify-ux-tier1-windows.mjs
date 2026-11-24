@@ -195,9 +195,13 @@ try {
 	assert.deepEqual(await qa(() => globalThis.flowerQA.menus.at(-1)), ["剪切", "复制", "粘贴", "separator", "全选"]);
 	await first.locator(".markdown-reply p").last().selectText();
 	await first.locator(".markdown-reply p").last().click({ button: "right" });
-	await until(async () => JSON.stringify(await qa(() => globalThis.flowerQA.menus.at(-1))) === '["复制"]');
+	// 第二档起回复选区改用复制、引用、侧边追问菜单。
+	await until(
+		async () =>
+			JSON.stringify(await qa(() => globalThis.flowerQA.menus.at(-1))) === '["复制","separator","引用","侧边追问"]',
+	);
 	await page.locator("#prompt").fill("");
-	results.push("输入框与选中文字的原生右键菜单项正确");
+	results.push("输入框与回复选区的右键菜单项正确");
 
 	// 历史召回与长粘贴
 	step("历史召回与长粘贴");

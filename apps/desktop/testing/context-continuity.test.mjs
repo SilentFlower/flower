@@ -186,6 +186,8 @@ test("Desktop 子进程经真实 pi、回环网关和附件，摘要后重启续
 		tokens: (await restart.host.call("context-usage", { session })).tokens,
 		limit: 4096,
 		estimated: true,
+		// 未设置全局指令、工作区没有 FLOWER.md。
+		instructions: { personal: false },
 	});
 	await restart.submit("重启后只回答差额和原始出处");
 	assert.equal(trace.length, previousCalls + 1);

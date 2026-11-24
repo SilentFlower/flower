@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("flower", {
 	chooseModelService: (id, revision) => invoke("choose-model-service", id, revision),
 	setModelEffort: (effort, revision) => invoke("set-model-effort", effort, revision),
 	setWriteMode: (session, mode) => invoke("set-write-mode", session, mode),
+	saveInstructions: (text) => invoke("save-instructions", text),
 	decideWrite: (id, allowed) => invoke("decide-write", id, allowed),
 	chooseWorkspace: () => invoke("choose-workspace"),
 	newSession: (session) => invoke("new-session", session),
@@ -19,6 +20,7 @@ contextBridge.exposeInMainWorld("flower", {
 	gitChanges: (id) => invoke("git-changes", id),
 	gitDifference: (id, path, group) => invoke("git-difference", id, path, group),
 	manageSidebar: (type, id, operation, value) => invoke("manage-sidebar", type, id, operation, value),
+	undoDeleteSession: (id) => invoke("undo-delete-session", id),
 	listWorkspaceEntries: (session, directory, offset) => invoke("list-workspace-entries", session, directory, offset),
 	previewWorkspaceFile: (session, path) => invoke("preview-workspace-file", session, path),
 	showPathMenu: (session, path, preview) => invoke("show-path-menu", session, path, preview),
@@ -66,6 +68,7 @@ contextBridge.exposeInMainWorld("flower", {
 	copyText: (text) => invoke("copy-text", text),
 	cancel: (session, request, run) => invoke("cancel", session, request, run),
 	openArtifact: (session, request, path) => invoke("open-artifact", session, request, path),
+	artifactInfo: (session, path) => invoke("artifact-info", session, path),
 	subscribe(callback) {
 		const listener = (_event, event) => callback(event);
 		ipcRenderer.on("flower:update", listener);

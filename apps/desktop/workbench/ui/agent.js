@@ -922,7 +922,14 @@ window.agentUI = (() => {
 		};
 	}
 
-	function deliverables(open, preview, menu) {
+	/** 交付卡片的元信息文案。@param {object} [summary] 宿主返回的元信息 @returns {string} 如「2 个工作表 · 1,024 行」 */
+	function artifactMeta(summary) {
+		if (summary?.kind === "xlsx") return `${summary.sheets} 个工作表 · ${summary.rows.toLocaleString("zh-CN")} 行`;
+		if (summary?.kind === "md") return `约 ${summary.chars.toLocaleString("zh-CN")} 字`;
+		return "";
+	}
+
+	function deliverables(open, preview, menu, info) {
 		const node = element("section", "deliveries");
 		const files = element("div", "deliveries");
 		node.append(element("h3", "", "交付文件"), files);
@@ -942,6 +949,13 @@ window.agentUI = (() => {
 						const kind = element("span", "document-icon", workbook ? "XLSX" : "MD");
 						const title = element("span", "document-name", name);
 						title.title = path;
+						// 元信息异步读取，失败或文件已删除时不显示。
+						const meta = element("span", "document-meta");
+						meta.hidden = true;
+						void info?.(path).then((summary) => {
+							meta.textContent = artifactMeta(summary);
+							meta.hidden = !meta.textContent;
+						});
 						const control = button("打开 ↗", () => open(path));
 						control.setAttribute(
 							"aria-label",
@@ -952,7 +966,7 @@ window.agentUI = (() => {
 							"aria-label",
 							workbook ? "预览汇总工作簿" : name === "核对报告.md" ? "预览核对报告" : "预览分析报告",
 						);
-						row.append(kind, title, inspect, control);
+						row.append(kind, title, meta, inspect, control);
 						// 右键或菜单键提供预览、在文件夹中显示与复制路径。
 						row.addEventListener("contextmenu", (event) => {
 							if (!menu) return;
@@ -1030,7 +1044,12 @@ window.agentUI = (() => {
 		}
 		const failure = element("p", "message-text message-error");
 		const steps = toolSteps();
-		const deliveries = deliverables((path) => actions.open(id, path), actions.preview, actions.paths?.menu);
+		const deliveries = deliverables(
+			(path) => actions.open(id, path),
+			actions.preview,
+			actions.paths?.menu,
+			actions.artifactInfo,
+		);
 		reply.append(head, thought, steps.node, text, failure, deliveries.node);
 		// 最近一次压缩落在本轮之前或之后时显示分隔。
 		const [compactedBefore, compactedAfter] = [0, 1].map(() => {
@@ -1425,6 +1444,7 @@ window.agentUI = (() => {
 		queueBar,
 		quoteInsertion,
 		selectionActions,
+		artifactMeta,
 		mentionQuery,
 		mentionPicker,
 	};

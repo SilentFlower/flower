@@ -6,10 +6,20 @@ import { isContextOverflow } from "@earendil-works/pi-ai";
 const protocol = 1;
 
 /** 管理本机工作台的专用运行时子进程和模型调用 IPC。
- * @param options Electron 启动器、分区、模型代理和事件回调
+ * @param options Electron 启动器、分区、模型代理、个人全局指令和事件回调
  * @returns 启动、请求与关闭操作
  */
-export function createRuntimeHost({ fork, directory, model, onEvent, onReasoning, onExit, gateway, authorizeWrite }) {
+export function createRuntimeHost({
+	fork,
+	directory,
+	model,
+	instructions = "",
+	onEvent,
+	onReasoning,
+	onExit,
+	gateway,
+	authorizeWrite,
+}) {
 	const env = Object.fromEntries(
 		Object.entries(process.env).filter(([key]) => /^(systemroot|windir|temp|tmp)$/i.test(key)),
 	);
@@ -149,5 +159,5 @@ export function createRuntimeHost({ fork, directory, model, onEvent, onReasoning
 		}
 	});
 	child.once("exit", () => close(false));
-	return { call, close, ready: call("init", { directory: join(directory, "sessions"), model }) };
+	return { call, close, ready: call("init", { directory: join(directory, "sessions"), model, instructions }) };
 }

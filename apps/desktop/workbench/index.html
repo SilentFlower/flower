@@ -196,6 +196,7 @@
 										<div class="context-detail-head"><span>上下文</span><strong id="context-amount"></strong></div>
 										<div class="context-bar" aria-hidden="true"><span id="context-bar-value"></span></div>
 										<p id="context-source"></p>
+										<p id="context-instructions" hidden></p>
 										<button class="button quiet context-compact" id="context-compact" type="button">压缩上下文</button>
 									</div>
 								</div>
@@ -354,6 +355,20 @@
 		</div>
 		<p id="model-choice-feedback" class="feedback" role="status"></p>
 	</section>
+	<dialog class="flower-settings instructions-dialog" id="instructions-dialog" aria-labelledby="instructions-title">
+		<form id="instructions-form">
+			<header class="settings-heading"><h2 id="instructions-title">全局指令</h2><button class="button quiet settings-close" id="instructions-close" type="button" aria-label="关闭全局指令">×</button></header>
+			<div class="settings-scroll">
+				<label class="settings-field" for="instructions-text">个人全局指令
+					<textarea id="instructions-text" rows="8" maxlength="4000" placeholder="例如：金额保留两位小数；部门名称用全称；结论先写在开头。" aria-describedby="instructions-count instructions-help"></textarea>
+				</label>
+				<p class="model-help" id="instructions-count"></p>
+				<p class="model-help" id="instructions-help">保存后从下一轮起对本机所有会话生效。工作区根目录下的 FLOWER.md 也会作为口径读取（最多 8000 字），同部门共用一个目录即可统一口径。</p>
+				<p class="feedback" id="instructions-feedback" role="status"></p>
+			</div>
+			<footer class="settings-actions"><button class="button secondary" id="instructions-cancel" type="button">取消</button><button class="button primary" type="submit">保存</button></footer>
+		</form>
+	</dialog>
 	<dialog id="image-viewer" aria-labelledby="image-title">
 		<header class="image-viewer-bar">
 			<h2 id="image-title"></h2><span id="image-size"></span>
@@ -369,6 +384,7 @@
 					<h2 id="model-title" tabindex="-1">模型设置</h2>
 					<div class="model-editor-identity" id="model-editor-identity" hidden></div>
 				</div>
+				<button class="button quiet" id="settings-instructions" type="button">全局指令</button>
 				<button class="button quiet" id="settings-appearance" type="button">外观</button>
 				<button class="button quiet" id="settings-close-dialog" type="button" aria-label="关闭模型设置">×</button>
 			</header>

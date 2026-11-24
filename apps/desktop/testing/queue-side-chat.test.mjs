@@ -163,6 +163,26 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 
 	// 编辑中的队首在当前任务结束时暂缓发送，保存后按修改后的原文发送。
 	const held = await api.submit(id, "慢：编辑期间运行");
+	// 主会话运行中打开侧边追问：只带入已完成的轮次；队列项可转为侧边追问并移出队列。
+	await desktop.event((event) => event.requestId === held.requestId && event.type === "started");
+	const during = await api.openSideChat(id);
+	const duringFile = JSON.parse(
+		await readFile(join(root, "profile", "local-workbench", "sessions", `${during.id}.json`), "utf8"),
+	);
+	assert.equal(
+		duringFile.messages.some((message) => text(message).includes("慢：编辑期间运行")),
+		false,
+	);
+	const toSide = await api.submit(id, "侧边：转过去的问题");
+	assert.equal((await api.queueToSideChat(id, toSide.queued)).dropped, 0);
+	assert.equal((await api.state()).queue.items.length, 0);
+	for (let tries = 0; ; tries++) {
+		const rows = await api.sideChatHistory(id);
+		if (rows.some(({ input, status }) => input === "侧边：转过去的问题" && status === "succeeded")) break;
+		assert(tries < 300, "转为侧边追问的消息未得到回答");
+		await delay(50);
+	}
+	await api.closeSideChat(id);
 	const pending = await api.submit(id, "待修改的原文");
 	await api.holdQueueItem(id, pending.queued);
 	assert.equal((await terminal(held.requestId)).status, "succeeded");
@@ -210,14 +230,28 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 		],
 	);
 
-	// 删除主会话时一并删除其侧边追问记录。
+	// 删除会话：立即移出列表，撤销期内保留记录文件，撤销后恢复原位置与侧边追问。
 	const another = await api.openSideChat(id);
-	const anotherFile = join(root, "profile", "local-workbench", "sessions", `${another.id}.json`);
-	await access(anotherFile);
+	const sessionsDirectory = join(root, "profile", "local-workbench", "sessions");
+	const anotherFile = join(sessionsDirectory, `${another.id}.json`);
 	await api.manageSidebar("session", id, "delete");
-	await desktop.state((current) => !current.sideChats.length && !current.sessions.length);
+	state = await api.state();
+	assert.deepEqual([state.sessions.length, state.sideChats.length], [0, 0]);
+	await access(anotherFile);
+	await access(join(sessionsDirectory, `${id}.json`));
+	await api.undoDeleteSession(id);
+	state = await api.state();
+	assert.deepEqual([state.sessions[0].id, state.sideChats[0]?.id, state.selected], [id, another.id, id]);
+	assert.equal((await api.history(id)).length > 0, true);
+	// 撤销期内退出应用视为确认删除，重启后会话与侧边追问的记录文件都已清理。
+	await api.manageSidebar("session", id, "delete");
+	await desktop.restart();
+	state = await desktop.state((current) => current.ready);
+	assert.deepEqual([state.sessions.length, state.sideChats.length], [0, 0]);
 	await assert.rejects(access(anotherFile));
+	await assert.rejects(access(join(sessionsDirectory, `${id}.json`)));
 	assert.deepEqual(await api.searchSessions("二月核对"), []);
+	await assert.rejects(api.undoDeleteSession(id), /无法撤销/);
 });
 
 function delay(ms) {

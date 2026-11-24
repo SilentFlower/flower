@@ -15,6 +15,7 @@ import { draftAttachments, fileReference, mergeAttachments } from "../workbench/
 import { pdfEvidence } from "../workbench/attachment-reader.mjs";
 import {
 	approveWorkspace,
+	artifactSummary,
 	canAttachWorkspaceFile,
 	listWorkspaceEntries,
 	previewWorkspaceFile,
@@ -860,4 +861,25 @@ test("@ 补全只列可加入对话的文件，按文件名前缀、文件名包
 	assert.deepEqual(rankWorkspaceFiles(files, "", 2), ["汇总.PDF", "预算.xlsx"]);
 	assert.throws(() => rankWorkspaceFiles(files, "长".repeat(201)), /查询无效/);
 	assert.throws(() => rankWorkspaceFiles(files, 1), /查询无效/);
+});
+
+test("交付卡片元信息：工作簿给出工作表数与不含表头的行数，报告给出去除空白后的字数", async (t) => {
+	const root = await temporaryDirectory(t);
+	const folder = `Flower-分析-${randomUUID()}`;
+	await mkdir(join(root, folder));
+	const book = new Excel.Workbook();
+	book.addWorksheet("汇总").addRows([
+		["分组", "合计"],
+		["甲", 1],
+		["乙", 2],
+	]);
+	book.addWorksheet("明细").addRows([["项目"], ["一"]]);
+	book.addWorksheet("空表");
+	await book.xlsx.writeFile(join(root, folder, "汇总.xlsx"));
+	await writeFile(join(root, folder, "核对报告.md"), "# 核对\n\n差额 37 元。");
+	const workspace = await approveWorkspace(root);
+	assert.deepEqual(await artifactSummary(workspace, `${folder}/汇总.xlsx`), { kind: "xlsx", sheets: 3, rows: 3 });
+	assert.deepEqual(await artifactSummary(workspace, `${folder}/核对报告.md`), { kind: "md", chars: 9 });
+	await assert.rejects(artifactSummary(workspace, "note.md"), /不属于可打开的分析产物/);
+	await assert.rejects(artifactSummary(workspace, `${folder}/分析报告.md`), /文件不存在或已被移动/);
 });

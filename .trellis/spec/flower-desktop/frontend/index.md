@@ -22,7 +22,7 @@
 | Guide | 说明 |
 |-------|------|
 | [Windows Verification](./windows-verification.md) | Playwright `_electron` 实机验收脚本：私有桌面运行、主进程替身、收尾与超时、前台焦点的限制 |
-| [Workbench Contracts](./workbench-contracts.md) | 回复路径核对 IPC、推理档位「关闭思考」的请求字段映射、本机排队消息与插话、侧边追问会话、@ 补全文件清单、正文搜索与中断恢复 |
+| [Workbench Contracts](./workbench-contracts.md) | 回复路径核对 IPC、推理档位「关闭思考」的请求字段映射、本机排队消息与插话、侧边追问会话、@ 补全文件清单、正文搜索与中断恢复、删除撤销期、全局指令与 FLOWER.md、交付卡片元信息 |
 
 > 共享运行时的事件持久化契约见 [agent-runtime backend spec](../../agent-runtime/backend/index.md)。
 
@@ -41,4 +41,6 @@
 - 替换共用选择器的样式块时连同逗号前的选择器一起检查，例如 `.sidebar-heading, .session-list h2 { … }`，只替换后半段会把前一个选择器接到新规则上。
 - 新增 preload 接口要在 `preload.cjs` 与 `main.mjs` 的 `handle` 两侧同时出现，处理器先校验会话为当前选中会话、路径经 `workspace.mjs` 的 `locate` 校验。
 - 改动后运行 `cd apps/desktop && npm test`、`npx biome check apps/desktop`；涉及 Windows 行为时按 [Windows Verification](./windows-verification.md) 打包并实机验收。
+- 根目录 `npm run typecheck`（`tsc --build --noEmit`）要在根 `npm run build` 之后运行：被引用项目的产物过期时，`--noEmit` 无法重建它们，会报 `TS6310 Referenced project … may not disable emit`。
+- `testing/desktop-harness.mjs` 的 `state(predicate)` 同步调用判断函数；传入异步函数时返回的 Promise 恒为真，等于不等待。需要等待异步条件时自行轮询。
 - 浏览器夹具或源码直接启动时，`marked` 从仓根异步加载，首屏贴底后回复由纯文本重排变高，滚动停在离底部数千像素处且「回到底部」不出现；核对贴底、当前轮次等依赖滚动位置的行为前先显式滚到底部。正式包从应用本地 `node_modules` 同步加载，不受影响，不要据此改动阅读位置逻辑。

@@ -2408,3 +2408,37 @@ summary:focus-visible {
 	padding: 3px 10px;
 	font-size: 12px;
 }
+/* 全局指令对话框：多行文本框沿用设置字段的边框与字体。 */
+.instructions-dialog {
+	width: min(520px, calc(100vw - 32px));
+}
+.instructions-dialog form {
+	display: flex;
+	flex-direction: column;
+	max-height: calc(100dvh - 54px);
+}
+.instructions-dialog .settings-heading {
+	padding: 11px 20px;
+	border-bottom: 1px solid var(--line);
+}
+.instructions-dialog .settings-actions {
+	padding: 10px 20px;
+	border-top: 1px solid var(--line);
+}
+.instructions-dialog textarea {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 160px;
+	max-height: 50vh;
+	resize: vertical;
+	padding: 8px 10px;
+	border: 1px solid var(--edge);
+	border-radius: var(--radius);
+	background: var(--canvas);
+	color: var(--ink);
+	font: inherit;
+	line-height: 1.6;
+}
+#context-instructions {
+	margin-top: 4px;
+}

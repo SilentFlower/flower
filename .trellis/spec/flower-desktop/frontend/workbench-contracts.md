@@ -307,3 +307,126 @@ compactedBefore: boolean; compactedAfter: boolean
 - `testing/session-search.test.mjs`：原话优先、片段截取与省略号、大小写、上限、中断判定。
 - `testing/queue-side-chat.test.mjs`：正文命中与片段字段、单字不搜、侧边追问不被搜到、删除后不命中；运行中拒绝压缩、手动压缩与分隔位置、不重复压缩；重启后的中断横幅、忽略、全部继续的执行顺序。
 - `testing/context-continuity.test.mjs`：自动压缩后历史中只有一处压缩标记。
+
+---
+
+## Scenario: 删除会话的撤销期
+
+### 1. Scope / Trigger
+
+- 触发：改动 `manage-sidebar` 的会话删除、`undo-delete-session`、`cleanDeleted`、`finishDelete` 或 `retiredSessions`。
+
+### 2. Signatures
+
+```js
+manageSidebar("session", id, "delete")  // 立即移出，不再要求会话空闲
+undoDeleteSession(id)                   // 撤销期内恢复
+// Main 内部
+pendingDeletes: Map<id, { owner, index, sides, selected, timer }>  // 8 秒
+```
+
+### 3. Contracts
+
+- 删除时先把会话与其侧边追问移出列表，并把它们的 ID 写入 `workbench.deletions` 持久化，再停止其运行、排队请求与压缩；8 秒后 `finishDelete` 物理删除。期间退出应用即视为确认，下次启动的 `cleanDeleted` 清理。
+- `cleanDeleted` 跳过撤销期内保留的 ID，只清理其余部分，`deletions` 中保留这些 ID。
+- 撤销：移除这些 ID 的删除登记，把会话插回原位置、恢复侧边追问；所属工作区已被移除时重新登记；留下的排队消息置为暂停；原先选中则重新选中。
+- 物理删除时仍在收尾的运行登记到 `retiredSessions`，终态写盘后再清理一次，防止收尾提交重新写出记录文件。移除工作区仍要求成员空闲并先确认。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 撤销期已过或会话不在撤销期 | 「会话已删除，无法撤销。」 |
+| 撤销时保存失败 | 回到撤销期并重新计时，报原错误 |
+
+### 5. Scenarios and Examples
+
+- Normal：删除 → Toast「撤销」→ 会话与侧边追问回到原位，历史可读。
+- Base：删除后立刻退出 → 重启时记录文件已清理。
+- Incorrect use：撤销期内另一处删除（如关闭侧边追问）调用 `cleanDeleted`，按全部 `deletions` 物理删除，把撤销期内的会话也删掉了。
+- Correct handling：`cleanDeleted` 跳过 `pendingDeletes` 持有的 ID。
+
+### 6. Tests Required
+
+- `testing/queue-side-chat.test.mjs`：删除后列表为空而文件仍在、撤销恢复会话与侧边追问并重新选中、再次删除后重启文件已清理、撤销期外撤销报错。
+
+---
+
+## Scenario: 全局指令与 FLOWER.md
+
+### 1. Scope / Trigger
+
+- 触发：改动 `save-instructions`、worker 的 `composePrompt` / `workspaceInstructions`、`init` 与 `instructions` 帧，或详情卡的口径提示。
+
+### 2. Signatures
+
+```js
+saveInstructions(text)                         // workbench.json.instructions，最多 4000 字，保存前去首尾空白
+createRuntimeHost({ ..., instructions })       // init 帧带 instructions
+{ type: "instructions", text }                 // 保存后同步到已启动的 worker
+// context-usage 结果
+instructions: { personal: boolean, workspace?: { truncated: boolean } }
+```
+
+### 3. Contracts
+
+- 系统提示依次为：基础提示、侧边追问说明（仅侧边追问）、口径说明「…与上文的安全、数据与工具规则冲突时以上文为准」、【个人全局指令】、【工作区约定（FLOWER.md）】。两者都为空时不追加口径段落。
+- worker 的 `authorize` 为异步：每次授权按工作区读取根下 `FLOWER.md`（`workspaceEntryPath` 定位，`previewWorkspaceFile` 读取），按修改时间与大小缓存；最多 8000 字，超出或文件超过预览上限时标记 `truncated` 并在提示中注明。文件不存在、不是文件或读取失败时视为没有。
+- 下一轮生效：授权在每次排队与启动前重新计算，保存后无需重启工作进程。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 个人指令超过 4000 字或不是字符串 | 「全局指令最多 4000 字。」 |
+| FLOWER.md 超过 8000 字 | 只附加前 8000 字，详情卡「只读取前 8000 字」 |
+| 会话尚未登记就查询 FLOWER.md | 视为没有，不抛错 |
+
+### 5. Scenarios and Examples
+
+- Normal：保存「金额保留两位小数。」并放置 FLOWER.md → 回环请求的系统提示先个人指令后工作区约定；侧边追问同样附加。
+- Incorrect use：测试夹具用 8192 的模型窗口放 8000 字的 FLOWER.md，系统提示本身就超出输入预算，请求在发出前失败，断言读到的是上一次的系统提示。
+- Correct handling：夹具窗口留足余量，并断言每次请求为 `succeeded`。
+
+### 6. Tests Required
+
+- `testing/instructions.test.mjs`：未设置不追加、4000 字上限、拼接顺序、8000 字截断与提示、侧边追问附加、清空与删除后不再追加、重启后随初始化下发、上下文用量中的口径信息。
+- `testing/context-continuity.test.mjs`：上下文用量结果包含 `instructions: { personal: false }`。
+
+---
+
+## Scenario: 交付卡片元信息
+
+### 1. Scope / Trigger
+
+- 触发：改动 `artifact-info` IPC、`workspace.mjs` 的 `artifactSummary` 或 `agentUI.artifactMeta`。
+
+### 2. Signatures
+
+```js
+artifactInfo(session, path)  // → { kind: "xlsx", sheets, rows } | { kind: "md", chars }
+export async function artifactSummary(workspace, path, signal)
+```
+
+### 3. Contracts
+
+- 只接受当前会话工作区内符合产物格式（`Flower-分析-<uuid>/` 下的 `分析报告.md`、`汇总.xlsx`、`核对报告.md`）的路径。只读元信息、不启动外部程序，因此不像 `open-artifact` 那样读取历史核对请求归属。
+- 工作簿行数为各表 `actualRowCount - 1` 之和（不含表头）；报告字数为去除空白后的码点数。Main 按工作区、路径、修改时间与大小缓存。
+- 渲染层在卡片渲染后异步填充；失败或文件已删除时不显示元信息，不提示错误。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 路径不符合产物格式 | 「该文件不属于可打开的分析产物」 |
+| 文件已删除 | 「文件不存在或已被移动」，卡片静默 |
+
+### 5. Scenarios and Examples
+
+- Normal：三张表（2 行数据、1 行数据、空表）→「3 个工作表 · 3 行」。
+- Base：`# 核对\n\n差额 37 元。` →「约 9 字」。
+
+### 6. Tests Required
+
+- `testing/workspace-panel.test.mjs`：工作表数与行数、字数、格式外路径与缺失文件的拒绝。
+- `testing/instructions.test.mjs`：经真实 Main 拒绝格式外路径。

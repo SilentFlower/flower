@@ -881,6 +881,24 @@ export function workspaceTools(workspace, authorizeWrite, resolveInput = (path) 
 	];
 }
 
+/**
+ * 交付卡片的元信息：工作簿给出工作表数与有值行数合计（不含每张表的表头），报告给出去除空白后的字数。
+ * @param workspace 该会话工作区
+ * @param path 交付物相对路径，须符合分析产物的固定格式
+ * @param signal 会话切换时取消
+ * @returns {Promise<{kind: "xlsx", sheets: number, rows: number} | {kind: "md", chars: number}>} 元信息
+ */
+export async function artifactSummary(workspace, path, signal) {
+	if (typeof path !== "string" || !outputs.test(path)) throw new Error("该文件不属于可打开的分析产物");
+	if (/\.xlsx$/i.test(path)) {
+		const book = await workbook(workspace, path, signal);
+		const rows = book.worksheets.reduce((total, sheet) => total + Math.max(0, sheet.actualRowCount - 1), 0);
+		return { kind: "xlsx", sheets: book.worksheets.length, rows };
+	}
+	const { bytes } = await readBounded(workspace, path, textLimit, signal);
+	return { kind: "md", chars: [...bytes.toString("utf8").replace(/\s/g, "")].length };
+}
+
 /** 校验由历史工具回执引用的分析产物。
  * @param workspace 该会话工作区
  * @param path 历史回执列出的相对路径
