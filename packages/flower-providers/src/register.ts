@@ -78,7 +78,7 @@ export function registerHavefunProviders(pi: ExtensionAPI, options: { appSource:
 		// (pi 接受空 models;此 provider 作为后续 extras 注入的接口)
 		pi.registerProvider(providerName, {
 			baseUrl: providerBaseUrl,
-			apiKey: apiKeyEnvName,
+			apiKey: `$${apiKeyEnvName}`,
 			api,
 			models: filteredModels.map(toProviderModelConfig),
 			headers: {

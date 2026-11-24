@@ -10,11 +10,11 @@
  * severity 词表统一为 `blocker | major | minor`(Phase 2 起,对齐 prompts.ts 模板 + render 函数)
  */
 
-import { Type } from "@earendil-works/pi-ai";
-import { defineTool } from "@earendil-works/pi-coding-agent";
-import { sanitizeQuickActions } from "@flower-ai/flower-tools-common";
+import { type AgentToolResult, defineTool } from "@earendil-works/pi-coding-agent";
+import * as Type from "typebox";
 import { gitlabClient } from "./client.js";
 import { safeReadFile } from "./safe-read.js";
+import { sanitizeQuickActions } from "./sanitize.js";
 import { assertAllowedGroup, assertAllowedProject, normalizeGroupPath, normalizeProjectPath } from "./workspace.js";
 
 export type {
@@ -94,10 +94,10 @@ export const gitlabPostCommentTool = defineTool({
 		body: Type.String({ description: "评论内容(Markdown)" }),
 		severity: severitySchema,
 	}),
-	async execute(_id, params) {
+	async execute(_id, params, signal) {
 		const { projectId, mrIid } = readEnv();
 		const safeBody = sanitizeQuickActions(params.body);
-		await gitlabClient().postMrComment(projectId, mrIid, safeBody, params.severity);
+		await gitlabClient().postMrComment(projectId, mrIid, safeBody, params.severity, ...(signal ? [signal] : []));
 		return {
 			content: [{ type: "text", text: "整体评论已发表" }],
 			details: { severity: params.severity },
@@ -120,10 +120,15 @@ export const gitlabPostLineCommentTool = defineTool({
 		body: Type.String({ description: "评论内容(Markdown)" }),
 		severity: severitySchema,
 	}),
-	async execute(_id, params) {
+	async execute(_id, params, signal) {
 		const { projectId, mrIid } = readEnv();
 		const safeBody = sanitizeQuickActions(params.body);
-		const result = await gitlabClient().postMrLineComment(projectId, mrIid, { ...params, body: safeBody });
+		const result = await gitlabClient().postMrLineComment(
+			projectId,
+			mrIid,
+			{ ...params, body: safeBody },
+			...(signal ? [signal] : []),
+		);
 		const details: {
 			severity: typeof params.severity;
 			file: string;
@@ -195,6 +200,16 @@ export const gitlabGetPreviousReviewTool = defineTool({
 	},
 });
 
+/** 文件行窗的返回范围与读取状态。 */
+interface FileContentDetails {
+	path: string;
+	ref: string;
+	startLine?: number;
+	endLine?: number;
+	length: number;
+	error?: boolean;
+}
+
 /**
  * 拉取任意 ref 的文件行窗(N1 · LLM 拉真实代码上下文)
  *
@@ -225,7 +240,7 @@ export const gitlabGetFileContentTool = defineTool({
 		startLine: Type.Optional(Type.Number({ description: "起始行号(1-based,闭区间);不传时从第 1 行开始" })),
 		endLine: Type.Optional(Type.Number({ description: "结束行号(1-based,闭区间);不传时默认读取 500 行" })),
 	}),
-	async execute(_id, params) {
+	async execute(_id, params): Promise<AgentToolResult<FileContentDetails>> {
 		const { projectId } = readEnv();
 		// 先归一化 ref:兜底 source branch / 透传显式 ref / 无 CI env 时抛中文错误(由 catch 包成 content 返回 LLM)
 		let ref: string;
@@ -246,14 +261,7 @@ export const gitlabGetFileContentTool = defineTool({
 				startLine: params.startLine,
 				endLine: params.endLine,
 			});
-			const details: {
-				path: string;
-				ref: string;
-				startLine?: number;
-				endLine?: number;
-				length: number;
-				error?: boolean;
-			} = {
+			const details: FileContentDetails = {
 				path: params.path,
 				ref,
 				...(params.startLine !== undefined ? { startLine: params.startLine } : {}),
@@ -268,14 +276,7 @@ export const gitlabGetFileContentTool = defineTool({
 			// 把错误以 content 形式返回,LLM 能感知失败并尝试别的 path/ref;
 			// 真正鉴权 / 致命错误由上层 runReview 决定是否 abort(本工具不抛)
 			const message = err instanceof Error ? err.message : String(err);
-			const details: {
-				path: string;
-				ref: string;
-				startLine?: number;
-				endLine?: number;
-				length: number;
-				error?: boolean;
-			} = {
+			const details: FileContentDetails = {
 				path: params.path,
 				ref,
 				...(params.startLine !== undefined ? { startLine: params.startLine } : {}),

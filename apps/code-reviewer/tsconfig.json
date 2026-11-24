@@ -1,0 +1,15 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"rootDir": "./src"
+	},
+	"include": ["src/**/*"],
+	"references": [
+		{ "path": "../../packages/agent-runtime" },
+		{ "path": "../../packages/flower-providers" },
+		{ "path": "../../packages/flower-tools-gitlab" },
+		{ "path": "../../packages/flower-compliance" },
+		{ "path": "../../packages/flower-telemetry" }
+	]
+}

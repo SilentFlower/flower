@@ -4,7 +4,7 @@
  * 覆盖工具注册、白名单校验和 execute 返回格式。
  */
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetClientForTests } from "../client.js";
 import {
@@ -20,8 +20,14 @@ function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-function fakeCtx(): ExtensionContext {
-	return {} as unknown as ExtensionContext;
+function fakeCtx(): ExtensionToolContext {
+	const context: Pick<ExtensionToolContext, "tools" | "executeTool"> = {
+		tools: [],
+		async executeTool() {
+			throw new Error("本测试没有配置嵌套工具");
+		},
+	};
+	return context as ExtensionToolContext;
 }
 
 describe("registerGitlabTools · 跨项目工具注册", () => {

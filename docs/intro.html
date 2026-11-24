@@ -5,12 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <!--
 ================================================================
-本文档反映当前分支工作区(2026-05-27)的状态快照。
-最新源码以 GitHub 主分支为准。
-源码 ↔ 文档漂移采取「接受 + 声明」策略,不强制同步。
-如发现文档与源码不一致:
-  - reader 视角:以 GitHub 源码为准
-  - 维护者视角:酌情更新本文档,不阻塞 PR
+页首导航对应 v2 仓库布局。下文的架构说明及源码样例保留 2026-05-27 的历史快照。
 ================================================================
 -->
 <title>Flower · 架构、决策与愿景 · 工程手册</title>
@@ -1342,6 +1337,14 @@
 		<p class="sub">
 			这不是一份产品手册,而是 Flower 的"思想说明书"——讲清楚<strong>架构怎么长出来的</strong>、
 			<strong>每一个边界为什么这样划</strong>,以及当这套底座稳定之后,它能演进到哪里去。
+		</p>
+		<p class="sub">
+			当前工作区有三个应用。
+			<a href="../apps/code-reviewer/README.md">代码评审</a>读取 MR 变更并提交评审评论，
+			<a href="../apps/ops-bot/README.md">钉钉运维机器人</a>接收消息，根据用户提供的信息和会话历史给出运维建议，
+			<a href="../apps/observer/README.md">Observer</a>接收遥测与审计事件并提供列表、回放和指标页面。
+			共享 pi 核心和 Desktop 属于后续 v2 工作。
+			完整布局与开发命令见 <a href="../README.md">仓库 README</a>。下文保留 2026-05-27 的设计与源码样例。
 		</p>
 		<div class="axes">
 			<div>
@@ -2839,7 +2842,7 @@ user sends another prompt ◄─────────────────
 			</p>
 
 			<aside class="caveat">
-				Caveat:本节所有源码 dump 均按当前分支工作区(2026-05-27)校对。reviewer 在演进过程中可能调整注册顺序或新增 listener,reader 视角以 <code>packages/flower-code-reviewer/src/extension.ts</code> 主分支 HEAD 为准。
+			本节源码样例对应 2026-05-27 的历史快照。现行评审扩展入口为 <a href="../apps/code-reviewer/src/extension.ts"><code>apps/code-reviewer/src/extension.ts</code></a>。
 			</aside>
 
 			<footer class="source-ref">

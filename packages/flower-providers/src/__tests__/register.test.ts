@@ -66,12 +66,12 @@ describe("registerHavefunProviders — 4 个 provider 全部注册", () => {
 		expect(byName.get("havefun-gemini")?.config.api).toBe("google-generative-ai");
 	});
 
-	it("apiKey 字段始终是字面量 'LLM_API_KEY',真实 key 不出现在 config", () => {
+	it("apiKey 字段使用环境变量引用，真实 key 不出现在 config", () => {
 		const { pi, calls } = createStubPi();
 		registerHavefunProviders(pi, { appSource: "code-reviewer" });
 
 		for (const c of calls) {
-			expect(c.config.apiKey).toBe("LLM_API_KEY");
+			expect(c.config.apiKey).toBe("$LLM_API_KEY");
 		}
 		// 序列化后真实 key 不应该出现
 		const serialized = JSON.stringify(calls);

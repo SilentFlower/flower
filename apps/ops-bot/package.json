@@ -1,0 +1,51 @@
+{
+	"name": "@flower-ai/flower-ops-bot",
+	"version": "0.1.0",
+	"type": "module",
+	"description": "钉钉运维机器人 HTTP 服务，提供会话历史与流式回复",
+	"keywords": [
+		"pi",
+		"agent",
+		"dingtalk",
+		"ops",
+		"sre",
+		"chatbot",
+		"llm"
+	],
+	"homepage": "https://github.com/SilentFlower/flower/tree/main/apps/ops-bot#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/SilentFlower/flower.git",
+		"directory": "apps/ops-bot"
+	},
+	"bugs": {
+		"url": "https://github.com/SilentFlower/flower/issues"
+	},
+	"license": "MIT",
+	"author": "silentflower",
+	"publishConfig": {
+		"access": "public"
+	},
+	"bin": {
+		"flower-ops-bot": "dist/server.js"
+	},
+	"main": "./dist/server.js",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json && chmod +x dist/server.js 2>/dev/null || true",
+		"clean": "tsc -p tsconfig.json --clean",
+		"dev": "tsx watch src/server.ts",
+		"start": "node dist/server.js"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-core": "1.6.0",
+		"@earendil-works/pi-ai": "1.6.0",
+		"@flower-ai/flower-providers": "0.1.0",
+		"ioredis": "^5.4.1"
+	},
+	"devDependencies": {
+		"tsx": "^4.20.0"
+	}
+}

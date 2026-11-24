@@ -1,14 +1,13 @@
 {
 	"files": [],
 	"references": [
+		{ "path": "./packages/agent-runtime" },
 		{ "path": "./packages/flower-providers" },
-		{ "path": "./packages/flower-tools-common" },
-		{ "path": "./packages/flower-tools-arms" },
 		{ "path": "./packages/flower-tools-gitlab" },
 		{ "path": "./packages/flower-compliance" },
 		{ "path": "./packages/flower-telemetry" },
-		{ "path": "./packages/flower-observer" },
-		{ "path": "./packages/flower-code-reviewer" },
-		{ "path": "./packages/flower-ops-bot" }
+		{ "path": "./apps/observer" },
+		{ "path": "./apps/code-reviewer" },
+		{ "path": "./apps/ops-bot" }
 	]
 }

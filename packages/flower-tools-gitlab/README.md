@@ -1,39 +1,30 @@
 # @flower-ai/flower-tools-gitlab
 
-GitLab 工具集。**仅供 code-reviewer 使用**。
+供 Flower 代码评审应用使用的 GitLab REST 工具。
 
-## 工具清单
+## 工具
 
-| 工具 | 描述 | 状态 |
-|------|------|:----:|
-| `gitlab_get_mr_diff` | 获取本次 MR 完整 diff | Stub |
-| `gitlab_get_mr_files` | 列出修改的文件 | Stub |
-| `gitlab_post_comment` | 发整体评论(支持 severity) | Stub |
-| `gitlab_post_line_comment` | 发行内评论(文件 + 行号) | Stub |
-| `gitlab_get_previous_review` | 查 bot 历史评论(避免重复) | Stub |
+| 工具 | 用途 |
+| --- | --- |
+| `gitlab_get_mr_diff` | 读取带行号的 MR diff |
+| `gitlab_get_mr_files` | 列出 MR 变更文件 |
+| `gitlab_get_file_content` | 读取指定 ref 的文件内容，支持行窗 |
+| `gitlab_get_previous_review` | 读取机器人已发的评审评论 |
+| `gitlab_post_comment` | 提交 MR 整体评论 |
+| `gitlab_post_line_comment` | 提交 MR 行内评论 |
+| `gitlab_list_group_projects` | 列出允许访问的组内项目 |
+| `gitlab_list_project_branches` | 列出允许访问的项目分支 |
+| `gitlab_prepare_project_workspace` | 准备评审需要的本地项目上下文 |
 
-## 用法
+整体和行内评论工具在发送前共用包内的 `src/sanitize.ts`，将已知 GitLab 快捷指令的行首斜杠转义为 `&#47;`。普通文本、路径和已经转义的行保留原样。转义函数由工具在包内调用。
 
-```typescript
-import { registerGitlabTools } from "@flower-ai/flower-tools-gitlab";
-
-export default function (pi: ExtensionAPI) {
-  registerGitlabTools(pi);
-}
-```
+代码评审扩展通过包根导出的 `registerGitlabTools(pi)` 注册工具。评审 CLI、权限配置及试跑方法见[评审应用文档](../../apps/code-reviewer/README.md)。
 
 ## 环境变量
 
-| 变量 | 必填 | 含义 |
-|------|:----:|------|
-| `GITLAB_TOKEN` | ✓ | 个人 / 项目 / bot token |
-| `GITLAB_HOST` | | 默认 `https://gitlab.com` |
-| `CI_PROJECT_ID` | ✓ | 由 GitLab CI 自动注入 |
-| `CI_MERGE_REQUEST_IID` | ✓ | 由 GitLab CI 自动注入 |
-
-## TODO
-
-- 把 `client.ts` 里的 stub 换成真实的 fetch 调用
-- 处理 GitLab 限流(`Retry-After` header)
-- 增加 `position` 计算(行内评论必须)
-- 增加对 `commits` 接口的支持,以便单 commit 评审而非整个 MR
+| 变量 | 用途 |
+| --- | --- |
+| `GITLAB_TOKEN` | GitLab API 访问凭据 |
+| `GITLAB_HOST` | GitLab 实例地址，默认 `https://gitlab.com` |
+| `CI_PROJECT_ID` | GitLab CI 注入的项目标识 |
+| `CI_MERGE_REQUEST_IID` | GitLab CI 注入的 MR 编号 |

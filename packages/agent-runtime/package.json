@@ -1,0 +1,37 @@
+{
+	"name": "@flower-ai/agent-runtime",
+	"version": "0.1.0",
+	"type": "module",
+	"description": "Flower 双宿主共享 pi 运行时",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/SilentFlower/flower.git",
+		"directory": "packages/agent-runtime"
+	},
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc --build tsconfig.json",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-core": "1.6.0",
+		"@earendil-works/pi-ai": "1.6.0"
+	},
+	"devDependencies": {
+		"vitest": "^3.2.4"
+	}
+}

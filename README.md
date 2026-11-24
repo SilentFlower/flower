@@ -1,469 +1,89 @@
 # Flower
 
-> AI Agent 套件。基于 [pi-mono](https://github.com/earendil-works/pi-mono) 构建,
-> 包含两个产品:**GitLab Code Review Agent** 与 **钉钉运维机器人**。
+Flower 基于 [pi-mono](https://github.com/earendil-works/pi-mono) 构建。仓库包含 GitLab 代码评审、钉钉运维机器人和 Observer 观测服务。
 
-## 目录
+## 应用入口
 
-- [项目目标](#项目目标)
-- [核心设计原则](#核心设计原则)
-- [整体架构](#整体架构)
-- [产品 1:GitLab Code Review Agent](#产品-1gitlab-code-review-agent)
-- [产品 2:钉钉运维机器人](#产品-2钉钉运维机器人)
-- [共享层](#共享层)
-- [仓库结构](#仓库结构)
-- [开发环境](#开发环境)
-- [必须提前想清楚的几个问题](#必须提前想清楚的几个问题)
-- [实施路线图](#实施路线图)
+| 应用 | 当前能力 | 运行方式 |
+| --- | --- | --- |
+| [GitLab 代码评审](apps/code-reviewer/README.md) | 根据 MR 变更选择评审清单并读取相关代码，通过 GitLab 工具提交行内和整体评论。已接入只读约束、审计和评审 trace。 | `flower-review`，通常由 GitLab CI 启动，一次评审后退出。 |
+| [钉钉运维机器人](apps/ops-bot/README.md) | 接收钉钉 webhook，按会话管理历史并流式回复。配置 `REDIS_URL` 后使用 Redis 保存会话。 | `flower-ops-bot`，默认监听 `3000`，健康检查为 `/healthz`。 |
+| [Flower Desktop](apps/desktop/README.Windows.txt) | 本地工作区、Agent 会话与文件交付。可配置模型、主题和首页内容。 | 在 Windows 解压后双击 `Flower Desktop.exe`。 |
+| [Observer](apps/observer/README.md) | 接收遥测与审计事件，经 SQLite 幂等入库，提供 trace 列表、回放和指标页面。 | Node 常驻服务，默认监听 `4810`。访问 `/traces`、`/metrics` 和 `/healthz`。 |
 
----
-
-## 项目目标
-
-本项目实现两个不同形态的 AI Agent:
-
-### Agent 1:嵌入 GitLab Pipeline 的代码评审
-
-- 由 CI/CD 触发,每次 MR / commit 自动跑
-- 拉取项目代码,分析本次提交的变更
-- 按可配置的编码规范(skill 文件)给出评审意见
-- 把意见以行内 / 整体评论的形式发回 MR
-
-### Agent 2:嵌入钉钉的运维助手
-
-- 用户在钉钉群 @机器人发消息
-- 实时调用阿里云 ARMS / SLS 查日志、看监控、查告警
-- 多轮对话,记住上下文
-- 流式回复给用户
-
----
-
-## 核心设计原则
-
-### 1. 同根不同枝
-
-两个产品**共享 70% 的底层能力**(LLM provider、工具、合规、观测/审计),
-但**生命周期、入口、会话模型完全不同**,所以独立部署、独立进程。
-
-| 维度 | code-reviewer | ops-bot |
-|------|---------------|---------|
-| 生命周期 | 一次性(几分钟) | 长驻服务(7×24) |
-| 触发方式 | CI pipeline 事件 | webhook(钉钉消息) |
-| 会话模型 | 无状态 | 有状态(按会话隔离) |
-| 并发 | 单实例 | 多用户并发 |
-| 输出渠道 | GitLab MR 评论 | 钉钉流式回复 |
-| 环境 | 容器内、临时 | 长驻服务器 / K8s |
-
-### 2. pi-mono 提供洋葱核心
-
-```
-┌────────────────────────────────────────────────────────────┐
-│  Flower (本仓库)                                            │
-│  ┌──────────────────────────┐  ┌────────────────────────┐  │
-│  │ code-reviewer            │  │ ops-bot                │  │
-│  │   套 pi-coding-agent     │  │   直接用 pi-agent-core │  │
-│  └────────────┬─────────────┘  └────────────┬───────────┘  │
-│               │                              │              │
-│               └──────────┬───────────────────┘              │
-│                          ▼                                  │
-│           共享层(provider、tools、compliance)             │
-└──────────────────────────┬─────────────────────────────────┘
-                           │ 依赖 npm 包
-                           ▼
-        @earendil-works/pi-coding-agent  (上游)
-        @earendil-works/pi-agent-core    (上游)
-        @earendil-works/pi-ai            (上游)
-```
-
-### 3. 配置驱动,不 fork 上游
-
-- LLM 接入通过 `pi.registerProvider()` 完成,**不改 pi 源码**
-- 工具通过 `pi.registerTool()` 添加
-- 行为通过事件订阅(`pi.on()`)修改
-- 必要时用 npm `overrides` 做"热插拔",fork 单个包重定向
-
----
-
-## 整体架构
-
-### 数据流(code-reviewer)
-
-```
-GitLab CI Pipeline
-       │ (.gitlab-ci.yml 中 review job)
-       ▼
-docker run yourcompany/code-reviewer:latest --mr-iid $CI_MERGE_REQUEST_IID
-       │
-       ▼
-[code-reviewer 容器内]
-  1. clone 项目 / 切到目标 commit
-  2. 启动 pi -p "..."(print 模式)
-  3. pi 自带工具读代码(read / grep / find)
-  4. 调用 gitlab_post_comment 工具发评论
-  5. 进程退出,job 完成
-       │
-       ▼
-GitLab MR 上出现评论
-```
-
-### 数据流(ops-bot)
-
-```
-钉钉群(@机器人)
-       │ webhook
-       ▼
-[ops-bot HTTP server]
-  receive { conversationId, userId, text }
-       │
-       ▼
-SessionStore.getOrCreate(conversationId)  ← Redis
-       │
-       ▼
-Agent.prompt(text)        ← pi-agent-core Agent 实例
-       │
-       │ stream events
-       ▼
-通过钉钉流式回复 API 推送回去
-       ▲
-       │ 工具调用
-       │
-       ├──► arms_query_logs
-       ├──► arms_query_metrics
-       ├──► arms_list_alerts
-       └──► arms_get_trace
-```
-
----
-
-## 产品 1:GitLab Code Review Agent
-
-### 为什么选 pi-coding-agent
-
-它已经具备:
-- `read` / `grep` / `find` / `bash` 工具——LLM 想看哪个文件直接看
-- `print` 模式(`pi -p "..."`)——天生匹配 CI/CD 的 run-and-exit 形态
-- skill 系统(`/skill:code-review-checklist`)——评审清单可以做成可复用资产
-- 完整的合规拦截(可以禁用 write/edit,限制 bash 白名单)
-
-### 关键设计点
-
-#### a. 只读模式
-
-CI 里的 agent **不能改代码**。在 `flower-compliance` 里注册全局拦截器:
-
-```typescript
-pi.on("tool_call", async (event) => {
-  if (event.toolName === "write" || event.toolName === "edit") {
-    return { block: true, reason: "CI mode: read-only" };
-  }
-  if (event.toolName === "bash") {
-    const cmd = event.input.command;
-    if (!/^(git|grep|find|ls|cat|head|tail|wc|file)\b/.test(cmd.trim())) {
-      return { block: true, reason: `CI mode: ${cmd.split(' ')[0]} not allowed` };
-    }
-  }
-});
-```
-
-#### b. Skill 文件存评审标准
-
-```
-packages/flower-code-reviewer/skills/
-├── general.md       # 通用清单
-├── backend.md       # 后端(并发、数据库、安全)
-├── frontend.md      # 前端(性能、可访问性)
-└── security.md      # 安全专项
-```
-
-入口脚本根据变更文件类型自动选 skill。
-
-#### c. GitLab 工具集
-
-- `gitlab_get_mr_diff` — 拿本次 MR 的 diff
-- `gitlab_get_mr_files` — 拿被修改的文件列表
-- `gitlab_post_comment` — 发整体评论
-- `gitlab_post_line_comment` — 发行内评论(支持 severity)
-- `gitlab_get_previous_review` — 避免重复评论
-
-#### d. 输出策略
-
-不要让 LLM 在 stdout 写"评审报告"——CI 日志没人看。
-**Prompt 强制要求**:所有意见必须通过 `gitlab_post_comment` 工具发表。
-
-#### e. Pipeline 失败策略
-
-最后扫描所有评论,如果有 `severity === "blocker"` 的,exit code 设 1,让 pipeline fail。
-其他情况 exit code 0,只是警告。
-
----
-
-## 产品 2:钉钉运维机器人
-
-### 为什么不用 pi-coding-agent
-
-`pi-coding-agent` 假设:
-- 一个用户、一个进程、一个 TTY
-- 会话存 jsonl 文件
-- 默认工具是 bash / read / edit
-
-钉钉 bot 需要:
-- 一个进程服务多用户、多群
-- 会话存 Redis,支持横向扩展
-- 工具只有 ARMS 查询,没有文件操作
-
-所以**直接用 `pi-agent-core` 的 `Agent` 类**自己做 HTTP server + 会话管理。
-
-### 关键设计点
-
-#### a. 会话隔离 + Redis 持久化
-
-每个钉钉 conversationId 对应一个独立的 Agent 实例,messages 持久化到 Redis(24h 过期)。
-
-#### b. 流式回复钉钉
-
-钉钉同步 webhook 有 5 秒超时,运维查询常常 > 5 秒。
-**必须用钉钉的"流式 stream API"**(企业内部应用 sessionWebhook 机制)。
-
-```typescript
-const unsubscribe = agent.subscribe(async (event) => {
-  if (event.type === "message_update") {
-    accumulator += extractDelta(event);
-    await pushToSession(sessionWebhook, accumulator, false);   // 500ms 节流
-  } else if (event.type === "agent_end") {
-    await pushToSession(sessionWebhook, accumulator, true);    // final
-  }
-});
-```
-
-#### c. 工具集
-
-ARMS / SLS(来自 `flower-tools-arms`):
-
-- `arms_query_logs` — SLS 日志查询(支持 SLS 查询语句)
-- `arms_query_metrics` — APM 指标(QPS / RT / 错误率 / 慢调用)
-- `arms_list_alerts` — 列出活跃告警
-- `arms_get_trace` — 查 traceId 的调用链
-
-通用知识检索(来自 `flower-tools-common`):
-
-- `zentao_search` — 禅道任务 / 需求 / bug 检索
-- `dingtalk_doc_search` — 钉钉知识库 / 文档检索
-
-#### d. 权限边界
-
-钉钉 bot 面向**全员**,必须按 DingTalk userId 鉴权:
-
-```typescript
-pi.on("tool_call", async (event, ctx) => {
-  const user = await getUser(event.context.conversationId);
-  if (event.toolName.startsWith("arms_") && !user.canQueryArms) {
-    return { block: true, reason: "您没有 ARMS 查询权限" };
-  }
-});
-```
-
-#### e. 数据脱敏
-
-ARMS 日志里可能有 PII(手机、身份证、邮箱)。**在工具结果里就脱敏**,
-不要让 LLM 看到原始敏感数据(它可能复述到回复里)。
-
----
-
-## 共享层
-
-### packages/flower-providers
-
-自定义 LLM 入口。两个产品都通过这里把 LLM provider(自部署网关 / 企业 AI Gateway / 任意 OpenAI 兼容服务)接入。
-
-```typescript
-pi.registerProvider("havefun-anthropic", {
-  baseUrl: "https://ai-gateway.corp.internal/v1",
-  apiKey: "LLM_API_KEY",
-  api: "anthropic-messages",
-  models: [/* 允许使用的模型清单(各家族走原生协议)*/],
-  headers: { "X-App-Source": process.env.APP_NAME },
-});
-```
-
-### packages/flower-tools-common
-
-跨产品通用的工具,面向使用禅道 / 钉钉的团队:
-
-- **禅道**(`zentao.ts`)— 项目管理工具(查任务、需求、bug 等)
-- **钉钉文档**(`dingtalk-doc.ts`)— 钉钉知识库 / 文档检索
-
-### packages/flower-tools-arms
-
-阿里云 ARMS / SLS 工具集。**仅 ops-bot 使用**(code-reviewer 不该看监控)。
-
-### packages/flower-tools-gitlab
-
-GitLab API 工具集。**仅 code-reviewer 使用**。
-> 注:ops-bot 不应该有写 GitLab 的能力,职责隔离。
-
-### packages/flower-compliance
-
-合规拦截扩展(纯策略包):只做"判定 + 拦截",拦截事件经 `onBlock` 回调交产品层接到 telemetry。
-
-- code-reviewer:`mode: "ci-readonly"`
-- ops-bot:`mode: "production-readonly"`(当前 no-op,工具本身只读)
-
-### packages/flower-telemetry
-
-观测事件管道:pi 事件归一化 + 可插拔 sink(JSONL / console / SIEM)。
-
-- JSONL trace(CI artifact)= 评审质量迭代的数据基座(回放评估、评论采纳率)
-- consoleSink 承接原 observability 的 CI 日志打印(`FLOWER_VERBOSE` 语义不变)
-- siemSink 承接原 compliance 的 SIEM 审计(metadata-only、critical 不可关、payload 兼容)
-
----
+评审 CLI 通过 `pi-coding-agent` 的 print 模式运行。钉钉机器人直接使用 `pi-agent-core` 的 `Agent`，根据用户提供的信息和会话历史给出运维排查建议。评审 trace 可写入 JSONL，配置 HTTP sink 后可发送给 Observer。更早的设计和源码样例见 [架构手册](docs/intro.html)。
 
 ## 仓库结构
 
-```
+```text
 flower/
-├── README.md                            # 你正在看的文件
-├── package.json                         # npm workspaces 根
-├── tsconfig.base.json                   # 共用 TS 配置
-├── tsconfig.json                        # project references 入口
-├── biome.json                           # 代码风格
-├── .env.example                         # 环境变量模板
-│
-└── packages/
-    ├── flower-providers/                    # 共享:LLM provider 注册
-    ├── flower-tools-common/                 # 共享:通用工具
-    ├── flower-tools-arms/                   # 共享:ARMS 工具(给 ops-bot)
-    ├── flower-tools-gitlab/                 # 共享:GitLab 工具(给 code-reviewer)
-    ├── flower-compliance/                   # 共享:合规拦截(纯策略包)
-    ├── flower-telemetry/                    # 共享:观测管道(归一化 + JSONL/console/SIEM sink)
-    │
-    ├── flower-code-reviewer/            # 产品 1
-    │   ├── src/
-    │   │   ├── cli.ts                   # CLI 入口
-    │   │   ├── args.ts                  # 命令行参数解析
-    │   │   ├── run.ts                   # 主流程(初始化 pi、跑评审、退出码)
-    │   │   ├── extension.ts             # pi 扩展(注册工具/合规)
-    │   │   ├── skill-selector.ts        # 按变更文件类型挑 skill
-    │   │   └── prompts.ts               # 评审 prompt
-    │   ├── skills/                      # 评审清单(skill 文件)
-    │   └── Dockerfile                   # 容器构建
-    │
-    └── flower-ops-bot/                  # 产品 2
-        ├── src/
-        │   ├── server.ts                # HTTP 入口
-        │   ├── handler.ts               # webhook 请求处理与回复编排
-        │   ├── dingtalk/                # 钉钉 webhook / 签名 / 推送
-        │   ├── agent-factory.ts         # Agent 实例构造
-        │   ├── session-store.ts         # Redis 会话存储
-        │   ├── tools.ts                 # ARMS 等工具组装与权限拦截
-        │   └── prompts.ts               # 系统 prompt
-        └── Dockerfile
+├── apps/
+│   ├── code-reviewer/       # CLI、评审清单、GitLab CI 示例及 Dockerfile
+│   ├── ops-bot/             # 钉钉 webhook、会话与 Dockerfile
+│   ├── observer/            # 事件接收、SQLite、页面资源与 Dockerfile
+│   └── desktop/             # Electron 工作台、界面组件与 Windows 打包
+├── packages/
+│   ├── agent-runtime/       # 企业与桌面共享的 pi 核心
+│   ├── flower-providers/    # 提供方注册和模型配置
+│   ├── flower-tools-gitlab/ # GitLab 读取、评审评论与快捷指令转义
+│   ├── flower-compliance/   # 工具调用合规策略
+│   └── flower-telemetry/    # 事件归一化和遥测输出
+├── docs/
+└── .trellis/
 ```
 
----
+npm 工作区包含八个公开包（原三个应用与五个共享包）和私有的 Flower Desktop。现有应用保留 `@flower-ai/flower-*` 包名，共享核心使用 `@flower-ai/agent-runtime`。Flower Desktop 通过 Windows 解压版交付，聚合用的根包 `flower` 保持 `private`。三个 Dockerfile 均以仓库根目录作为构建上下文。
 
-## 开发环境
+开源分支 `v2` 的桌面直接进入本地工作台。企业桌面的员工身份及公司网关在 `v2-company` 维护。
 
-### 前置
+## 本地开发
 
-- Node.js ≥ 22
-- npm ≥ 10
-- (开发 ops-bot) 本地 Redis
-
-### 启动
+需要 Node.js `22.19.0` 或更高版本及 npm `10` 或更高版本。开发和测试命令从仓库根目录运行。
 
 ```bash
-# 1. 安装依赖
-npm install
-
-# 2. 准备环境变量
-cp .env.example .env
-# 然后编辑 .env 填上 LLM token、GitLab token 等
-
-# 3. 类型检查
-npm run typecheck
-
-# 4. 构建所有包
+npm ci
 npm run build
-
-# 5. 代码风格检查
-npm run check
+npm test
 ```
 
-### 开发某个具体产品
+构建后可单独运行 Node 双宿主验收。
 
 ```bash
-# code-reviewer 本地试跑
-cd packages/flower-code-reviewer
-npm run dev -- --mr-iid 123
-
-# ops-bot 本地起服务
-cd packages/flower-ops-bot
-npm run dev
-# 访问 http://localhost:3000/dingtalk/webhook
+npm run test --workspace @flower-ai/agent-runtime -- test/dual-host.test.ts
 ```
 
----
+```bash
+# 查看评审 CLI 的参数
+node apps/code-reviewer/dist/cli.js --help
 
-## 必须提前想清楚的几个问题
+# 本地启动钉钉机器人和 Observer，分别在不同终端执行
+npm run dev --workspace @flower-ai/flower-ops-bot
+npm run dev --workspace @flower-ai/flower-observer
+```
 
-| 问题 | 当前思路 |
-|------|----------|
-| **谁付钱?** | LLM 调用花钱。code-reviewer 每个 MR 一次,可控;ops-bot 全员用,**必须做配额** |
-| **谁负责?** | bot 给出错误的运维建议导致事故,谁担责?**关键操作必须"建议但不执行"**,所有 ARMS 工具都是读 |
-| **数据合规?** | 日志 / 代码可能涉密。**LLM 调用建议走自部署 / 私有网关,而不是公网 LLM API** |
-| **可观测?** | 两个产品自己也要被监控:每天处理多少 MR / 回答多少问题 / 错误率 / 延迟 |
-| **回退方案?** | LLM 挂了 / 超时 / 限流时:code-reviewer pipeline 继续(警告但不 fail);ops-bot 友好降级("AI 不可用,请直接查 ARMS 控制台") |
+评审试跑、钉钉 webhook 和观测接流的变量见各应用说明及 [环境变量样例](.env.example)。运行 `npm run build` 会同时准备 Observer 随包分发的静态资源。修改布局或资源后，可从根目录运行 `npm pack --dry-run --workspaces` 检查发布包清单。
 
----
+## npm 发版检查
 
-## 实施路线图
+`npm run release:verify` 构建并新打包 Reviewer 和它依赖的 Flower 工作区包，在临时本机 registry 中提供这些制品。全新的仓外目录只安装 Reviewer，使用安装出来的 `flower-review` 对合成 MR 跑正常评审，检查两条评论和 Observer 回读。Flower 包由本机 registry 提供，第三方依赖从 npm 公共 registry 获取。运行 `node --test scripts/release-verify.test.mjs` 可验证缺包、错版本和同版本制品不一致时的发布阻断。
 
-### 第 1 周:基础设施(本仓库当前阶段)
-- [x] 搭 monorepo 骨架
-- [ ] `flower-providers` 接通目标 LLM 网关
-- [x] `flower-telemetry` 观测管道(JSONL trace 数据基座 + SIEM 审计收编,拦截事件不再漏报)
+`npm run release` 在 Changesets 发布前检查公开 Reviewer 的当前版本是否待发。待发时，检查从目标 registry 匿名下载指定的核心 tarball，核对其 SHA-512 SRI 与本次仓外试装所用的核心 tarball 一致。同批制品还须通过正常评审。任一检查失败都会终止发布。Reviewer 的当前版本已存在于目标 registry、清单标记为 `private`，或发布访问级别为 `restricted` 时，其他包继续按原发布流程处理。
 
-### 第 2 周:`code-reviewer` MVP
-- [ ] GitLab 工具集(get_diff / post_comment)
-- [ ] 1 个 skill(general-review)
-- [ ] 测试项目 CI 接入,**手动**触发跑通
+当目标 registry 缺少 Reviewer 固定依赖的核心版本时，先完成本批版本准备。有待发 Changeset 时，运行 `npm run version-packages`，再用 `npm install --package-lock-only` 同步锁文件。在同一个候选工作区运行以下命令。试装通过后，`--export-core` 保存本轮实际安装的核心 tarball。`npm publish` 直接发布这份制品。随后 `npm run release` 使用仓库 `.npmrc` 中的同一 npm registry，重新核对核心匿名下载、SRI 和正常评审，再交给 Changesets 发布其余待发包。
 
-### 第 3 周:`code-reviewer` 上生产
-- [ ] MR 自动触发
-- [ ] 添加 backend / frontend / security skill
-- [ ] 评审质量回归(挑 20 个历史 MR 对比)
+```bash
+release_dir="$(mktemp -d)" &&
+npm run release:verify -- --export-core "$release_dir/agent-runtime.tgz" &&
+npm publish "$release_dir/agent-runtime.tgz" --access public --registry https://registry.npmjs.org/ &&
+npm run release
+```
 
-### 第 4-5 周:`ops-bot` MVP
-- [ ] 钉钉 webhook 接入(测试群)
-- [ ] ARMS 日志 / 指标工具
-- [ ] Redis 会话存储
-- [ ] 流式回复
+目标 registry 已有本批精确版本的核心时，直接运行 `npm run release`。Changesets 会跳过已发布的核心版本。首次核心沿用仓库 `0.1.0` 起始版本。应用对 Flower 工作区依赖使用精确版本，Changesets 升版时同步依赖声明。同步锁文件后，按同批候选版本执行试装和发布。
 
-### 第 6-7 周:`ops-bot` 安全 + 上线
-- [ ] 鉴权边界
-- [ ] 数据脱敏
-- [ ] 配额控制
-- [ ] 灰度到一个业务团队
+## v2 计划
 
-### 后续:`ops-bot` 进阶能力(未排期)
-
-> 这些能力当前版本**暂不实现**,作为后续演进方向。详细方案见
-> [packages/flower-ops-bot/README.md](packages/flower-ops-bot/README.md#未来规划进阶能力)。
-
-- [ ] **Plan-then-Execute**:复杂任务先列计划再执行(改 prompt 即可,P0)
-- [ ] **Diagnostic Sub-Agent**:复杂诊断派给专项子 agent,小模型搞不定时升级到大模型
-- [ ] **告警驱动主动触发**:ARMS 告警自动启动诊断,主动推送结论
-- [ ] **定时巡检(cron)**:每天自动巡检关键应用
-- [ ] **用户订阅 Watcher**:"盯住某指标超阈值就通知"
-- [ ] **持久化执行计划**:长任务中断可恢复
-
-> 说明:**当前 ops-bot 已经具备"自规划"能力** —— 一次用户消息内,LLM 可以
-> 自主调用任意多个工具,基于结果迭代决策直到给出最终答案。这是 pi-agent-core
-> agentLoop 的内建行为。上述进阶能力是在这个底座之上的扩展。
-
----
+整理现有应用与共享库的布局后，验证企业端和 Desktop 加载同一份 pi 核心。随后分批接入实际企业业务、公司 CI 和 Desktop。运维机器人进一步诊断、告警响应和巡检的设想见 [运维机器人后续规划](apps/ops-bot/README.md#后续规划)。
 
 ## License
 
-[MIT](./LICENSE) © silentflower
+[MIT](LICENSE) © silentflower

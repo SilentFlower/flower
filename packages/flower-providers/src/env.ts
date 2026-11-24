@@ -102,11 +102,9 @@ export function resolveProviderBaseUrl(provider: ProviderName): string {
 }
 
 /**
- * 返回 pi `ProviderConfig.apiKey` 字段应使用的字符串值
+ * 返回模型网关凭据的环境变量名
  *
- * @remarks 见 PRD ADR-3:`apiKey` 字段在 pi 中支持"raw key 或 env 变量名",
- *          这里传字符串字面量 `"LLM_API_KEY"`,由 pi 自己从 `process.env` resolve,
- *          避免明文 key 经过本包代码。
+ * @remarks pi 1.6 的 provider 注册将此名称拼成 `"$LLM_API_KEY"`，由 pi 读取环境。
  *
  *          额外:为了让两条接入路径(code-reviewer 走 pi.registerProvider /
  *          ops-bot 走 buildHavefunModel + streamFn)行为一致,本函数会在启动期

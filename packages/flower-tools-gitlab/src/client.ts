@@ -18,6 +18,7 @@
  * - **gitlab_get_file_content**(N1):拉任意 ref 的文件原始内容,供 LLM 拿真实代码上下文
  */
 
+import { setTimeout as delay } from "node:timers/promises";
 import {
 	type PreparedProjectWorkspace,
 	type PrepareProjectWorkspaceInput,
@@ -115,8 +116,13 @@ export interface GitlabClient {
 	 * 不需要重新请求 `/changes`,内部复用 changes 缓存机制(同 MR 多次调用走缓存)。
 	 */
 	getMrFileChanges(projectId: string, mrIid: number): Promise<MrFileChange[]>;
-	postMrComment(projectId: string, mrIid: number, body: string, severity: Severity): Promise<void>;
-	postMrLineComment(projectId: string, mrIid: number, input: LineCommentInput): Promise<LineCommentResult>;
+	postMrComment(projectId: string, mrIid: number, body: string, severity: Severity, signal?: AbortSignal): Promise<void>;
+	postMrLineComment(
+		projectId: string,
+		mrIid: number,
+		input: LineCommentInput,
+		signal?: AbortSignal,
+	): Promise<LineCommentResult>;
 	getBotComments(projectId: string, mrIid: number): Promise<BotComment[]>;
 	/**
 	 * 列出指定 group 下的项目摘要。
@@ -332,23 +338,35 @@ async function gitlabFetch(
 	options: { classifyError?: boolean } = {},
 ): Promise<Response> {
 	const url = `${host}${path}`;
-	const doFetch = (): Promise<Response> =>
-		fetch(url, {
-			...init,
-			headers: {
-				"PRIVATE-TOKEN": token,
-				"Content-Type": "application/json",
-				...(init.headers ?? {}),
-			},
-			signal: AbortSignal.timeout(10_000),
-		});
+	const signal = init.signal ?? undefined;
+	const doFetch = async (): Promise<Response> => {
+		signal?.throwIfAborted();
+		const timeout = AbortSignal.timeout(10_000);
+		try {
+			return await fetch(url, {
+				...init,
+				headers: {
+					"PRIVATE-TOKEN": token,
+					"Content-Type": "application/json",
+					...(init.headers ?? {}),
+				},
+				signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+			});
+		} catch (error) {
+			if (signal?.aborted && init.method === "POST") {
+				console.warn("[flower-tools-gitlab] 评论请求已中止，服务端写入结果待核对");
+			}
+			throw error;
+		}
+	};
 
 	// 第一次尝试;网络错误(fetch 抛)时进入 catch 走重试分支
 	let resp: Response;
 	try {
 		resp = await doFetch();
 	} catch {
-		await sleep(2_000);
+		signal?.throwIfAborted();
+		await sleep(2_000, signal);
 		resp = await doFetch();
 	}
 
@@ -357,7 +375,7 @@ async function gitlabFetch(
 	// 5xx 重试 1 次(429 / 4xx 不重试)
 	let retried = false;
 	if (resp.status >= 500) {
-		await sleep(2_000);
+		await sleep(2_000, signal);
 		resp = await doFetch();
 		retried = true;
 		if (resp.ok) return resp;
@@ -386,8 +404,8 @@ async function gitlabFetch(
  *
  * @internal
  */
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	await delay(ms, undefined, { signal });
 }
 
 /**
@@ -596,12 +614,12 @@ function createRealClient(host: string, token: string): GitlabClient {
 	// bot 自身 username 缓存(每个 client 实例独立)
 	let cachedBotUsername: string | undefined;
 
-	async function getChanges(projectId: string, mrIid: number): Promise<ChangesResponse> {
+	async function getChanges(projectId: string, mrIid: number, signal?: AbortSignal): Promise<ChangesResponse> {
 		const key = `${projectId}:${mrIid}`;
 		const cached = changesCache.get(key);
 		if (cached) return cached;
 		const path = `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests/${mrIid}/changes`;
-		const resp = await gitlabFetch(host, token, path);
+		const resp = await gitlabFetch(host, token, path, { signal });
 		const body = (await resp.json()) as ChangesResponse;
 		changesCache.set(key, body);
 		return body;
@@ -623,6 +641,7 @@ function createRealClient(host: string, token: string): GitlabClient {
 		mrIid: number,
 		body: string,
 		severity: Severity,
+		signal?: AbortSignal,
 	): Promise<void> {
 		const path = `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests/${mrIid}/notes`;
 		// 仅 blocker 写 HTML 注释 marker,供 run.ts:scanForBlockers regex 识别;
@@ -632,6 +651,7 @@ function createRealClient(host: string, token: string): GitlabClient {
 		await gitlabFetch(host, token, path, {
 			method: "POST",
 			body: JSON.stringify({ body: wrapped }),
+			signal,
 		});
 	}
 
@@ -661,12 +681,12 @@ function createRealClient(host: string, token: string): GitlabClient {
 			});
 		},
 
-		async postMrComment(projectId, mrIid, body, severity) {
-			await postMrCommentInternal(projectId, mrIid, body, severity);
+		async postMrComment(projectId, mrIid, body, severity, signal) {
+			await postMrCommentInternal(projectId, mrIid, body, severity, signal);
 		},
 
-		async postMrLineComment(projectId, mrIid, input) {
-			const changesBody = await getChanges(projectId, mrIid);
+		async postMrLineComment(projectId, mrIid, input, signal) {
+			const changesBody = await getChanges(projectId, mrIid, signal);
 			const refs = changesBody.diff_refs;
 			const changedFile = changesBody.changes.find((change) => !change.deleted_file && change.new_path === input.file);
 			const commentableLines = changedFile === undefined ? [] : collectCommentableLineDetails(changedFile.diff);
@@ -701,13 +721,14 @@ function createRealClient(host: string, token: string): GitlabClient {
 						"",
 						input.body,
 					].join("\n");
-					await postMrCommentInternal(projectId, mrIid, fallbackBody, input.severity);
+					await postMrCommentInternal(projectId, mrIid, fallbackBody, input.severity, signal);
 					return { posted: "note_fallback", reason, originalLine: input.line };
 				}
 			}
 			const wrapped = input.severity === "blocker" ? `<!-- severity: blocker -->\n${body}` : body;
 			await gitlabFetch(host, token, path, {
 				method: "POST",
+				signal,
 				body: JSON.stringify({
 					body: wrapped,
 					position: {

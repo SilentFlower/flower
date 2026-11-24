@@ -5,7 +5,7 @@
  * 会对 body 做 `sanitizeQuickActions`,实际发往 GitLab 的 body 已被转义。
  *
  * 测试边界:
- * - 不测 `sanitizeQuickActions` 本身的行为(已在 flower-tools-common 单测覆盖)
+ * - `sanitizeQuickActions` 本身的行为由同包的 `sanitize.test.ts` 覆盖
  * - 仅验证"工具确实调了 sanitize",防回归
  *
  * 策略:
@@ -14,7 +14,7 @@
  * - 检查 fetch 真实接收到的 body 已含 `&#47;` 而非 `^/`
  */
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _resetClientForTests } from "../client.js";
 import { gitlabPostCommentTool, gitlabPostLineCommentTool } from "../index.js";
@@ -27,13 +27,19 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 /**
- * 构造一个最小可用的 ExtensionContext stub
+ * 构造一个最小可用的 ExtensionToolContext stub
  *
  * 本工具 `execute` 实际上不读 ctx,但 TS 签名要求传 5 个参数。
- * 用 `as unknown as ExtensionContext` 强转规避类型校验。
+ * 仅提供工具上下文新增的字段，调用其他工具时明确失败。
  */
-function fakeCtx(): ExtensionContext {
-	return {} as unknown as ExtensionContext;
+function fakeCtx(): ExtensionToolContext {
+	const context: Pick<ExtensionToolContext, "tools" | "executeTool"> = {
+		tools: [],
+		async executeTool() {
+			throw new Error("本测试没有配置嵌套工具");
+		},
+	};
+	return context as ExtensionToolContext;
 }
 
 describe("gitlabPostCommentTool · sanitize 集成", () => {

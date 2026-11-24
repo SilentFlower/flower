@@ -45,14 +45,16 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-`registerHavefunProviders` 一次性注册 4 个 provider。pi 启动后用户通过 `/model` 选哪个,
-或在 `models.json` 中配 `defaultModel` 字段。
+`registerHavefunProviders` 一次性注册 4 个 provider。reviewer 通过 `buildPiCliArgs` 显式传递 provider、模型和 thinking 参数。注册时把 `$LLM_API_KEY` 交给 pi 1.6.0 从环境解析。
 
 ### 形态 B:pi-agent-core(ops-bot)
 
+流式函数从 `@earendil-works/pi-ai/api/<协议>` 导入。下面以 `havefun-openai` 的 Completions 协议为例，模型 ID 需在 `LLM_EXTRA_MODELS_JSON` 中登记。实际机器人根据 `model.api` 选择对应的公开子入口，见 [agent-factory.ts](../../apps/ops-bot/src/agent-factory.ts)。
+
 ```typescript
 import { Agent } from "@earendil-works/pi-agent-core";
-import { streamSimple } from "@earendil-works/pi-ai";
+import { hasApi } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
 import { buildHavefunModel, getDefaultModel } from "@flower-ai/flower-providers";
 
 const { provider, modelId } = getDefaultModel();
@@ -60,10 +62,15 @@ const model = buildHavefunModel(provider, modelId);
 
 new Agent({
   initialState: { model, /* systemPrompt / tools / messages */ },
-  streamFn: (model, ctx, opts) => streamSimple(model, ctx, {
-    ...opts,
-    apiKey: process.env.LLM_API_KEY ?? "",
-  }),
+  streamFn: (model, context, options) => {
+    if (!hasApi(model, "openai-completions")) {
+      throw new Error(`需要 Completions 模型，实际协议为 ${model.api}`);
+    }
+    return streamSimple(model, context, {
+      ...options,
+      apiKey: process.env.LLM_API_KEY,
+    });
+  },
 });
 ```
 
@@ -72,13 +79,13 @@ new Agent({
 | 变量 | 必填 | 含义 |
 |------|:----:|------|
 | `LLM_BASE_URL` | ✓ | LLM 网关**根 URL**(自部署 vLLM / 内部 AI Gateway / 任意 OpenAI 兼容代理)。**不要带 `/v1` / `/v1beta` / `/anthropic` 等后缀** — 本包按 provider 自动拼:openai-* → `/v1`,gemini → `/v1beta`,anthropic 无后缀(Anthropic SDK 自己拼 `/v1/messages`) |
-| `LLM_API_KEY` | ✓ | API key。**不会经过本包代码** — pi 直接从 env resolve;ops-bot 路径在 streamFn 中直读 |
+| `LLM_API_KEY` | ✓ | 网关 API key。reviewer 由 pi 展开注册配置里的 `$LLM_API_KEY`，ops-bot 把环境中的值传给协议子入口。 |
 | `LLM_PROVIDER` | ✓(SDK 路径)| 默认 provider,合法值:`havefun-openai` / `havefun-openai-responses` / `havefun-anthropic` / `havefun-gemini`。**CLI 路径**(`buildPiCliArgs`,code-reviewer 用)缺省 fallback 到 `havefun-openai-responses`(2026-05-21 stress test 实测稳定组合) |
 | `LLM_MODEL` | ✓(SDK 路径)| 默认模型 id,必须存在于合并模型清单(builtin + extras),且其 `nativeApi` 与 `LLM_PROVIDER` 对应协议一致。**CLI 路径**缺省 fallback 到 `gpt-6.1-sol` |
 | `LLM_EXTRA_MODELS_JSON` |   | (可选)JSON 数组,注入额外模型,格式见下文 |
 | `LLM_REASONING_EFFORT` |   | (可选)统一调节"思考预算",合法值 `off / minimal / low / medium / high / xhigh`。**SDK 路径**配置后覆盖所有 model 的默认 effort,不配则按 per-model 默认拉到该 model 的实际上限。**CLI 路径**缺省 fallback 到 `high`(stress test 显式配置端) |
 
-任一**SDK 路径**必填 env 缺失或非法,启动期 fail-fast 抛错(`getDefaultModel` / `buildHavefunModel` / `getDefaultReasoningEffort`)。**CLI 路径**(`buildPiCliArgs`)对 `LLM_PROVIDER` / `LLM_MODEL` / `LLM_REASONING_EFFORT` 缺省自动 fallback 到 reviewer 默认组合(`havefun-openai-responses + gpt-6.1-sol + high`),非法值仍 fail-fast。可选 env 若有值但非法,首次调用对应函数时也会 fail-fast。
+ops-bot 创建 Agent 时校验模型、网关及推理配置。协议子入口在请求时检查凭据。reviewer 注册 provider 时校验网关及凭据，`buildPiCliArgs` 对缺省的 provider、模型和推理强度使用 `havefun-openai-responses + gpt-6.1-sol + high`。显式配置的合法性由相应入口校验。
 
 ### `LLM_EXTRA_MODELS_JSON` 示例
 
@@ -147,22 +154,28 @@ code-reviewer 形态由 pi CLI 自己管 thinking level(通过 `/thinking` 命�
 | `gpt-5.4` | `xhigh` | OpenAI Responses 直接发 `reasoning.effort: "xhigh"` |
 | `gpt-5.5` | `xhigh` | 同上 |
 
-### 调用方对接
+### Responses 协议的 reasoning 设置
 
 ```typescript
+import type { StreamFn } from "@earendil-works/pi-agent-core";
+import { hasApi } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/api/openai-responses";
 import { getDefaultReasoningEffort } from "@flower-ai/flower-providers";
-import { streamSimple } from "@earendil-works/pi-ai";
 
-// streamFn 内:
-const effort = getDefaultReasoningEffort(model.id);
-// streamSimple.reasoning 类型是 ThinkingLevel(不含 off),需自行把 "off" 转 undefined
-const reasoning = effort === "off" ? undefined : effort;
-
-return streamSimple(model, ctx, { ...opts, apiKey, reasoning });
+const streamResponses: StreamFn = (model, context, options) => {
+  if (!hasApi(model, "openai-responses")) {
+    throw new Error(`需要 Responses 模型，实际协议为 ${model.api}`);
+  }
+  const effort = getDefaultReasoningEffort(model.id);
+  return streamSimple(model, context, {
+    ...options,
+    apiKey: process.env.LLM_API_KEY,
+    reasoning: effort === "off" ? undefined : effort,
+  });
+};
 ```
 
-Gemini 系列还需额外注入 `thinkingBudgets`(数字阶梯,见 ops-bot `agent-factory.ts`),
-其他 provider 走 `model.thinkingLevelMap` 自动映射。
+Gemini 2.5 Pro 和 Flash 使用 `agent-factory.ts` 中的 `thinkingBudgets`，`xhigh` 按 `high` 档传递。保留 Agent 提供的 transcript 和取消信号。
 
 ## TODO
 
