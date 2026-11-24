@@ -112,6 +112,7 @@ function openSidebarMenu(type, key, trigger) {
 		...(space ? [["create", "plus", "新建会话"]] : []),
 		["pin", "pin", item.pinned ? "取消置顶" : "置顶"],
 		["rename", "pencil", "重命名"],
+		...(space ? [] : [["ai-rename", "sparkle", "用 AI 重命名"]]),
 		["delete", "trash", space ? "移除工作区" : "删除会话"],
 	];
 	sidebarOptions.replaceChildren(
@@ -123,6 +124,11 @@ function openSidebarMenu(type, key, trigger) {
 					trigger.focus();
 					if (["pin", "create"].includes(operation))
 						return action(() => ui.manageSidebar(type, key, operation, !item.pinned))();
+					if (operation === "ai-rename")
+						return action(async () => {
+							toast("正在用 AI 起名…");
+							toast(`已重命名为「${await ui.renameSessionWithAI(key)}」。`);
+						})();
 					sidebarEdit = { type, key, operation, members, trigger };
 					const rename = operation === "rename";
 					by("sidebar-dialog-title").textContent = rename ? `重命名${noun}` : title;

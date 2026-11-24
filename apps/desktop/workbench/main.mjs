@@ -45,6 +45,7 @@ import {
 import { createRuntimeHost } from "./runtime-host.mjs";
 import { createSessionQueue, storedQueue } from "./session-queue.mjs";
 import { interruptedTurns, searchableTurns, searchSnippets } from "./session-search.mjs";
+import { conversationContext, firstMessageContext, generateTitle, placeholderTitle } from "./session-title.mjs";
 import { readJson, writeJson } from "./storage.mjs";
 import { containsBounds, expandedBounds, restoredBounds, roundingCorrection } from "./window-fit.mjs";
 import { readWindowState, restorableBounds, savedBounds, writeWindowState } from "./window-state.mjs";
@@ -866,7 +867,8 @@ export function launchWorkbench() {
 
 	async function createSession(workspace, title, writeMode, previous = structuredClone(workbench)) {
 		const id = randomUUID();
-		workbench.sessions.unshift({ id, title, workspace, writeMode });
+		// 新会话在首条消息时自动命名；升级前已有的会话没有此标记，不自动改名。
+		workbench.sessions.unshift({ id, title, workspace, writeMode, titlePending: true });
 		selectWorkspaceSession(id);
 		await persistChange(previous);
 		return id;
@@ -924,9 +926,11 @@ export function launchWorkbench() {
 				return createSession(item.workspace, `${item.title} · 新会话`, members[0]?.writeMode ?? workbench.draftWriteMode);
 			const previous = structuredClone(workbench);
 			if (operation === "pin" && typeof value === "boolean") item.pinned = value;
-			else if (operation === "rename" && typeof value === "string" && value.trim() && value.trim().length <= 120)
+			else if (operation === "rename" && typeof value === "string" && value.trim() && value.trim().length <= 120) {
 				item.title = value.trim();
-			else if (operation === "delete") {
+				// 手动起的名不再被首条消息的自动命名覆盖。
+				delete item.titlePending;
+			} else if (operation === "delete") {
 				if (space && value !== members.length) throw new Error("工作区的会话数已变化，请重新确认。");
 				if (members.some((entry) => sessionBusy(entry.id))) throw new Error("请先结束此处正在运行或排队的任务。");
 				const deleted = new Set(members.map((entry) => entry.id));
@@ -1394,6 +1398,42 @@ export function launchWorkbench() {
 		return { runtime, record, refs };
 	}
 
+	/** 以当前模型设置打开标题请求：关闭推理并限定输出，不占用会话运行。@param {object} context 模型上下文 @param {AbortSignal} signal 超时信号 @returns {AsyncIterable<object>} 模型事件 */
+	const openTitleStream = (context, signal) =>
+		openModelStream({ settings, model, reasoning: undefined, context, signal, maxTokens: 256 });
+
+	/**
+	 * 首条消息的自动命名：立即写入临时标题，再在后台用当前模型生成；只在标题仍是临时标题时覆盖，失败静默保留。
+	 * @param {object} owner 待命名的会话
+	 * @param {string} text 首条消息原文
+	 * @returns {Promise<void>}
+	 */
+	async function startAutoTitle(owner, text) {
+		const placeholder = placeholderTitle(text);
+		const previous = structuredClone(workbench);
+		delete owner.titlePending;
+		if (placeholder) owner.title = placeholder;
+		try {
+			await persistChange(previous);
+		} catch {
+			// 标题保存失败不影响已提交的消息。
+			return;
+		}
+		if (!placeholder) return;
+		void generateTitle(openTitleStream, firstMessageContext(text), AbortSignal.timeout(15000))
+			.then((title) =>
+				serializeTaskChange(async () => {
+					const current = workbench.sessions.find((entry) => entry.id === owner.id);
+					// 生成期间用户改过名或删除了会话时丢弃结果。
+					if (!current || current.title !== placeholder || title === placeholder) return;
+					const before = structuredClone(workbench);
+					current.title = title;
+					await persistChange(before);
+				}),
+			)
+			.catch(() => {});
+	}
+
 	/**
 	 * 把一条消息直接提交给运行时。
 	 * @param {string} id 会话 ID
@@ -1418,13 +1458,46 @@ export function launchWorkbench() {
 			requireImageSupport(refs);
 			// 附件随消息离开草稿；提交或入队失败时放回。
 			if (refs.length) await writeDraft(owner, []);
+			let record;
 			try {
 				interrupted.delete(id);
-				return await queue.accept(owner, text, refs);
+				record = await queue.accept(owner, text, refs);
 			} catch (error) {
 				if (refs.length) await writeDraft(owner, refs);
 				throw error;
 			}
+			if (owner.titlePending) await startAutoTitle(owner, text);
+			return record;
+		}),
+	);
+	handle("rename-session-ai", (id) =>
+		serializeTaskChange(async () => {
+			requireWritableWorkbench();
+			findSession(id);
+			if (!model) throw new Error("请先配置模型。");
+			const turns = searchableTurns(await readJson(join(sessionsDirectory, `${id}.json`))).filter(
+				({ input, text }) => input.trim() || text.trim(),
+			);
+			if (!turns.length) throw new Error("会话中还没有可用于命名的内容。");
+			return turns;
+		}).then(async (turns) => {
+			// 生成在串行区外进行，等待模型期间不阻塞其他会话操作。
+			const signal = AbortSignal.timeout(30000);
+			let title;
+			try {
+				title = await generateTitle(openTitleStream, conversationContext(turns), signal);
+			} catch (error) {
+				throw new Error(signal.aborted ? "生成标题超时，请稍后重试。" : `暂时无法生成标题：${error.message}`);
+			}
+			return serializeTaskChange(async () => {
+				requireWritableWorkbench();
+				const owner = findSession(id);
+				const previous = structuredClone(workbench);
+				owner.title = title;
+				delete owner.titlePending;
+				await persistChange(previous);
+				return title;
+			});
 		}),
 	);
 	handle("retry-request", (id, requestId) =>

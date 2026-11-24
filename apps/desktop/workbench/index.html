@@ -46,6 +46,7 @@
 			<path fill="#a83d59" opacity=".4" d="M3.7 15.4c4.2-2.1 7.3-6.4 7.4-10.6.8 4.2-1.7 8.3-7.4 10.6Z"/>
 		</symbol>
 		<symbol id="icon-pencil" viewBox="0 0 24 24"><path d="m13.5 6.5 4 4M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11z"/></symbol>
+		<symbol id="icon-sparkle" viewBox="0 0 24 24"><path d="M11 3.5 12.8 9l5.7 1.8-5.7 1.8L11 18.5l-1.8-5.9L3.5 10.8 9.2 9zM18.5 3v4M16.5 5h4"/></symbol>
 		<symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
 		<symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
 		<symbol id="icon-reset" viewBox="0 0 24 24"><path d="M4 5v5h5M4.4 10a8 8 0 1 1 .3 5"/></symbol>
@@ -188,7 +189,7 @@
 						<div class="composer-toolbar">
 							<div class="composer-start">
 								<button class="button icon-button" id="composer-add" type="button" popovertarget="composer-add-menu" aria-haspopup="menu" aria-label="添加到对话" title="添加到对话" disabled><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg></button>
-								<button class="button write-mode-choice" id="write-mode-open" type="button" popovertarget="write-mode-picker" aria-haspopup="dialog" aria-label="工作区权限：自动审批" disabled><svg class="icon" aria-hidden="true"><use href="#icon-shield-check"/></svg><span id="write-mode-name">自动审批</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+								<button class="button write-mode-choice" id="write-mode-open" type="button" popovertarget="write-mode-picker" aria-haspopup="dialog" aria-label="工作区权限：帮我批准" disabled><svg class="icon" aria-hidden="true"><use href="#icon-shield-check"/></svg><span id="write-mode-name">帮我批准</span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></button>
 							</div>
 							<div class="composer-end">
 								<div class="context-meter" id="context-meter" hidden>
@@ -306,8 +307,8 @@
 		<p class="feedback" id="write-mode-busy" role="status" hidden>任务结束后可更改本会话权限。</p>
 		<div class="write-mode-options">
 			<button class="button" type="button" data-write-mode="read"><svg class="icon mode-glyph" aria-hidden="true"><use href="#icon-eye"/></svg><span class="mode-label">只读</span><small>浏览、读取和汇总数据</small><svg class="icon mode-check" aria-hidden="true"><use href="#icon-check"/></svg></button>
-			<button class="button" type="button" data-write-mode="ask"><svg class="icon mode-glyph" aria-hidden="true"><use href="#icon-ask"/></svg><span class="mode-label">写入前询问</span><small>每次生成文件前请求确认</small><svg class="icon mode-check" aria-hidden="true"><use href="#icon-check"/></svg></button>
-			<button class="button" type="button" data-write-mode="auto"><svg class="icon mode-glyph" aria-hidden="true"><use href="#icon-shield-check"/></svg><span class="mode-label">自动审批</span><small>在工作区内自动生成文件</small><svg class="icon mode-check" aria-hidden="true"><use href="#icon-check"/></svg></button>
+			<button class="button" type="button" data-write-mode="ask"><svg class="icon mode-glyph" aria-hidden="true"><use href="#icon-ask"/></svg><span class="mode-label">请求批准</span><small>生成文件前先询问</small><svg class="icon mode-check" aria-hidden="true"><use href="#icon-check"/></svg></button>
+			<button class="button" type="button" data-write-mode="auto"><svg class="icon mode-glyph" aria-hidden="true"><use href="#icon-shield-check"/></svg><span class="mode-label">帮我批准</span><small>工作区内生成文件自动批准</small><svg class="icon mode-check" aria-hidden="true"><use href="#icon-check"/></svg></button>
 		</div>
 	</section>
 	<section id="model-picker" class="model-picker" popover aria-labelledby="model-picker-title" role="dialog">

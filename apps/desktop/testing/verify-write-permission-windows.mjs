@@ -50,6 +50,8 @@ async function boot() {
 		({ app, dialog, utilityProcess }, expected) => {
 			if (app.getPath("userData").toLowerCase() !== expected.profile.toLowerCase()) throw new Error("测试资料目录不匹配");
 			dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [expected.workspace] });
+			// 第一档起有未完成任务时关窗先确认；本脚本的关闭都按「仍然关闭」处理，验证待批写入随关闭撤销。
+			dialog.showMessageBox = async () => ({ response: 0 });
 			const fork = utilityProcess.fork.bind(utilityProcess);
 			utilityProcess.fork = (...args) => {
 				globalThis.permissionQAProcess = fork(...args);
@@ -137,6 +139,9 @@ try {
 	const menu = await showModePicker();
 	assert.equal(await menu.locator("[aria-pressed=true]").getAttribute("data-write-mode"), "auto");
 	assert.equal(await menu.locator("[data-write-mode]").count(), 3);
+	// 按 QoneAgent 命名：只读 / 请求批准 / 帮我批准。
+	assert.deepEqual(await menu.locator(".mode-label").allInnerTexts(), ["只读", "请求批准", "帮我批准"]);
+	assert.equal(await page.locator("#write-mode-open").getAttribute("aria-label"), "工作区权限：帮我批准");
 	await page.screenshot({ path: join(evidence, "权限菜单-浅色.png") });
 	await page.keyboard.press("Escape");
 	await setMode("read");
@@ -192,9 +197,11 @@ try {
 		page.evaluate((selected) => window.flower.setWriteMode(selected, "auto"), session),
 		/运行和排队/,
 	);
-	await page.evaluate(({ session, request }) => window.flower.cancel(session, request), {
+	// 第二档起运行中发送的消息排在本机队列（返回 { queued }），从队列移除而不是取消运行时请求。
+	assert.ok(waiting.queued, JSON.stringify(waiting));
+	await page.evaluate(({ session, item }) => window.flower.removeQueueItem(session, item), {
 		session,
-		request: waiting.requestId,
+		item: waiting.queued,
 	});
 	await page.locator("#write-cancel-task").click();
 	await expectTerminal(cancelling, "cancelled");
@@ -225,7 +232,7 @@ try {
 	await back.press("Enter");
 	await page.waitForFunction((id) => window.flower.state().then((value) => value.selected === id), session);
 	assert.equal((await state()).writeMode, "ask");
-	results.push("会话权限独立，自动审批在当前工作区生成文件");
+	results.push("会话权限独立，「帮我批准」在当前工作区生成文件");
 
 	await current.evaluate(() => {
 		const { mock } = process.getBuiltinModule("node:test");
@@ -343,7 +350,7 @@ try {
 	await page.evaluate((selected) => window.flower.selectSession(selected), other);
 	assert.equal((await state()).writeMode, "auto");
 	await verifyOutputs(3);
-	results.push("工作进程退出和应用关闭都撤销待批写入。重启恢复会话权限及中断记录，旧会话缺字段时采用自动审批");
+	results.push("工作进程退出和应用关闭都撤销待批写入。重启恢复会话权限及中断记录，旧会话缺字段时采用「帮我批准」");
 	const report = { exe: resolve(exeArg), profile, sourceSha256, outputs: 3, waitedMs, results };
 	await writeFile(join(evidence, "result.json"), JSON.stringify(report, null, 2));
 	console.log(JSON.stringify(report));

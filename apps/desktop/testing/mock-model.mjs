@@ -17,9 +17,18 @@ export async function startMockModel({
 	beforePermissionTool,
 	attachmentReply,
 	effortByModel = new Map(),
+	titleReply,
 } = {}) {
 	const models = [model, ...alternatives];
-	const observations = { model: [], discovery: [], attempts: [], requestFields: [], tools: [], interrupted: 0 };
+	const observations = {
+		model: [],
+		discovery: [],
+		attempts: [],
+		requestFields: [],
+		tools: [],
+		interrupted: 0,
+		titles: [],
+	};
 	let origin;
 	const server = createServer(async (req, res) => {
 		try {
@@ -49,6 +58,29 @@ export async function startMockModel({
 			const chunks = [];
 			for await (const chunk of req) chunks.push(chunk);
 			const input = JSON.parse(Buffer.concat(chunks));
+			// 会话标题请求单独记录与应答，不计入对话请求的观察记录，避免影响既有断言。
+			const system = input.messages?.find(({ role }) => role === "system" || role === "developer")?.content;
+			if (typeof system === "string" && system.includes("生成会话标题")) {
+				const content = input.messages.findLast(({ role }) => role === "user")?.content ?? "";
+				const body = typeof content === "string" ? content : JSON.stringify(content);
+				observations.titles.push({ body, reasoning: input.reasoning_effort ?? null, keys: Object.keys(input).sort() });
+				const reply = titleReply
+					? await titleReply(body)
+					: { text: `标题·${(body.match(/<user_message>\n([^\n]{0,10})/)?.[1] ?? "会话").trim()}` };
+				if (reply.status) {
+					res.writeHead(reply.status).end();
+					return;
+				}
+				res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+				const chunk = (delta, finish_reason = null) =>
+					res.write(
+						`data: ${JSON.stringify({ id: "chatcmpl-title", object: "chat.completion.chunk", created: 1790000000, model: input.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+					);
+				chunk({ role: "assistant", content: reply.text });
+				chunk({}, "stop");
+				res.end("data: [DONE]\n\n");
+				return;
+			}
 			observations.requestFields.push({
 				path,
 				model: input.model,

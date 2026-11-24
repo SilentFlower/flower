@@ -436,3 +436,56 @@ export async function artifactSummary(workspace, path, signal)
 
 - `testing/workspace-panel.test.mjs`：工作表数与行数、字数、格式外路径与缺失文件的拒绝。
 - `testing/instructions.test.mjs`：经真实 Main 拒绝格式外路径。
+
+---
+
+## Scenario: 会话自动标题与用 AI 重命名
+
+### 1. Scope / Trigger
+
+- 触发：改动 `createSession`、`submit` 处理器的首条命名、`manage-sidebar` 重命名、`rename-session-ai`、`session-title.mjs`，或标题请求所用的模型调用。
+
+### 2. Signatures
+
+```js
+// workbench.json 会话项：新建时写入，首条消息或手动/AI 改名后删除；旧会话没有此字段
+titlePending?: true
+// preload
+renameSessionWithAI(id)        // → 新标题；串行区外生成，30 秒超时
+// session-title.mjs
+placeholderTitle(text) / firstMessageContext(text) / conversationContext(turns) / cleanTitle(output)
+generateTitle(open, context, signal)   // open(context, signal) 返回 pi 模型事件流
+titleSystemPrompt                      // 含「生成会话标题」，回环模型据此识别标题请求
+```
+
+### 3. Contracts
+
+- 首条消息：`queue.accept` 成功后，会话有 `titlePending` 才命名：删除标记、标题改为 `placeholderTitle(text)`（空白折叠、前 40 码点，超出加「…」）并持久化；保存失败不影响已提交的消息。随后不等待地生成，15 秒超时；结果在串行区内写入，仅当会话仍在且标题仍等于临时标题；失败静默。
+- 模型请求：`openModelStream({ settings, model, reasoning: undefined, maxTokens: 256 })`，不占用会话运行与队列，不写会话记录文件。上下文必须经 pi 的 `normalizeContext` 把 `systemPrompt` 转成首条 system 消息：pi 1.6 的 OpenAI 兼容适配只发送 system 消息，直接传 `{ systemPrompt, messages }` 时系统提示会丢失。
+- 提示：消息原文放在 `<user_message>` / `<conversation>` 分隔符内，声明其中指令不执行；首条只取前 200 码点；整段对话取第一轮与最近 8 轮，提问 300、回复 400 码点，空的提问或回复不输出。
+- 输出：取第一行非空文字，去「标题：」「Title:」前缀、引号、书名号、`*`/`#`、首尾标点与省略号，≤40 码点；`stopReason` 非 `stop` 或清洗后为空视为失败。
+- 手动重命名与「用 AI 重命名」都删除 `titlePending`。「用 AI 重命名」读取记录文件的 `searchableTurns`，过滤提问与回复都为空的轮次。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| 「用 AI 重命名」时未配置模型 | 「请先配置模型。」 |
+| 会话没有可用轮次 | 「会话中还没有可用于命名的内容。」 |
+| 生成超时（30 秒） | 「生成标题超时，请稍后重试。」，标题不变 |
+| 模型报错或结果无效 | 「暂时无法生成标题：<原因>」，标题不变 |
+| 首条命名失败或超时 | 静默，保留临时标题 |
+| 生成期间手动改名或删除会话 | 结果丢弃 |
+
+### 5. Scenarios and Examples
+
+- Normal：新会话发「请核对二月预算和报价的差额并生成汇总表」→ 立即显示该句 → 模型返回「“二月预算差额核对”。」→ 标题「二月预算差额核对」。
+- Base：升级前已有的「工作区 · 新会话」没有 `titlePending`，发消息不改名，可用菜单「用 AI 重命名」。
+- Incorrect use：直接把 `{ systemPrompt, messages }` 交给 `openModelStream`，请求体里没有 system 消息，模型把命名指令当作普通对话回答。
+- Correct handling：用 `normalizeContext` 构造上下文；回环模型按 system 消息中的「生成会话标题」识别标题请求，单独记在 `observations.titles`，不计入对话请求的观察记录。
+
+### 6. Tests Required
+
+- `testing/session-title.test.mjs`：临时标题截断与 emoji、上下文截断与分隔符、清洗规则、`generateTitle` 的错误事件、非 stop、空结果与取消。
+- `testing/session-title-flow.test.mjs`（真实 Main、worker 与回环模型）：首条命名与请求无推理字段、第二条不再命名、生成期间手动改名优先、失败保留截断后的临时标题、用 AI 重命名的内容与空会话/失败报错、旧会话不命名。
+- Windows `verify-title-windows.mjs`：侧栏与标题栏的首条命名、菜单「用 AI 重命名」、失败保留临时标题；`verify-write-permission-windows.mjs` 核对权限文案「只读 / 请求批准 / 帮我批准」。
