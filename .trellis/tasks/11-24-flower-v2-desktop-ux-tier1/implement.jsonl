@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/11-24-flower-v2-desktop-ux-tier1/research/tier1-code-facts.md", "reason": "第一档九项的代码链路、行号证据与约束风险"}
+{"file": ".trellis/tasks/11-24-flower-v2-desktop-ux/research/cindy-qone-ux-gap.md", "reason": "Cindy 与 Qone 的参照实现位置，交互细节对照"}
+{"file": ".trellis/tasks/11-23-flower-v2-desktop/design.md", "reason": "Desktop 进程边界、权限、面板外扩与组件演进约定"}
+{"file": "apps/desktop/workbench/ui/README.md", "reason": "工作台组件职责、语义 token、窄窗与 Windows 验收惯例"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "运行时→worker→Host→Main→渲染层的跨层数据流检查"}

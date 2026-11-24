@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/11-24-flower-v2-desktop-ux-tier1/research/tier1-code-facts.md", "reason": "核对实现是否遵守事件落盘、IPC 校验、假 electron 模块等约束"}
+{"file": ".trellis/tasks/11-23-flower-v2-desktop/design.md", "reason": "核对 Desktop 进程边界与权限复核约定"}
+{"file": "apps/desktop/workbench/ui/README.md", "reason": "核对组件表更新与新增状态的窄窗、输入法、切换会话验收"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层字段与双宿主兼容检查"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "提交逻辑、路径解析、附件映射的复用检查"}
