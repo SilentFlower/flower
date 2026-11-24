@@ -27,18 +27,19 @@
   "meta": {},
   "closeout": {
     "status": "closed",
-    "closedAt": "2026-11-24T10:19:17Z",
+    "closedAt": "2026-11-24T11:13:12Z",
     "blockers": []
   },
   "progress": {
+    "updatedAt": "2026-11-24T11:13:12Z",
     "completedSteps": [
       "第一批 输入区：排队与插话、选区引用与侧边追问、@ 提及与拖入、Toast 组件",
       "第二批 检索与上下文：手动压缩与压缩分隔、会话正文搜索、中断恢复",
-      "第三批 零散体验：交付卡片元信息、删除会话撤销、全局指令与 FLOWER.md，文档与 Windows 实机回归"
+      "第三批 零散体验：交付卡片元信息、删除会话撤销、全局指令与 FLOWER.md，文档与 Windows 实机回归",
+      "试用反馈修订 R10–R15：压缩分隔区分自动/手动并修复旧轮次不显示、删除恢复确认框、搜索入口、标题栏开关、侧边追问标签页内首条新建、底部渐隐与新消息胶囊"
     ],
     "partialStep": null,
     "nextStep": "第三档规划：本轮变更撤销、编辑重发与回退分叉、结构化提问卡、导出与复制为图片、应用内更新",
-    "notes": "Windows 候选包复用第一档已验收的 Electron 45.3.2 运行时组装，正式发版仍需 package:windows",
-    "updatedAt": "2026-11-24T10:19:17Z"
+    "notes": "Windows 候选 candidate-3 复用第一档已验收的 Electron 45.3.2 运行时组装，正式发版仍需 package:windows"
   }
 }

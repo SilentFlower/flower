@@ -96,3 +96,12 @@ code-reviewer 走 `createExecution` 授权：`steer` 在无 `execution.steer` �
 - 旧会话：无 `steers`、无队列字段、无 `parent`，行为与现在一致；运行时内残留的 `queued` 记录照旧恢复为中断。
 - `workbench.json` 新字段都可缺省；回滚到旧版本会忽略这些字段（队列内容丢失、隐藏的侧边会话出现在列表中），可接受。
 - 共享运行时改动是纯增量；回滚时 Desktop 与运行时一起回退。
+
+## 11. 试用反馈修订（R10–R15）
+
+- 压缩方式：`ContextCheckpoint` 增加可选 `trigger: "auto" | "manual"`，`createContextWindow` 自动压缩写 `auto`，`compactHistory` 写 `manual`；没有新对话时返回原检查点，方式不变。早期检查点无此字段。
+- 分隔定位：`compactionMark` 移到 `request-history.mjs` 以便单测。成功请求既无 `userMessageIndex` 也无 `flowerRequestId` 时跳过（位置字段与检查点同版引入，缺位置的只会是会话开头的旧轮次），不再整体放弃。历史行增加 `compactedBy`，只在带分隔的那一行有值。
+- 删除会话：撤回 R8.2 的撤销机制（`pendingDeletes`、`finishDelete`、`stopSessions`、`undo-delete-session` 与 preload `undoDeleteSession`），单个会话回到与移除工作区相同的确认后删除路径，运行或排队中拒绝；`retiredSessions` 恢复为只服务侧边追问的 `retiredSideChats`。
+- 侧边追问标签：`.panel-tabs .button` 的 `display: flex` 会盖过 `hidden`，补 `[hidden] { display: none }`。`sideAvailable` 改按是否有当前主会话；页内发送时若无侧边追问先 `openSideChat` 再 `submitSideChat`，新建失败时原文放回输入框，Main 侧契约不变。
+- 标题栏开关：`#workspace-panel-toggle` 移入 `.chrome-content`，`margin-inline-start: auto` 靠右、停靠左侧时 `order: -1`，并设 `app-region: no-drag`；去掉 `--chat-tools-height` 及首页留白的扣减。
+- 底部渐隐：`thread()` 的 `syncBottom` 在下方还有内容时给滚动容器加 `data-more`，CSS 用 `mask-image` 在底部 44 像素渐隐；回到底部按钮有新内容时显示「新消息」文字，改为胶囊。
