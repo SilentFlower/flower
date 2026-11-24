@@ -1,0 +1,49 @@
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
+const invoke = (name, ...args) => ipcRenderer.invoke(`flower:${name}`, ...args);
+
+contextBridge.exposeInMainWorld("flower", {
+	state: () => invoke("state"),
+	setTitlebarTheme: (mode) => invoke("titlebar-theme", mode),
+	setPanelExpansion: (width) => invoke("panel-expansion", width),
+	saveModel: (input) => invoke("save-model", input),
+	listModels: (service, revision) => invoke("list-models", service, revision),
+	modelEffortPreset: (service, model) => invoke("model-effort-preset", service, model),
+	chooseModel: (id, revision) => invoke("choose-model", id, revision),
+	chooseModelService: (id, revision) => invoke("choose-model-service", id, revision),
+	setModelEffort: (effort, revision) => invoke("set-model-effort", effort, revision),
+	setWriteMode: (session, mode) => invoke("set-write-mode", session, mode),
+	decideWrite: (id, allowed) => invoke("decide-write", id, allowed),
+	chooseWorkspace: () => invoke("choose-workspace"),
+	newSession: (session) => invoke("new-session", session),
+	selectSession: (session) => invoke("select-session", session),
+	gitChanges: (id) => invoke("git-changes", id),
+	gitDifference: (id, path, group) => invoke("git-difference", id, path, group),
+	manageSidebar: (type, id, operation, value) => invoke("manage-sidebar", type, id, operation, value),
+	listWorkspaceEntries: (session, directory, offset) => invoke("list-workspace-entries", session, directory, offset),
+	previewWorkspaceFile: (session, path) => invoke("preview-workspace-file", session, path),
+	chooseFile: (session) => invoke("choose-file", session),
+	referenceFile: (session, path) => invoke("reference-file", session, path),
+	dropFiles: (session, files) =>
+		invoke(
+			"drop-files",
+			session,
+			files.map((file) => webUtils.getPathForFile(file)),
+		),
+	pasteClipboardImage: (session) => invoke("paste-clipboard-image", session),
+	pasteImage: (session, bytes) => invoke("paste-image", session, bytes),
+	previewAttachment: (session, request, key) => invoke("attachment-preview", session, request, key),
+	attachmentImage: (session, request, key) => invoke("attachment-image", session, request, key),
+	removeAttachment: (session, key) => invoke("remove-attachment", session, key),
+	history: (session) => invoke("history", session),
+	contextUsage: (session) => invoke("context-usage", session),
+	copyReply: (session, request) => invoke("copy-reply", session, request),
+	openReplyLink: (url) => invoke("open-reply-link", url),
+	submit: (session, input) => invoke("submit", session, input),
+	cancel: (session, request, run) => invoke("cancel", session, request, run),
+	openArtifact: (session, request, path) => invoke("open-artifact", session, request, path),
+	subscribe(callback) {
+		const listener = (_event, event) => callback(event);
+		ipcRenderer.on("flower:update", listener);
+		return () => ipcRenderer.removeListener("flower:update", listener);
+	},
+});

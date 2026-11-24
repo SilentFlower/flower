@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Flower Desktop Preview</title>
+<link rel="stylesheet" href="./style.css">
+<script src="./renderer.js" defer></script>
+</head>
+<body>
+<header class="top">
+	<span class="brand">Flower Desktop</span>
+	<span id="core-status" role="status" data-state="starting">核心启动中</span>
+</header>
+<main>
+	<section class="intro">
+		<h1>本地隔离演示</h1>
+		<p>选择内置样例，体验只读任务、流式结果和本地历史。</p>
+	</section>
+	<div class="layout">
+		<aside class="panel controls" aria-label="任务设置">
+			<h2>样例与任务</h2>
+			<label for="directory">样例目录</label>
+			<select id="directory"></select>
+			<label for="file">样例文件</label>
+			<select id="file"></select>
+			<label for="task">只读任务</label>
+			<select id="task"></select>
+			<div class="actions">
+				<button type="button" id="start" class="primary" disabled>开始任务</button>
+				<button type="button" id="cancel" disabled>取消</button>
+				<button type="button" id="retry" hidden>重试上次任务</button>
+			</div>
+			<p class="notice">当前测试窗口仅处理内置样例。</p>
+		</aside>
+		<div class="results">
+			<section class="panel" aria-labelledby="result-title">
+				<div class="section-head">
+					<h2 id="result-title">运行结果</h2>
+					<span id="run-status" role="status">请选择样例</span>
+				</div>
+				<pre id="output">任务开始后，这里会显示读取进度和逐步生成的结果。</pre>
+			</section>
+			<section class="panel" aria-labelledby="history-title">
+				<h2 id="history-title">样例历史</h2>
+				<p id="empty">本机还没有这份样例的任务记录。</p>
+				<ul id="history" aria-label="历史任务"></ul>
+			</section>
+		</div>
+	</div>
+</main>
+</body>
+</html>

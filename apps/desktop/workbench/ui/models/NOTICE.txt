@@ -1,0 +1,4 @@
+品牌图标来自 @lobehub/icons-static-svg 1.102.0。
+上游 https://github.com/lobehub/lobe-icons
+随附 LobeHub MIT 许可。品牌标识仅用于区分对应模型家族。
+unknown.svg 由 Flower 项目绘制。

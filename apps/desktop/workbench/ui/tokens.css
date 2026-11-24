@@ -1,0 +1,36 @@
+/* HarmonyOS Sans SC 官方可变字体，按许可原样分发，许可见 fonts/LICENSE_Fonts */
+@font-face {
+	font-family: "HarmonyOS Sans SC";
+	src: url("./fonts/HarmonyOS_Sans_SC.ttf") format("truetype");
+	font-weight: 40 900;
+	font-style: normal;
+}
+:root {
+	color-scheme: light;
+	--canvas: #f2f2ed;
+	--sidebar: #eaeae5;
+	--surface: #fdfdf8;
+	--wash: #eeeee7;
+	--hover: #e1e1da;
+	--ink: #22221f;
+	--muted: #676760;
+	--line: #deded6;
+	--edge: #cdcdc4;
+	--brand-end: #ed1437;
+	--accent: #2459d6;
+	--accent-hover: #1946b4;
+	--accent-tint: #eaf0ff;
+	--on-accent: #ffffff;
+	--good: #237250;
+	--danger: #a22e33;
+	--focus: #346de4;
+	--shadow: 0 4px 18px rgb(0 0 0 / 6%);
+	--body: "HarmonyOS Sans SC", "Microsoft YaHei UI", "Segoe UI", "Noto Sans CJK SC", sans-serif;
+	--display: var(--body);
+	--brand: "HarmonyOS Sans SC", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+	--space-2: 8px;
+	--space-3: 12px;
+	--radius: 8px;
+	--radius-l: 14px;
+	--titlebar-height: 45px;
+}

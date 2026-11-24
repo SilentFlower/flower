@@ -1,0 +1,24 @@
+{
+	"name": "@flower-ai/flower-desktop",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"productName": "Flower Desktop",
+	"main": "workbench/entry.mjs",
+	"scripts": {
+		"package:windows": "node scripts/package-windows.mjs",
+		"test": "node --test testing/*.test.mjs testing/preview/demo.test.mjs"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "1.6.0",
+		"@flower-ai/agent-runtime": "0.1.0",
+		"exceljs": "4.4.0",
+		"marked": "18.0.11",
+		"pdfjs-dist": "6.5.438",
+		"saxes": "5.0.1",
+		"yauzl": "3.2.0"
+	},
+	"devDependencies": {
+		"jszip": "3.10.2"
+	}
+}
