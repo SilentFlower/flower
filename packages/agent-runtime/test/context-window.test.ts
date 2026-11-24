@@ -143,6 +143,7 @@ describe("共享运行时长会话", () => {
 		for (let i = 0; i < 5; i++) expect(await host.submit(`${i} ${padding}`)).toMatchObject({ status: "succeeded" });
 		const saved = await host.client.getSession(session);
 		expect(saved.contextCheckpoint?.summary).toContain("明细!B7");
+		expect(saved.contextCheckpoint?.trigger).toBe("auto");
 		expect(saved.requests[0]?.attachments).toEqual(refs);
 		const firstPosition = saved.requests[0]?.userMessageIndex;
 		if (firstPosition === undefined) throw new Error("缺少归档消息索引");
@@ -657,7 +658,11 @@ describe("手动压缩", () => {
 		expect(await host.submit("第二问")).toMatchObject({ status: "succeeded" });
 		expect(await host.client.compact(session)).toBe(true);
 		const snapshot = await host.client.getSession(session);
-		expect(snapshot.contextCheckpoint).toEqual({ through: snapshot.messages.length, summary: `检查点：${fact}` });
+		expect(snapshot.contextCheckpoint).toEqual({
+			through: snapshot.messages.length,
+			summary: `检查点：${fact}`,
+			trigger: "manual",
+		});
 		const calls = run.calls.length;
 		expect(await host.client.compact(session)).toBe(false);
 		expect(run.calls).toHaveLength(calls);

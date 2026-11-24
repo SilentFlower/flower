@@ -123,14 +123,6 @@ function openSidebarMenu(type, key, trigger) {
 					trigger.focus();
 					if (["pin", "create"].includes(operation))
 						return action(() => ui.manageSidebar(type, key, operation, !item.pinned))();
-					// 删除会话不再确认，Toast 提供 8 秒撤销；移除工作区涉及多个会话，仍先确认。
-					if (operation === "delete" && !space)
-						return action(async () => {
-							await ui.manageSidebar(type, key, operation);
-							toast(`已删除「${label}」`, {
-								action: { label: "撤销", run: () => action(() => ui.undoDeleteSession(key))() },
-							});
-						})();
 					sidebarEdit = { type, key, operation, members, trigger };
 					const rename = operation === "rename";
 					by("sidebar-dialog-title").textContent = rename ? `重命名${noun}` : title;
@@ -138,7 +130,7 @@ function openSidebarMenu(type, key, trigger) {
 						? ""
 						: space
 							? `从 Flower 移除「${label}」及其 ${members} 条会话。磁盘上的工作区文件会保留。`
-							: `将删除「${label}」的聊天记录和附件副本。`;
+							: `将删除「${label}」的聊天记录和附件副本，删除后无法恢复。`;
 					const field = by("sidebar-name");
 					field.hidden = field.disabled = !rename;
 					field.value = label;
@@ -697,6 +689,8 @@ function renderSessions() {
 	listedCount = count;
 	syncSessionTools();
 	by("session-search-empty").hidden = !searchKey || Boolean(count);
+	// 单字只按名称匹配，提示再多输入一个字即可搜对话内容。
+	by("session-search-hint").hidden = [...query].length !== 1;
 	const empty = by("session-list-empty");
 	empty.hidden = !state?.ready || Boolean(searchKey) || Boolean(count);
 	empty.textContent = groupedByWorkspace ? "暂无工作区" : "暂无会话";
@@ -964,6 +958,7 @@ async function reloadHistory(id) {
 							artifacts: row.artifacts,
 							compactedBefore: row.compactedBefore,
 							compactedAfter: row.compactedAfter,
+							compactedBy: row.compactedBy,
 						}
 					: row,
 			);

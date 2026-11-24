@@ -193,6 +193,19 @@ try {
 	await page.screenshot({ path: join(evidence, "侧边追问.png") });
 	results.push("从回复选区打开右栏侧边追问，引用带入侧边输入框，得到回答且系统提示为只读侧边追问");
 
+	step("侧边追问标签直接发送");
+	await page.locator("#side-chat-close").click();
+	await page.locator("#confirm-apply").click();
+	await until(async () => !(await state()).sideChats.length, "侧边追问未关闭");
+	assert.equal(await page.locator("#panel-side").isVisible(), true, "有当前会话时应显示侧边追问标签");
+	await page.locator("#panel-side").click();
+	assert.match(await page.locator("#side-chat-reference").innerText(), /发送第一条后/);
+	await page.locator("#side-chat-prompt").fill("侧边：直接从标签提问");
+	await page.locator("#side-chat-send").click();
+	await page.locator("#side-chat-timeline").getByText("侧边回答：差额来自报价与预算。").waitFor({ timeout: 20000 });
+	assert.match(await page.locator("#side-chat-reference").innerText(), /基于主会话已完成的 \d+ 轮对话/);
+	results.push("未建立侧边追问时从右栏标签进入，发送第一条即新建并得到回答");
+
 	step("全局指令");
 	await page.locator("#theme-open").click();
 	await page.locator("#settings-instructions").click();
@@ -209,14 +222,20 @@ try {
 	await page.locator("#context-compact").click();
 	await page.locator(".toast").filter({ hasText: "已压缩上下文" }).waitFor({ timeout: 20000 });
 	await page.locator(".compaction-divider:visible").first().waitFor({ timeout: 10000 });
+	assert.equal(await page.locator(".compaction-divider:visible").first().innerText(), "以上对话已手动压缩为摘要");
 	await page.screenshot({ path: join(evidence, "压缩分隔.png") });
-	results.push("详情卡「压缩上下文」完成后出现 Toast 与时间线分隔");
+	results.push("详情卡「压缩上下文」完成后出现 Toast 与时间线分隔「以上对话已手动压缩为摘要」");
 
 	step("正文搜索与跳转");
 	const sessionId = (await state()).selected;
 	await page.locator("#new-session").click();
 	await until(async () => (await state()).selected !== sessionId);
+	const blank = (await state()).selected;
+	assert.equal(await page.locator("#session-search-toggle").innerText(), "搜索");
 	await page.keyboard.press("Control+K");
+	assert.equal(await page.locator("#session-search").getAttribute("placeholder"), "搜索标题或内容…");
+	await page.locator("#session-search").fill("差");
+	await page.locator("#session-search-hint").waitFor();
 	await page.locator("#session-search").fill("差额来自");
 	assert.equal(await page.locator(".session-snippet").count(), 0, "侧边追问内容不应被搜到");
 	await page.locator("#session-search").fill("二月口径");
@@ -225,22 +244,22 @@ try {
 	await until(() => page.evaluate(() => CSS.highlights.has("flower-search")), "命中关键词未高亮");
 	await page.screenshot({ path: join(evidence, "搜索跳转.png") });
 	await page.keyboard.press("Escape");
-	results.push("侧栏搜索按正文命中显示片段，点击后切回会话并高亮关键词；侧边追问内容不被搜到");
+	results.push("侧栏「搜索」按正文命中显示片段，点击后切回会话并高亮关键词；侧边追问内容不被搜到");
 
-	step("删除会话与撤销");
+	step("删除会话确认");
 	const title = (await state()).sessions.find(({ id }) => id === sessionId).title;
-	await page.locator(`.session-row[title="${title}"]`).click({ button: "right" });
+	await page.evaluate((id) => window.flower.manageSidebar("session", id, "rename", "待删除会话"), blank);
+	// 清空上一步的搜索词，侧栏恢复完整列表。
+	await page.keyboard.press("Control+K");
+	await page.locator("#session-search").fill("");
+	await page.locator('.session-row[title="待删除会话"]').click({ button: "right" });
 	await page.locator("#sidebar-options").getByRole("menuitem", { name: "删除会话" }).click();
-	await until(async () => !(await state()).sessions.some(({ id }) => id === sessionId));
-	assert.equal(await page.locator("#sidebar-dialog").isVisible(), false, "删除会话不应再弹确认框");
-	await page.locator(".toast").getByRole("button", { name: "撤销" }).click();
-	await until(async () => (await state()).sessions.some(({ id }) => id === sessionId), "撤销未恢复会话");
-	assert.equal(
-		(await state()).sideChats.some(({ parent }) => parent === sessionId),
-		true,
-		"撤销未恢复侧边追问",
-	);
-	results.push("删除会话立即移出且不弹确认框，Toast「撤销」恢复会话与侧边追问");
+	await page.locator("#sidebar-dialog").waitFor();
+	assert.match(await page.locator("#sidebar-detail").innerText(), /删除后无法恢复/);
+	await page.locator("#sidebar-apply").click();
+	await until(async () => !(await state()).sessions.some(({ id }) => id === blank), "确认后会话未删除");
+	assert.equal(await page.locator(".toast").filter({ hasText: "撤销" }).count(), 0, "不应再出现撤销提示");
+	results.push("删除会话弹出确认框并注明无法恢复，确认后立即删除，不再出现撤销提示");
 
 	step("中断恢复");
 	await page.locator(`.session-row[title="${title}"]`).click();
@@ -257,6 +276,20 @@ try {
 	await page.locator("#interrupted-dismiss").click();
 	await page.locator("#interrupted-banner").waitFor({ state: "hidden" });
 	results.push("运行中关闭后重启，侧栏顶部列出被中断的会话；会话内按钮为「继续任务」，可忽略横幅");
+
+	step("标题栏开关与底部渐隐");
+	const toggleBox = await page.locator("#workspace-panel-toggle").boundingBox();
+	const chromeBox = await page.locator(".desktop-chrome").boundingBox();
+	assert.ok(toggleBox.y + toggleBox.height <= chromeBox.y + chromeBox.height, "文件浏览器开关应在标题栏内");
+	const scrollable = await page.locator("#thread-scroll").evaluate((node) => node.scrollHeight > node.clientHeight + 80);
+	if (scrollable) {
+		await page.locator("#thread-scroll").evaluate((node) => (node.scrollTop = 0));
+		await until(async () => (await page.locator("#thread-scroll").getAttribute("data-more")) !== null, "回看时未渐隐");
+		await page.screenshot({ path: join(evidence, "底部渐隐.png") });
+		await page.locator("#thread-scroll").evaluate((node) => (node.scrollTop = node.scrollHeight));
+		await until(async () => (await page.locator("#thread-scroll").getAttribute("data-more")) === null, "贴底时仍渐隐");
+	}
+	results.push(`文件浏览器开关位于标题栏；${scrollable ? "回看时输入框上方渐隐，贴底时取消" : "会话较短，未触发渐隐"}`);
 
 	step("窄窗与深色");
 	await app.evaluate(({ BrowserWindow, nativeTheme }) => {

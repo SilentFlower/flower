@@ -115,7 +115,7 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	// 手动压缩：空闲时把迄今的对话归纳为摘要，分隔落在最后一轮之后；没有新对话时不再压缩。
 	assert.equal(await api.compactContext(id), true);
 	history = await api.history(id);
-	assert.equal(history.at(-1).compactedAfter, true);
+	assert.deepEqual([history.at(-1).compactedAfter, history.at(-1).compactedBy], [true, "manual"]);
 	assert.equal(history.filter(({ compactedBefore, compactedAfter }) => compactedBefore || compactedAfter).length, 1);
 	assert.equal(await api.compactContext(id), false);
 	assert.equal((await api.state()).compacting, false);
@@ -230,28 +230,17 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 		],
 	);
 
-	// 删除会话：立即移出列表，撤销期内保留记录文件，撤销后恢复原位置与侧边追问。
+	// 删除会话（界面先经确认框）：立即删除会话与侧边追问的记录文件，正文不再被搜到。
 	const another = await api.openSideChat(id);
 	const sessionsDirectory = join(root, "profile", "local-workbench", "sessions");
 	const anotherFile = join(sessionsDirectory, `${another.id}.json`);
-	await api.manageSidebar("session", id, "delete");
-	state = await api.state();
-	assert.deepEqual([state.sessions.length, state.sideChats.length], [0, 0]);
 	await access(anotherFile);
-	await access(join(sessionsDirectory, `${id}.json`));
-	await api.undoDeleteSession(id);
-	state = await api.state();
-	assert.deepEqual([state.sessions[0].id, state.sideChats[0]?.id, state.selected], [id, another.id, id]);
-	assert.equal((await api.history(id)).length > 0, true);
-	// 撤销期内退出应用视为确认删除，重启后会话与侧边追问的记录文件都已清理。
 	await api.manageSidebar("session", id, "delete");
-	await desktop.restart();
-	state = await desktop.state((current) => current.ready);
+	state = await api.state();
 	assert.deepEqual([state.sessions.length, state.sideChats.length], [0, 0]);
 	await assert.rejects(access(anotherFile));
 	await assert.rejects(access(join(sessionsDirectory, `${id}.json`)));
 	assert.deepEqual(await api.searchSessions("二月核对"), []);
-	await assert.rejects(api.undoDeleteSession(id), /无法撤销/);
 });
 
 function delay(ms) {

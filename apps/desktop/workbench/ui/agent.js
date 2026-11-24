@@ -101,7 +101,12 @@ window.agentUI = (() => {
 				node.replaceChildren(
 					...list.map((hit) => {
 						const control = button("", () => openHit?.(id, hit.requestId), "session-snippet");
-						control.append(element("span", "", hit.before), element("mark", "", hit.match), element("span", "", hit.after));
+						control.append(
+							element("span", "session-snippet-kind", hit.field === "input" ? "提问" : "回复"),
+							element("span", "", hit.before),
+							element("mark", "", hit.match),
+							element("span", "", hit.after),
+						);
 						control.setAttribute(
 							"aria-label",
 							`${hit.field === "input" ? "提问" : "回复"}中命中：${hit.before}${hit.match}${hit.after}`,
@@ -1051,10 +1056,11 @@ window.agentUI = (() => {
 			actions.artifactInfo,
 		);
 		reply.append(head, thought, steps.node, text, failure, deliveries.node);
-		// 最近一次压缩落在本轮之前或之后时显示分隔。
+		// 最近一次压缩落在本轮之前或之后时显示分隔，注明自动还是手动；早期检查点不区分。
 		const [compactedBefore, compactedAfter] = [0, 1].map(() => {
-			const divider = element("p", "compaction-divider", "以上对话已压缩为摘要");
+			const divider = element("p", "compaction-divider");
 			divider.setAttribute("role", "separator");
+			divider.append(element("span", "compaction-label"));
 			divider.hidden = true;
 			return divider;
 		});
@@ -1071,6 +1077,9 @@ window.agentUI = (() => {
 				node.dataset.status = record.status;
 				compactedBefore.hidden = !record.compactedBefore;
 				compactedAfter.hidden = !record.compactedAfter;
+				const how = { auto: "自动", manual: "手动" }[record.compactedBy] ?? "";
+				for (const divider of [compactedBefore, compactedAfter])
+					divider.firstChild.textContent = `以上对话已${how}压缩为摘要`;
 				prompt.hidden = !record.input;
 				if (input.textContent !== (record.input ?? "")) input.textContent = record.input ?? "";
 				showFiles(record.attachments ?? (record.file ? [{ id: `file:${record.file}`, name: record.file }] : []));
@@ -1371,7 +1380,9 @@ window.agentUI = (() => {
 			if (!away) unseen = false;
 			bottom.hidden = !away;
 			bottom.toggleAttribute("data-unseen", unseen);
-			bottom.setAttribute("aria-label", unseen ? "回到底部，有新内容" : "回到底部");
+			bottom.setAttribute("aria-label", unseen ? "回到底部，有新消息" : "回到底部");
+			// 下方还有内容时底部渐隐，贴底时不遮挡最后一行。
+			scroll.toggleAttribute("data-more", !scroll.hidden && distance() > 1);
 		}
 		scroll.addEventListener("scroll", syncBottom, { passive: true });
 		bottom.addEventListener("click", () => {

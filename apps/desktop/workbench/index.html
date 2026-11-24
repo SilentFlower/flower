@@ -99,11 +99,11 @@
 					</section>
 					<div class="sidebar-actions">
 						<button class="button workspace-choice" id="workspace" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg><span id="workspace-label">选择工作区</span><small id="workspace-hint" hidden>点击切换</small></button>
-						<button class="button" id="session-search-toggle" type="button" aria-controls="session-search-box" aria-keyshortcuts="Control+K Meta+K"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg>搜索会话</button>
+						<button class="button" id="session-search-toggle" type="button" aria-controls="session-search-box" aria-keyshortcuts="Control+K Meta+K"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg>搜索</button>
 						<div class="session-search" id="session-search-box" hidden>
 							<svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg>
 							<label class="sr-only" for="session-search">按名称、工作区或对话内容搜索会话</label>
-							<input id="session-search" type="search" maxlength="180" placeholder="搜索会话、工作区或对话内容…" autocomplete="off" aria-keyshortcuts="Control+K Meta+K">
+							<input id="session-search" type="search" maxlength="180" placeholder="搜索标题或内容…" autocomplete="off" aria-keyshortcuts="Control+K Meta+K">
 							<button class="button icon-button" id="session-filter-open" type="button" aria-label="搜索条件" title="搜索条件" aria-haspopup="dialog" popovertarget="session-filter"><svg class="icon" aria-hidden="true"><use href="#icon-filter"/></svg></button>
 						</div>
 					</div>
@@ -120,6 +120,7 @@
 							<button type="button" class="button icon-button session-list-tool" id="sessions-locate" aria-label="定位当前会话" title="定位当前会话"><svg class="icon" aria-hidden="true"><use href="#icon-locate"/></svg></button>
 							<button type="button" class="button icon-button session-list-tool" id="sessions-collapse" aria-label="全部折叠" title="全部折叠" hidden><svg class="icon" aria-hidden="true"><use href="#icon-collapse-all"/></svg></button>
 						</div>
+						<p id="session-search-hint" class="session-search-empty" hidden>输入两个字以上会同时搜索对话内容</p>
 						<p id="session-search-empty" class="session-search-empty" role="status" hidden>没有匹配的会话</p>
 						<p id="session-list-empty" class="session-search-empty" hidden>暂无会话</p>
 						<div id="sessions"></div>
@@ -137,10 +138,10 @@
 		<header class="desktop-chrome">
 			<div class="chrome-content">
 				<h1 class="wordmark" id="title" hidden>Flower Desktop</h1>
+				<button type="button" class="button icon-button" id="workspace-panel-toggle" aria-label="打开文件浏览器" title="打开文件浏览器" aria-controls="workspace-panel" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#icon-panel-right"/></svg></button>
 			</div>
 		</header>
 		<section class="conversation" aria-label="当前会话">
-			<button type="button" class="button icon-button" id="workspace-panel-toggle" aria-label="打开文件浏览器" title="打开文件浏览器" aria-controls="workspace-panel" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#icon-panel-right"/></svg></button>
 			<p class="gateway-notice" id="gateway-notice" role="status" hidden></p>
 			<div class="conversation-body" id="conversation-body">
 				<div id="thread-scroll" class="thread-scroll" hidden>
@@ -152,7 +153,7 @@
 					<div class="navigator-card" id="navigator-card" aria-hidden="true" hidden><strong></strong><p></p></div>
 				</nav>
 				<div class="composition">
-					<button type="button" class="button icon-button back-to-bottom" id="back-to-bottom" aria-label="回到底部" title="回到底部" hidden><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button>
+					<button type="button" class="button icon-button back-to-bottom" id="back-to-bottom" aria-label="回到底部" title="回到底部" hidden><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg><span class="back-to-bottom-label">新消息</span></button>
 					<section class="home-brand" id="empty" aria-labelledby="home-wordmark">
 						<div class="home-identity">
 							<img src="./ui/flower-avatar.webp" class="home-avatar" width="46" height="46" alt="">
@@ -252,7 +253,7 @@
 					<div id="side-chat-timeline" class="side-chat-timeline" aria-label="侧边追问记录"></div>
 				</div>
 				<div class="side-chat-composition">
-					<button type="button" class="button icon-button back-to-bottom" id="side-chat-bottom" aria-label="回到底部" title="回到底部" hidden><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button>
+					<button type="button" class="button icon-button back-to-bottom" id="side-chat-bottom" aria-label="回到底部" title="回到底部" hidden><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg><span class="back-to-bottom-label">新消息</span></button>
 					<div class="composer side-chat-composer">
 						<label class="sr-only" for="side-chat-prompt">侧边追问</label>
 						<textarea id="side-chat-prompt" rows="2" maxlength="16000" placeholder="基于主会话继续追问…"></textarea>

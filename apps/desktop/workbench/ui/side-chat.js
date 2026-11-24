@@ -3,10 +3,10 @@
 
 	/**
 	 * 右栏的侧边追问：以打开时主会话已完成的上下文为参考另开一段只读对话，主会话继续运行、互不影响。
-	 * 每个主会话最多一个侧边追问，只收文字，回答期间不接收新消息。
+	 * 每个主会话最多一个侧边追问，只收文字，回答期间不接收新消息；还没有时，在页内发送第一条即新建。
 	 * @param {object} host 桌面接口
 	 * @param {object} options 工作台能力
-	 * @param {{showSide(trigger?: HTMLElement): void, sideAvailable(available: boolean): void}} options.panel 右栏面板
+	 * @param {{showSide(trigger?: HTMLElement): void, sideAvailable(available: boolean): void}} options.panel 右栏面板，有当前主会话时才显示侧边追问页
 	 * @param {(text: string, options?: object) => void} options.toast 显示提示
 	 * @param {(title: string, detail: string, apply: string) => Promise<boolean>} options.confirm 打开确认框
 	 * @param {(record: object, event: object) => void} options.apply 按运行事件更新请求记录
@@ -66,7 +66,7 @@
 		window.agentUI.bindComposer(prompt, send);
 
 		function sync() {
-			send.disabled = !chat || submitting || busy() || !prompt.value.trim();
+			send.disabled = !parent || submitting || busy() || !prompt.value.trim();
 			send.title = busy() ? "侧边追问正在回答" : "发送侧边追问";
 			send.setAttribute("aria-label", send.title);
 		}
@@ -80,7 +80,11 @@
 			sync();
 		}
 		function showHead() {
-			by("side-chat-reference").textContent = chat ? `基于主会话已完成的 ${chat.turns} 轮对话` : "";
+			by("side-chat-reference").textContent = chat
+				? `基于主会话已完成的 ${chat.turns} 轮对话`
+				: "发送第一条后，以主会话已完成的对话为参考开始";
+			// 新建与关闭只对已有的侧边追问有意义。
+			by("side-chat-new").hidden = by("side-chat-close").hidden = !chat;
 		}
 		function reset(next) {
 			chat = next;
@@ -88,7 +92,7 @@
 			requests = new Map();
 			thread.reset();
 			showHead();
-			panel.sideAvailable(Boolean(chat));
+			panel.sideAvailable(Boolean(parent));
 			render();
 		}
 		async function reload() {
@@ -120,12 +124,17 @@
 			render(true);
 		}
 		async function submit(text = prompt.value) {
-			if (!chat || !text?.trim() || submitting || busy()) return;
+			if (!parent || !text?.trim() || submitting || busy()) return;
 			submitting = true;
 			const typed = text === prompt.value;
 			if (typed) prompt.value = "";
 			sync();
 			try {
+				// 还没有侧边追问时，第一条消息先以当前主会话新建一个；失败时原文放回输入框。
+				if (!chat && !(await create())) {
+					if (typed && !prompt.value) prompt.value = text;
+					return;
+				}
 				insert(await host.submitSideChat(parent, text));
 			} catch (error) {
 				if (typed && !prompt.value) prompt.value = text;

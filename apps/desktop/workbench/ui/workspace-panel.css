@@ -2,16 +2,19 @@
 	grid-column: 2 / -1;
 }
 
+/* 文件浏览器开关放在标题栏右端（停靠左侧时在左端），会话区不再为它单留一行。 */
 #workspace-panel-toggle {
 	flex: 0 0 28px;
-	align-self: end;
 	width: 28px;
 	height: 28px;
 	min-height: 28px;
-	margin: 4px 8px 4px 0;
+	margin-inline-start: auto;
 	padding: 0;
 	border-radius: 50%;
 	color: var(--muted);
+	/* 标题栏整体用于拖动窗口，按钮须单独接收点击。 */
+	-webkit-app-region: no-drag;
+	app-region: no-drag;
 }
 
 #workspace-panel-toggle[aria-expanded="true"] {
@@ -399,6 +402,10 @@
 	color: var(--ink);
 	font-weight: 600;
 }
+/* 上面的 display 会盖过 hidden 属性，没有当前会话时须显式隐藏侧边追问标签。 */
+.panel-tabs .button[hidden] {
+	display: none;
+}
 .panel-tabs .icon {
 	width: 14px;
 	height: 14px;
@@ -694,8 +701,8 @@
 }
 
 .workbench[data-panel-side="left"] #workspace-panel-toggle {
-	align-self: start;
-	margin: 4px 0 4px 8px;
+	order: -1;
+	margin-inline-start: 0;
 }
 
 .workbench[data-panel-side="left"] #workspace-panel-toggle .icon {

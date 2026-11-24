@@ -66,3 +66,27 @@ export function createRequestHistory(directory) {
 		display,
 	};
 }
+
+/**
+ * 推导最近一次压缩（自动或手动）在时间线中的位置：检查点之后第一条成功请求之前；全部已归纳时在最后一条成功请求之后。
+ * @param {object} snapshot 会话快照
+ * @returns {{before?: string, after?: string, trigger?: "auto" | "manual"} | undefined} 分隔所在的请求与压缩方式，无法确定时为空
+ */
+export function compactionMark(snapshot) {
+	const through = snapshot.contextCheckpoint?.through;
+	if (!Number.isSafeInteger(through) || through < 1) return;
+	// 早期记录没有 userMessageIndex，按消息上的 flowerRequestId 找回位置。
+	const tagged = new Map(
+		snapshot.messages.flatMap((message, index) => (message.flowerRequestId ? [[message.flowerRequestId, index]] : [])),
+	);
+	const trigger = snapshot.contextCheckpoint.trigger;
+	const succeeded = snapshot.requests.filter(({ status }) => status === "succeeded");
+	for (const record of succeeded) {
+		const index = record.userMessageIndex ?? tagged.get(record.requestId);
+		// 位置字段与检查点同时引入，缺位置的只会是会话开头的旧轮次，跳过后按后续轮次定位。
+		if (index === undefined) continue;
+		if (index >= through) return { before: record.requestId, trigger };
+	}
+	const last = succeeded.at(-1);
+	return last && { after: last.requestId, trigger };
+}

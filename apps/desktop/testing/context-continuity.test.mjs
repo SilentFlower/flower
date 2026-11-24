@@ -196,7 +196,11 @@ test("Desktop 子进程经真实 pi、回环网关和附件，摘要后重启续
 	assert.match(resumed.body, /预算金额 500（预算.xlsx 预算表!B7）[\s\S]*差额 37/);
 	const restored = await restart.host.call("history", { session });
 	// 自动压缩同样标出最近一次压缩的位置，且只有一处。
-	assert.equal(restored.filter(({ compactedBefore, compactedAfter }) => compactedBefore || compactedAfter).length, 1);
+	const marked = restored.filter(({ compactedBefore, compactedAfter }) => compactedBefore || compactedAfter);
+	assert.deepEqual(
+		marked.map(({ compactedBy }) => compactedBy),
+		["auto"],
+	);
 	const original = restored.find(({ requestId }) => requestId === id);
 	assert.equal(original.input, "核对两份附件并生成核对报告");
 	assert.deepEqual(original.attachments, attachments);

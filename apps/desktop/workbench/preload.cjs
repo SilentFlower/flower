@@ -20,7 +20,6 @@ contextBridge.exposeInMainWorld("flower", {
 	gitChanges: (id) => invoke("git-changes", id),
 	gitDifference: (id, path, group) => invoke("git-difference", id, path, group),
 	manageSidebar: (type, id, operation, value) => invoke("manage-sidebar", type, id, operation, value),
-	undoDeleteSession: (id) => invoke("undo-delete-session", id),
 	listWorkspaceEntries: (session, directory, offset) => invoke("list-workspace-entries", session, directory, offset),
 	previewWorkspaceFile: (session, path) => invoke("preview-workspace-file", session, path),
 	showPathMenu: (session, path, preview) => invoke("show-path-menu", session, path, preview),

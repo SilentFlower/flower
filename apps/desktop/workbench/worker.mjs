@@ -4,7 +4,7 @@ import { createAssistantMessageEventStream, PI_AI_VERSION } from "@earendil-work
 import { createAgentRuntime, RuntimeError } from "@flower-ai/agent-runtime";
 import { readStoredEvidence, resolveStoredSource } from "./attachment-assets.mjs";
 import { createReasoningPreview } from "./reasoning-preview.mjs";
-import { createRequestHistory } from "./request-history.mjs";
+import { compactionMark, createRequestHistory } from "./request-history.mjs";
 import { describeToolCall } from "./tool-display.mjs";
 import { previewWorkspaceFile, readAttachmentEvidence, workspaceEntryPath, workspaceTools } from "./workspace.mjs";
 
@@ -296,28 +296,6 @@ function init(frame) {
 	return { pi: PI_AI_VERSION, pid: process.pid };
 }
 
-/**
- * 推导最近一次压缩（自动或手动）在时间线中的位置：检查点之后第一条成功请求之前；全部已归纳时在最后一条成功请求之后。
- * @param {object} snapshot 会话快照
- * @returns {{before?: string, after?: string} | undefined} 分隔所在的请求，无法确定时为空
- */
-function compactionMark(snapshot) {
-	const through = snapshot.contextCheckpoint?.through;
-	if (!Number.isSafeInteger(through) || through < 1) return;
-	// 早期记录没有 userMessageIndex，按消息上的 flowerRequestId 找回位置。
-	const tagged = new Map(
-		snapshot.messages.flatMap((message, index) => (message.flowerRequestId ? [[message.flowerRequestId, index]] : [])),
-	);
-	const succeeded = snapshot.requests.filter(({ status }) => status === "succeeded");
-	for (const record of succeeded) {
-		const index = record.userMessageIndex ?? tagged.get(record.requestId);
-		if (index === undefined) return;
-		if (index >= through) return { before: record.requestId };
-	}
-	const last = succeeded.at(-1);
-	return last && { after: last.requestId };
-}
-
 function history(session) {
 	return runtime.getSession(session).then((snapshot) => {
 		const mark = compactionMark(snapshot);
@@ -356,6 +334,7 @@ function history(session) {
 				endedAt: record.endedAt,
 				compactedBefore: mark?.before === requestId,
 				compactedAfter: mark?.after === requestId,
+				compactedBy: mark && [mark.before, mark.after].includes(requestId) ? mark.trigger : undefined,
 			};
 		});
 	});

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createAgentRuntime } from "@flower-ai/agent-runtime";
 import { historyReference, sentImage } from "../workbench/attachment-history.mjs";
-import { createRequestHistory } from "../workbench/request-history.mjs";
+import { compactionMark, createRequestHistory } from "../workbench/request-history.mjs";
 import { readJson, writeJson } from "../workbench/storage.mjs";
 
 test("并发提交原子保存原话与附件，恢复时完整保留旧文字与用户亲写的同形句", async (t) => {
@@ -147,4 +147,36 @@ test("失败回执不会挤占旧截图的位置，相同输入或图片名也�
 	recent.userMessageIndex = 0;
 	assert.equal(sentImage(snapshot, recent, second), undefined);
 	assert.equal(sentImage(snapshot, old, second), undefined);
+});
+
+test("压缩分隔跳过缺位置的旧轮次，并带出压缩方式", () => {
+	const user = (flowerRequestId) => ({ role: "user", content: "问", ...(flowerRequestId && { flowerRequestId }) });
+	const reply = { role: "assistant", content: [] };
+	const messages = [user(), reply, user("b"), reply, user("c"), reply];
+	const requests = [
+		{ requestId: "a", status: "succeeded" },
+		{ requestId: "b", status: "succeeded", userMessageIndex: 2 },
+		{ requestId: "c", status: "succeeded" },
+	];
+	// 第一轮由旧版本创建，既无 userMessageIndex 也无 flowerRequestId；全部已归纳时分隔在最后一轮之后。
+	assert.deepEqual(
+		compactionMark({ messages, requests, contextCheckpoint: { through: 6, summary: "摘要", trigger: "manual" } }),
+		{
+			after: "c",
+			trigger: "manual",
+		},
+	);
+	assert.deepEqual(
+		compactionMark({ messages, requests, contextCheckpoint: { through: 3, summary: "摘要", trigger: "auto" } }),
+		{
+			before: "c",
+			trigger: "auto",
+		},
+	);
+	// 早期检查点没有压缩方式；没有检查点时不显示分隔。
+	assert.deepEqual(compactionMark({ messages, requests, contextCheckpoint: { through: 2, summary: "摘要" } }), {
+		before: "b",
+		trigger: undefined,
+	});
+	assert.equal(compactionMark({ messages, requests }), undefined);
 });

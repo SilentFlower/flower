@@ -292,7 +292,7 @@ export async function compactHistory(
 	const start = current?.through ?? 0;
 	if (start >= body.length) return current;
 	const summary = await summarize(model, stream, body.slice(start), current?.summary ?? "", { signal });
-	return { through: body.length, summary };
+	return { through: body.length, summary, trigger: "manual" };
 }
 
 function failureEvent(model: Model<Api>, signal: AbortSignal | undefined): AssistantMessageEvent {
@@ -341,7 +341,7 @@ export function createContextWindow(stream: RuntimeModelStream, initial?: Contex
 			const target = Math.floor(Math.min(limit, force ? size * 0.73 : limit * 0.92));
 			const through = chooseCut(context.body, start, target - tokens(context.system) - Math.ceil(summary * 1.5) - 24);
 			const brief = await summarize(model, stream, context.body.slice(start, through), checkpoint?.summary ?? "", options);
-			const next = { through, summary: brief };
+			const next: ContextCheckpoint = { through, summary: brief, trigger: "auto" };
 			const messages = project(context, next);
 			if (tokens(messages) > limit) throw new ContextWindowError(overflowText);
 			checkpoint = next;

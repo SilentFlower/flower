@@ -186,6 +186,8 @@ export interface ExternalOperation {
 export interface ContextCheckpoint {
 	through: number;
 	summary: string;
+	/** 产生方式：运行中超出窗口自动压缩，或用户手动压缩；早期检查点没有此字段。 */
+	trigger?: "auto" | "manual";
 }
 
 /** 当前授权模型对会话的本地占用估算。 */

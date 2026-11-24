@@ -133,13 +133,14 @@ RuntimeEvent += { type: "steered"; steerId: string };
 
 ### 1. Scope / Trigger
 
-- 触发：改动 `SubjectRuntime.compact`、`context-window.ts` 的 `compactHistory`，或宿主在时间线中推导压缩位置。
+- 触发：改动 `SubjectRuntime.compact`、`context-window.ts` 的 `compactHistory` 或自动压缩，`ContextCheckpoint` 字段，或宿主在时间线中推导压缩位置。
 
 ### 2. Signatures
 
 ```ts
 SubjectRuntime.compact(sessionId: string, signal?: AbortSignal): Promise<boolean>; // true 表示写入了新检查点
 export async function compactHistory(model, stream, history, checkpoint, signal): Promise<ContextCheckpoint | undefined>;
+interface ContextCheckpoint { through: number; summary: string; trigger?: "auto" | "manual" }
 ```
 
 ### 3. Contracts
@@ -147,7 +148,8 @@ export async function compactHistory(model, stream, history, checkpoint, signal)
 - 只对原生 `model` 授权生效；会话有活动运行或排队请求时拒绝。开始时占用 `active`（`runId = "compact:<uuid>"`），期间提交的请求只入队，结束后清除并 `schedule()`。
 - 摘要从现有 `through` 归纳到 `modelMessages(history)` 非系统部分的末尾，与已有摘要滚动合并，结果 `through = body.length`。没有新增可归纳的消息时不调用模型，返回 `false`。
 - 只写回 `contextCheckpoint`，`commit(snapshot, [])` 不发事件，不改 `requests` 与 `messages`。
-- 宿主推导压缩位置：`through` 与成功请求的 `userMessageIndex`（旧记录用消息上的 `flowerRequestId`）在 `snapshot.messages` 的同一下标空间；第一条 `index >= through` 的成功请求之前，或全部已归纳时最后一条成功请求之后。任一成功请求无法定位时不显示。
+- `trigger`：`compactHistory` 写 `"manual"`，运行中超出窗口的自动压缩（`createContextWindow`）写 `"auto"`；没有新对话时返回原检查点，方式不变。早期检查点没有此字段，读取方按「未知」处理，不得补写或拒绝。
+- 宿主推导压缩位置：`through` 与成功请求的 `userMessageIndex`（旧记录用消息上的 `flowerRequestId`）在 `snapshot.messages` 的同一下标空间；第一条 `index >= through` 的成功请求之前，或全部已归纳时最后一条成功请求之后，并带出 `trigger`。两者都没有的成功请求跳过（位置字段与检查点同版引入，只会是会话开头的旧轮次），不因此整体放弃。
 
 ### 4. Validation & Error Matrix
 
@@ -160,10 +162,13 @@ export async function compactHistory(model, stream, history, checkpoint, signal)
 
 ### 5. Scenarios and Examples
 
-- Normal：两轮后压缩 → `true`，下一轮请求以「此前会话的检查点」开头，不再包含第一轮原文；再次压缩 → `false` 且不调用模型。
+- Normal：两轮后压缩 → `true`、`trigger: "manual"`，下一轮请求以「此前会话的检查点」开头，不再包含第一轮原文；再次压缩 → `false` 且不调用模型。
+- Base：会话第一轮由旧版本创建、无位置字段，其后两轮有 `userMessageIndex`；`through` 覆盖全部消息 → 分隔在最后一轮之后。
 - Incorrect use：在串行区内直接 await 摘要，压缩期间的提交、历史查询全部卡住，宿主 20 秒调用超时会把工作进程判为失去响应。
 - Correct handling：串行区内只做校验与占位，摘要在区外执行，结束时再进串行区写回并释放活动位；宿主为压缩调用单独放宽超时。
+- Incorrect use：遇到无法定位的成功请求就返回空，会话开头只要有一条旧轮次，之后的压缩永远不显示分隔（第二档试用中出现）。
 
 ### 6. Tests Required
 
-- `packages/agent-runtime/test/context-window.test.ts`「手动压缩」：全量归纳与续接、无新对话不调用模型、失败与取消保留检查点、压缩期间提交的请求排队并在之后完成、运行中与 `createExecution` 拒绝。
+- `packages/agent-runtime/test/context-window.test.ts`「手动压缩」：全量归纳与续接（检查点 `trigger` 为 `manual`）、无新对话不调用模型、失败与取消保留检查点、压缩期间提交的请求排队并在之后完成、运行中与 `createExecution` 拒绝；自动压缩用例断言 `trigger` 为 `auto`。
+- `apps/desktop/testing/request-history.test.mjs`：`compactionMark` 跳过缺位置的旧轮次、带出自动/手动方式、早期检查点方式为空、无检查点不显示。

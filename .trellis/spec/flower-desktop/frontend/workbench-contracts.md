@@ -193,6 +193,7 @@ sideChats: [{ id, parent, turns, busy }]
 - 只收文字、不排队：回答中提交被拒；`queue-to-side-chat` 取出排队消息作为文字发送，失败时放回队首，附件不随行并在不再被引用时回收。
 - 删除：替换、关闭、删除主会话或工作区都走 `dropSideChat`：移出列表、登记 `deletions`、取消其活动请求；仍在运行的登记 `retiredSideChats`，其终态写盘后再登记一次删除并清理，防止收尾提交重新写出文件。启动时父会话已不存在的侧边追问直接登记删除。
 - 事件：侧边追问的终态不触发系统通知与未读标记；渲染层按 `state().sideChats` 的 ID 把事件交给侧边追问，`runtimeRevision` 变化时重读其历史。
+- 入口：回复选区、队列项「更多」与右栏「侧边追问」标签。标签按是否有当前主会话显示（`sideAvailable(Boolean(parent))`），不看是否已建立；未建立时页头显示「发送第一条后，以主会话已完成的对话为参考开始」、隐藏新建与关闭，发送按钮按 `parent` 启用。页内发送时先 `openSideChat(parent)` 再 `submitSideChat`，新建失败（如首轮未完成）由 Toast 说明并把原文放回输入框；Main 侧契约不变。
 
 ### 4. Validation & Error Matrix
 
@@ -210,10 +211,13 @@ sideChats: [{ id, parent, turns, busy }]
 - Base：重启后侧边追问仍在，首次读取历史时以只读权限重新登记。
 - Incorrect use：把侧边追问放进 `workbench.sessions`，会出现在侧栏、搜索与中断横幅中，并被当作普通会话通知。
 - Correct handling：单独保存在 `sideChats`，所有入口经 `sideChatOf(parent)` 定位。
+- Incorrect use：标签靠 `hidden` 隐藏，但 `.panel-tabs .button { display: flex }` 盖过了它，未建立时标签仍可点，进入后发送按钮因 `!chat` 永远停用（第二档试用中出现）。
+- Correct handling：为 `.panel-tabs .button[hidden]` 补 `display: none`；页内未建立时首条消息即新建。
 
 ### 6. Tests Required
 
 - `testing/queue-side-chat.test.mjs`：首轮完成前打开被拒；分叉文件含主会话消息；侧边请求的系统提示含侧边说明且工具不含 `write_report`；关闭删除文件；删除主会话连带删除。
+- Windows `verify-ux-tier2-windows.mjs`「侧边追问标签直接发送」：关闭后标签仍**可见**（用 `isVisible`，不能只查 `hidden` 属性），页内发送后建立并得到回答。
 
 ---
 
@@ -263,7 +267,7 @@ export function rankWorkspaceFiles(files, query, limit = 50)
 
 ### 1. Scope / Trigger
 
-- 触发：改动 Main 的 `indexedTurns` / `search-sessions` / `resume-interrupted` / `dismiss-interrupted` / `compact-context`，`session-search.mjs`，worker 的 `compactionMark`，或渲染层 `searchBodies` / `openHit` / `thread().reveal`。
+- 触发：改动 Main 的 `indexedTurns` / `search-sessions` / `resume-interrupted` / `dismiss-interrupted` / `compact-context`，`session-search.mjs`，`request-history.mjs` 的 `compactionMark`，或渲染层 `searchBodies` / `openHit` / `thread().reveal`。
 
 ### 2. Signatures
 
@@ -274,8 +278,8 @@ compactContext(session)      // → boolean；runtime-host 调用超时 600 000 
 cancelCompaction(session)
 // state()
 interrupted: [{ id, title }]; compacting: boolean
-// history 行
-compactedBefore: boolean; compactedAfter: boolean
+// history 行；compactedBy 只在带分隔的那一行有值，早期检查点为 undefined
+compactedBefore: boolean; compactedAfter: boolean; compactedBy?: "auto" | "manual"
 ```
 
 ### 3. Contracts
@@ -285,6 +289,8 @@ compactedBefore: boolean; compactedAfter: boolean
 - 「全部继续」逐个取最后一条未完成请求，以原输入与原附件重新发送；会话有保留的排队消息时插到队首再恢复队列，保证先续跑中断的任务。
 - 压缩期间 `sessionBusy` 为真：新消息排队、模型设置不可改；结束后补派发队列。
 - 渲染层：正文结果按查询序号丢弃过期响应，只采用与当前输入一致的结果；点击片段先记下 `pendingReveal`，会话历史渲染后由 `thread().reveal` 跳转并用 `CSS.highlights`（找不到时整轮提示）高亮约 2 秒，覆盖待恢复的阅读位置。
+- 入口文案：侧栏按钮「搜索」、输入框提示「搜索标题或内容…」；去空白后恰好 1 个码点时显示 `#session-search-hint`「输入两个字以上会同时搜索对话内容」。片段前缀 `.session-snippet-kind` 为「提问」或「回复」。
+- 压缩分隔：文案为「以上对话已自动压缩为摘要」「以上对话已手动压缩为摘要」，`compactedBy` 缺失时为「以上对话已压缩为摘要」；定位规则见 agent-runtime `event-persistence.md`「手动压缩」。
 
 ### 4. Validation & Error Matrix
 
@@ -306,49 +312,49 @@ compactedBefore: boolean; compactedAfter: boolean
 
 - `testing/session-search.test.mjs`：原话优先、片段截取与省略号、大小写、上限、中断判定。
 - `testing/queue-side-chat.test.mjs`：正文命中与片段字段、单字不搜、侧边追问不被搜到、删除后不命中；运行中拒绝压缩、手动压缩与分隔位置、不重复压缩；重启后的中断横幅、忽略、全部继续的执行顺序。
-- `testing/context-continuity.test.mjs`：自动压缩后历史中只有一处压缩标记。
+- `testing/context-continuity.test.mjs`：自动压缩后历史中只有一处压缩标记，`compactedBy` 为 `auto`；`queue-side-chat.test.mjs` 手动压缩后为 `manual`。
+- `testing/request-history.test.mjs`：`compactionMark` 旧轮次跳过与方式带出。
 
 ---
 
-## Scenario: 删除会话的撤销期
+## Scenario: 删除会话先确认
 
 ### 1. Scope / Trigger
 
-- 触发：改动 `manage-sidebar` 的会话删除、`undo-delete-session`、`cleanDeleted`、`finishDelete` 或 `retiredSessions`。
+- 触发：改动 `manage-sidebar` 的会话或工作区删除、`cleanDeleted`、`dropSideChat` 或渲染层 `openSidebarMenu` 的删除分支。第二档曾改为「立即删除 + 8 秒撤销」，试用后按用户决定撤回（R11）。
 
 ### 2. Signatures
 
 ```js
-manageSidebar("session", id, "delete")  // 立即移出，不再要求会话空闲
-undoDeleteSession(id)                   // 撤销期内恢复
-// Main 内部
-pendingDeletes: Map<id, { owner, index, sides, selected, timer }>  // 8 秒
+manageSidebar("session", id, "delete")          // 渲染层先经 #sidebar-dialog 确认
+manageSidebar("workspace", id, "delete", count) // count 须等于当前成员数
 ```
 
 ### 3. Contracts
 
-- 删除时先把会话与其侧边追问移出列表，并把它们的 ID 写入 `workbench.deletions` 持久化，再停止其运行、排队请求与压缩；8 秒后 `finishDelete` 物理删除。期间退出应用即视为确认，下次启动的 `cleanDeleted` 清理。
-- `cleanDeleted` 跳过撤销期内保留的 ID，只清理其余部分，`deletions` 中保留这些 ID。
-- 撤销：移除这些 ID 的删除登记，把会话插回原位置、恢复侧边追问；所属工作区已被移除时重新登记；留下的排队消息置为暂停；原先选中则重新选中。
-- 物理删除时仍在收尾的运行登记到 `retiredSessions`，终态写盘后再清理一次，防止收尾提交重新写出记录文件。移除工作区仍要求成员空闲并先确认。
+- 渲染层：会话与工作区的删除都打开确认框；会话文案「将删除「<标题>」的聊天记录和附件副本，删除后无法恢复。」。不显示撤销 Toast。
+- Main：成员中有 `sessionBusy`（运行、排队请求、压缩）时拒绝；否则移出会话、经 `dropSideChat` 移出其侧边追问、清理正文索引与中断标记、改选同工作区的其他会话，持久化 `deletions` 后立即 `cleanDeleted` 删除记录文件与附件目录。
+- `cleanDeleted` 失败时会话已移出侧栏，报「已从侧栏移除。部分本机记录将在下次启动时清理。」，下次启动按 `deletions` 继续清理。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 | --- | --- |
-| 撤销期已过或会话不在撤销期 | 「会话已删除，无法撤销。」 |
-| 撤销时保存失败 | 回到撤销期并重新计时，报原错误 |
+| 会话运行或排队中 | 「请先结束此处正在运行或排队的任务。」 |
+| 工作区会话数已变化 | 「工作区的会话数已变化，请重新确认。」 |
+| 记录文件清理失败 | 「已从侧栏移除。部分本机记录将在下次启动时清理。」 |
 
 ### 5. Scenarios and Examples
 
-- Normal：删除 → Toast「撤销」→ 会话与侧边追问回到原位，历史可读。
-- Base：删除后立刻退出 → 重启时记录文件已清理。
-- Incorrect use：撤销期内另一处删除（如关闭侧边追问）调用 `cleanDeleted`，按全部 `deletions` 物理删除，把撤销期内的会话也删掉了。
-- Correct handling：`cleanDeleted` 跳过 `pendingDeletes` 持有的 ID。
+- Normal：右键「删除会话」→ 确认框 → 确认后会话与侧边追问的记录文件消失，正文不再被搜到。
+- Base：会话运行中删除 → 报先结束任务，会话保留。
+- Incorrect use：为「可撤销」推迟物理删除，`cleanDeleted` 须跳过持有的 ID，其他删除路径（如关闭侧边追问）一调用就会误删或漏删，退出时机也要单独处理。
+- Correct handling：一律确认后立即删除，一个删除路径。
 
 ### 6. Tests Required
 
-- `testing/queue-side-chat.test.mjs`：删除后列表为空而文件仍在、撤销恢复会话与侧边追问并重新选中、再次删除后重启文件已清理、撤销期外撤销报错。
+- `testing/queue-side-chat.test.mjs`：删除后列表与侧边追问为空、两个记录文件立即不存在、正文搜索不再命中。
+- Windows `verify-ux-tier2-windows.mjs`「删除会话确认」：确认框含「删除后无法恢复」，确认后会话消失，无「撤销」Toast。
 
 ---
 
