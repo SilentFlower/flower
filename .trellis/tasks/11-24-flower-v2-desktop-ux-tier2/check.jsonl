@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/11-24-flower-v2-desktop-ux-tier2/research/tier2-code-facts.md", "reason": "核对实现是否遵守队列、检查点、会话文件与 IPC 约束"}
+{"file": ".trellis/spec/agent-runtime/backend/event-persistence.md", "reason": "核对 steered 事件、steers 字段与双宿主兼容"}
+{"file": ".trellis/spec/flower-desktop/frontend/index.md", "reason": "核对 preload/Main 成对校验、假 electron 模块导出、滚动条与浮层规则"}
+{"file": ".trellis/spec/flower-desktop/frontend/workbench-contracts.md", "reason": "核对新 IPC 的当前会话与路径校验沿用既有契约"}
+{"file": "apps/desktop/workbench/ui/README.md", "reason": "核对组件表更新与窄窗、输入法、切换会话验收"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层字段与双宿主兼容检查"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "提交分流、重试与继续、附件引用、文件清单的复用检查"}
