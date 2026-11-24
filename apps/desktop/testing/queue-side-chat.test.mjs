@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,6 +66,7 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	const steer = await api.submit(id, "改成二月");
 	assert.ok(second.queued && steer.queued);
 	let state = await desktop.state((current) => current.queue?.steerable);
+	await assert.rejects(api.compactContext(id), /会话正在运行/);
 	assert.deepEqual(
 		state.queue.items.map(({ input }) => input),
 		["第二问", "改成二月"],
@@ -110,6 +112,14 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	assert.equal(history.at(-1).input, "第四问");
 	await terminal(history.at(-1).requestId);
 
+	// 手动压缩：空闲时把迄今的对话归纳为摘要，分隔落在最后一轮之后；没有新对话时不再压缩。
+	assert.equal(await api.compactContext(id), true);
+	history = await api.history(id);
+	assert.equal(history.at(-1).compactedAfter, true);
+	assert.equal(history.filter(({ compactedBefore, compactedAfter }) => compactedBefore || compactedAfter).length, 1);
+	assert.equal(await api.compactContext(id), false);
+	assert.equal((await api.state()).compacting, false);
+
 	// 侧边追问：复制已完成的上下文，只读工具集，关闭后删除记录。
 	const side = await api.openSideChat(id);
 	assert.equal(side.turns, 3);
@@ -126,7 +136,7 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	assert.equal((await terminal(asked.requestId)).status, "succeeded");
 	assert.match(systems.at(-1), /当前是侧边追问/);
 	assert.equal(fixture.observations.tools.at(-1).includes("write_report"), false);
-	assert.equal(fixture.observations.tools.at(-2).includes("write_report"), true);
+	assert.ok(fixture.observations.tools.slice(0, -1).some((names) => names.includes("write_report")));
 	const sideHistory = await api.sideChatHistory(id);
 	assert.deepEqual(
 		sideHistory.map(({ input, text: reply }) => [input, reply]),
@@ -137,6 +147,16 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	assert.ok(forked.messages.some((message) => text(message).includes("慢：第一问")));
 	// 主会话的历史不受侧边追问影响。
 	assert.equal((await api.history(id)).length, 4);
+	// 正文搜索：两个字起匹配提问与回复，侧边追问内容不被搜到。
+	const found = await api.searchSessions("二月核对");
+	assert.deepEqual(
+		found.map(({ id: key, snippets }) => [key, snippets[0].field, snippets[0].match]),
+		[[id, "text", "二月核对"]],
+	);
+	assert.equal(found[0].snippets[0].requestId, first.requestId);
+	assert.deepEqual(await api.searchSessions("侧边回答"), []);
+	assert.deepEqual(await api.searchSessions("二"), []);
+	await assert.rejects(api.searchSessions(7), /搜索内容无效/);
 	await api.closeSideChat(id);
 	await assert.rejects(access(sideFile));
 	assert.deepEqual((await api.state()).sideChats, []);
@@ -155,6 +175,8 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	await desktop.state((current) => !current.queue.items.length);
 	history = await api.history(id);
 	assert.equal(history.at(-1).input, "修改后的原文");
+	// 压缩后的第一条成功请求之前显示分隔。
+	assert.equal(history.find(({ compactedBefore }) => compactedBefore)?.input, "慢：编辑期间运行");
 	await terminal(history.at(-1).requestId);
 
 	// 重启后排队消息保留并暂停。
@@ -168,6 +190,25 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 		["第六问"],
 	);
 	assert.equal(state.queue.paused, true);
+	// 运行中退出的会话在重启后列入中断横幅；全部继续时先续跑中断的请求，再发送保留的排队消息。
+	state = await desktop.state((current) => current.interrupted.length);
+	assert.deepEqual(state.interrupted, [{ id, title: state.sessions[0].title }]);
+	await assert.rejects(api.resumeInterrupted([randomUUID()]), /中断任务已变化/);
+	// 忽略后本次运行不再显示横幅；仍可从会话内继续。
+	await api.dismissInterrupted();
+	assert.deepEqual((await api.state()).interrupted, []);
+	await api.resumeInterrupted([id]);
+	assert.deepEqual((await api.state()).interrupted, []);
+	await desktop.state((current) => !current.queue.items.length && !current.sessions[0].busy, 20000);
+	history = await api.history(id);
+	assert.deepEqual(
+		history.slice(-3).map(({ input, status }) => [input, status]),
+		[
+			["慢：第五问", "interrupted"],
+			["慢：第五问", "succeeded"],
+			["第六问", "succeeded"],
+		],
+	);
 
 	// 删除主会话时一并删除其侧边追问记录。
 	const another = await api.openSideChat(id);
@@ -176,6 +217,7 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	await api.manageSidebar("session", id, "delete");
 	await desktop.state((current) => !current.sideChats.length && !current.sessions.length);
 	await assert.rejects(access(anotherFile));
+	assert.deepEqual(await api.searchSessions("二月核对"), []);
 });
 
 function delay(ms) {

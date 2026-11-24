@@ -63,7 +63,14 @@ export function createRuntimeHost({ fork, directory, model, onEvent, onReasoning
 		if (!controller.signal.aborted) send({ type: "write-decision", id: frame.id, decision });
 	}
 
-	function call(type, fields = {}) {
+	/**
+	 * 向工作进程发送命令并等待响应；超时视为进程失去响应并关闭。
+	 * @param {string} type 命令
+	 * @param {object} [fields] 命令字段
+	 * @param {number} [timeoutMs] 超时，手动压缩等模型调用需要更长时间
+	 * @returns {Promise<unknown>} 响应值
+	 */
+	function call(type, fields = {}, timeoutMs = 20000) {
 		if (closed) return Promise.reject(new Error("当前工作进程已关闭"));
 		const id = randomUUID();
 		return new Promise((resolve, reject) => {
@@ -72,7 +79,7 @@ export function createRuntimeHost({ fork, directory, model, onEvent, onReasoning
 				reject(new Error("工作进程响应超时"));
 				close();
 				onExit();
-			}, 20000);
+			}, timeoutMs);
 			pending.set(id, { resolve, reject, timeout });
 			send({ id, type, ...fields });
 		});

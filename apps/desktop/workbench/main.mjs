@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { lstat, rm } from "node:fs/promises";
+import { lstat, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -44,6 +44,7 @@ import {
 } from "./model-library.mjs";
 import { createRuntimeHost } from "./runtime-host.mjs";
 import { createSessionQueue, storedQueue } from "./session-queue.mjs";
+import { interruptedTurns, searchableTurns, searchSnippets } from "./session-search.mjs";
 import { readJson, writeJson } from "./storage.mjs";
 import { containsBounds, expandedBounds, restoredBounds, roundingCorrection } from "./window-fit.mjs";
 import { readWindowState, restorableBounds, savedBounds, writeWindowState } from "./window-state.mjs";
@@ -136,6 +137,8 @@ export function launchWorkbench() {
 	let writes = Promise.resolve();
 	let taskChanges = Promise.resolve();
 	const activeRequests = new Map();
+	// 正在手动压缩的会话：视为忙碌，新消息排队，结束后派发。
+	const compacting = new Set();
 	const attention = createAttention();
 	// 系统通知在被点击前需要保持引用，否则可能被回收而丢失点击回调。
 	const notices = new Set();
@@ -147,6 +150,11 @@ export function launchWorkbench() {
 	const approvals = new Map();
 	// 已关闭但仍有运行收尾的侧边追问，终态写盘后再清理一次记录文件。
 	const retiredSideChats = new Set();
+	// 正文索引：会话 ID → 记录文件的修改时间、大小与可搜索轮次。搜索与启动时的中断识别共用，文件未变时复用。
+	const bodyIndex = new Map();
+	// 启动时识别出的上次被中断的会话；用户继续、重新发送或选择忽略后移除。
+	const interrupted = new Set();
+	let interruptedDismissed = false;
 	const modelCatalogs = new Map();
 	const modelDiscovery = new WeakMap();
 	const queue = createSessionQueue({
@@ -195,6 +203,12 @@ export function launchWorkbench() {
 			modelSettings: publicService(settings, catalogFor(settings)),
 			modelServices: library.services.map((service) => publicService(service, catalogFor(service))),
 			queue: workbench.selected ? queue.view(workbench.selected) : undefined,
+			compacting: compacting.has(workbench.selected),
+			interrupted: interruptedDismissed
+				? []
+				: workbench.sessions
+						.filter(({ id }) => interrupted.has(id) && !sessionBusy(id))
+						.map(({ id, title }) => ({ id, title })),
 			sideChats: workbench.sideChats.map(({ id, parent, turns }) => ({ id, parent, turns, busy: sessionBusy(id) })),
 			gatewayError: workbenchError || gatewayError,
 			workspaces: workbench.workspaces.map(({ workspace, title, pinned }) => ({
@@ -291,6 +305,30 @@ export function launchWorkbench() {
 		if (workbench.deletions.length) await cleanDeleted().catch(() => {});
 		initialized = true;
 		announce();
+		// 工作台就绪后在后台扫描记录文件；处理器等待的初始化不包含这一步，不拖慢首次交互。
+		void (async () => {
+			for (const { id } of [...workbench.sessions]) if (interruptedTurns(await indexedTurns(id))) interrupted.add(id);
+			if (interrupted.size) announce();
+		})().catch(() => {});
+	}
+
+	/**
+	 * 读取会话的可搜索轮次；记录文件的修改时间与大小未变时复用索引。
+	 * @param {string} id 会话 ID
+	 * @returns {Promise<ReturnType<typeof searchableTurns>>} 轮次，文件不存在或无法读取时为空
+	 */
+	async function indexedTurns(id) {
+		const file = join(sessionsDirectory, `${id}.json`);
+		const info = await stat(file).catch(() => undefined);
+		if (!info) {
+			bodyIndex.delete(id);
+			return [];
+		}
+		const cached = bodyIndex.get(id);
+		if (cached?.mtimeMs === info.mtimeMs && cached.size === info.size) return cached.turns;
+		const turns = searchableTurns(await readJson(file).catch(() => undefined));
+		bodyIndex.set(id, { mtimeMs: info.mtimeMs, size: info.size, turns });
+		return turns;
 	}
 
 	async function record() {
@@ -345,7 +383,7 @@ export function launchWorkbench() {
 	}
 
 	function sessionBusy(id) {
-		return [...activeRequests.values()].some(({ session }) => session === id);
+		return compacting.has(id) || [...activeRequests.values()].some(({ session }) => session === id);
 	}
 
 	function isCurrentRun({ session, requestId, runId }) {
@@ -532,7 +570,7 @@ export function launchWorkbench() {
 	}
 
 	function requireModelChange(revision) {
-		if (activeRequests.size) throw new Error("请等待运行和排队任务结束后再更改模型设置。");
+		if (activeRequests.size || compacting.size) throw new Error("请等待运行和排队任务结束后再更改模型设置。");
 		if (revision !== modelRevision) throw new Error("模型设置已变化，请重新打开模型选择。");
 	}
 
@@ -877,6 +915,10 @@ export function launchWorkbench() {
 				const deleted = new Set(members.map((entry) => entry.id));
 				workbench.sessions = workbench.sessions.filter((entry) => !deleted.has(entry.id));
 				for (const side of workbench.sideChats.filter((entry) => deleted.has(entry.parent))) dropSideChat(side);
+				for (const key of deleted) {
+					bodyIndex.delete(key);
+					interrupted.delete(key);
+				}
 				if (space) workbench.workspaces = workbench.workspaces.filter((entry) => entry !== item);
 				if (deleted.has(workbench.selected))
 					selectWorkspaceSession(
@@ -1264,6 +1306,28 @@ export function launchWorkbench() {
 			return runtime.call("context-usage", { session: id });
 		}),
 	);
+	// 压缩要等摘要模型返回，不占用会话变更的串行队列；期间会话视为忙碌。
+	handle("compact-context", async (id) => {
+		requireWritableWorkbench();
+		findSession(id);
+		if (id !== workbench.selected) throw new Error("会话已切换，请在当前会话操作。");
+		if (!model) throw new Error("请先配置模型。");
+		if (sessionBusy(id)) throw new Error("会话正在运行，结束后再压缩。");
+		compacting.add(id);
+		announce();
+		try {
+			const runtime = await getSessionRuntime(id);
+			return await runtime.call("compact", { session: id }, 600_000);
+		} finally {
+			compacting.delete(id);
+			announce();
+			queue.schedule(id);
+		}
+	});
+	handle("cancel-compact", (id) => {
+		findSession(id);
+		if (compacting.has(id)) return host?.call("cancel-compact", { session: id });
+	});
 	handle("copy-reply", async (id, requestId) => {
 		if (typeof requestId !== "string" || !uid.test(requestId)) throw new Error("无效请求标识");
 		const runtime = await getSessionRuntime(id);
@@ -1293,8 +1357,19 @@ export function launchWorkbench() {
 		requireWritableWorkbench();
 		if (workbench.selected !== id) throw new Error("会话已切换，请在当前会话操作。");
 		findSession(id);
+		return unfinishedRequest(id, requestId);
+	}
+
+	/**
+	 * 读取会话中可重新发送的未完成请求及其原附件。
+	 * @param {string} id 会话 ID
+	 * @param {string} [requestId] 请求 ID，缺省时取最后一条
+	 * @returns {Promise<{runtime: object, record: object, refs: object[]}>} 运行时、历史行与原附件
+	 */
+	async function unfinishedRequest(id, requestId) {
 		const runtime = await getSessionRuntime(id);
-		const record = (await runtime.call("history", { session: id })).find((entry) => entry.requestId === requestId);
+		const rows = await runtime.call("history", { session: id });
+		const record = requestId ? rows.find((entry) => entry.requestId === requestId) : rows.at(-1);
 		if (!record || !["failed", "cancelled", "interrupted", "denied"].includes(record.status) || !record.input)
 			throw new Error("只能重试或编辑未完成的请求。");
 		// 早期记录只有单个工作区文件字段，按同样的引用格式恢复。
@@ -1327,6 +1402,7 @@ export function launchWorkbench() {
 			// 附件随消息离开草稿；提交或入队失败时放回。
 			if (refs.length) await writeDraft(owner, []);
 			try {
+				interrupted.delete(id);
 				return await queue.accept(owner, text, refs);
 			} catch (error) {
 				if (refs.length) await writeDraft(owner, refs);
@@ -1340,9 +1416,58 @@ export function launchWorkbench() {
 			if (!model) throw new Error("请先配置模型。");
 			requireImageSupport(refs);
 			// 以原输入和原附件新建一轮，原记录保留在历史中，当前草稿不受影响；会话忙时排队。
+			interrupted.delete(id);
 			return queue.accept(findSession(id), record.input, refs);
 		}),
 	);
+	handle("search-sessions", async (query) => {
+		if (typeof query !== "string" || query.length > 180) throw new Error("搜索内容无效");
+		const needle = query.trim();
+		// 单字命中过多，只按名称匹配；正文从两个字起搜。
+		if ([...needle].length < 2) return [];
+		const results = [];
+		for (const { id } of workbench.sessions) {
+			const snippets = searchSnippets(await indexedTurns(id), needle);
+			if (snippets.length) results.push({ id, snippets });
+			if (results.length >= 50) break;
+		}
+		return results;
+	});
+	handle("resume-interrupted", (ids) =>
+		serializeTaskChange(async () => {
+			requireWritableWorkbench();
+			if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || !interrupted.has(id)))
+				throw new Error("中断任务已变化，请重新查看。");
+			if (!model) throw new Error("请先配置模型。");
+			const failed = [];
+			for (const id of ids) {
+				try {
+					const owner = findSession(id);
+					const { record, refs } = await unfinishedRequest(id);
+					requireImageSupport(refs);
+					// 继续的任务排在重启后保留的排队消息之前。
+					if (storedQueue(owner).length) {
+						await queue.restore(id, {
+							id: randomUUID(),
+							input: record.input,
+							...(refs.length && { attachments: refs }),
+							createdAt: Date.now(),
+						});
+						await queue.resume(id);
+					} else await queue.accept(owner, record.input, refs);
+					interrupted.delete(id);
+				} catch {
+					failed.push(workbench.sessions.find((entry) => entry.id === id)?.title ?? id);
+				}
+			}
+			announce();
+			if (failed.length) throw new Error(`以下任务未能继续：${failed.join("、")}`);
+		}),
+	);
+	handle("dismiss-interrupted", () => {
+		interruptedDismissed = true;
+		announce();
+	});
 	/** 校验排队消息标识并取当前会话。@param {string} id 会话 ID @param {string} itemId 排队消息 ID @returns {object} 会话记录 */
 	function queueOwner(id, itemId) {
 		if (typeof itemId !== "string" || !uid.test(itemId)) throw new Error("无效的排队消息。");

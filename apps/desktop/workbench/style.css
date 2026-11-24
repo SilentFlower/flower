@@ -1790,7 +1790,7 @@ summary:focus-visible {
 	height: 9px;
 }
 .context-meter:hover .context-detail,
-.context-ring:focus-visible + .context-detail {
+.context-meter:focus-within .context-detail {
 	opacity: 1;
 	visibility: visible;
 	transform: none;
@@ -1826,6 +1826,35 @@ summary:focus-visible {
 }
 .context-detail p {
 	margin: 0;
+}
+.context-detail .context-compact {
+	width: 100%;
+	min-height: 28px;
+	margin-top: 8px;
+	padding: 3px 8px;
+	border: 1px solid var(--line);
+	color: var(--ink);
+	font-size: 12px;
+}
+.context-detail .context-compact[data-compacting] {
+	color: var(--accent);
+}
+/* 最近一次压缩的位置：以上对话已归纳为摘要，后续轮次以摘要续接。 */
+.compaction-divider {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--muted);
+	font-size: 12px;
+}
+.compaction-divider[hidden] {
+	display: none;
+}
+.compaction-divider::before,
+.compaction-divider::after {
+	content: "";
+	flex: 1;
+	border-top: 1px dashed var(--edge);
 }
 @media (prefers-reduced-motion: no-preference) {
 	.context-ring-value {
@@ -2296,4 +2325,86 @@ summary:focus-visible {
 	padding: 6px 9px;
 	color: var(--muted);
 	font-size: 13px;
+}
+/* 正文搜索：命中片段列在会话行下方，关键词加底色。 */
+.session-snippets {
+	display: grid;
+	gap: 1px;
+	margin: 0 0 4px 27px;
+}
+.button.session-snippet {
+	display: block;
+	width: 100%;
+	min-height: 0;
+	padding: 3px 8px;
+	overflow: hidden;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.5;
+	text-align: left;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.session-snippet mark,
+::highlight(flower-search) {
+	background-color: color-mix(in srgb, var(--accent) 24%, transparent);
+	color: var(--ink);
+}
+.session-snippet mark {
+	border-radius: 2px;
+}
+@media (prefers-reduced-motion: no-preference) {
+	.task[data-located] {
+		animation: turn-located 1.2s ease-out;
+	}
+}
+.task[data-located] {
+	border-radius: var(--radius);
+	outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+	outline-offset: 6px;
+}
+@keyframes turn-located {
+	from {
+		outline-color: var(--accent);
+	}
+}
+/* 中断横幅：侧栏顶部，列出上次被中断的会话。 */
+.interrupted-banner:not([hidden]) {
+	display: grid;
+	gap: 6px;
+	margin: 2px 8px 10px;
+	padding: 10px 10px 8px;
+	border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line));
+	border-radius: var(--radius);
+	background: var(--surface);
+	font-size: 13px;
+}
+#interrupted-title {
+	margin: 0;
+	color: var(--warn);
+	font-weight: 600;
+}
+#interrupted-list {
+	display: grid;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.button.interrupted-session {
+	width: 100%;
+	min-height: 26px;
+	padding: 2px 6px;
+	overflow: hidden;
+	text-align: left;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.interrupted-actions {
+	display: flex;
+	gap: 6px;
+}
+.interrupted-actions .button {
+	min-height: 28px;
+	padding: 3px 10px;
+	font-size: 12px;
 }

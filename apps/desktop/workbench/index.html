@@ -89,13 +89,21 @@
 			<div class="sidebar-main" id="sidebar-main">
 				<button class="button new-thread" id="new-session" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg>新建会话</button>
 				<div class="sidebar-scroll" id="sidebar-scroll">
+					<section class="interrupted-banner" id="interrupted-banner" aria-labelledby="interrupted-title" hidden>
+						<p id="interrupted-title"></p>
+						<ul id="interrupted-list" aria-label="中断的会话"></ul>
+						<div class="interrupted-actions">
+							<button class="button primary" id="interrupted-resume" type="button">全部继续</button>
+							<button class="button quiet" id="interrupted-dismiss" type="button">忽略</button>
+						</div>
+					</section>
 					<div class="sidebar-actions">
 						<button class="button workspace-choice" id="workspace" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg><span id="workspace-label">选择工作区</span><small id="workspace-hint" hidden>点击切换</small></button>
 						<button class="button" id="session-search-toggle" type="button" aria-controls="session-search-box" aria-keyshortcuts="Control+K Meta+K"><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg>搜索会话</button>
 						<div class="session-search" id="session-search-box" hidden>
 							<svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg>
-							<label class="sr-only" for="session-search">按名称或工作区搜索会话</label>
-							<input id="session-search" type="search" maxlength="180" placeholder="搜索会话或工作区…" autocomplete="off" aria-keyshortcuts="Control+K Meta+K">
+							<label class="sr-only" for="session-search">按名称、工作区或对话内容搜索会话</label>
+							<input id="session-search" type="search" maxlength="180" placeholder="搜索会话、工作区或对话内容…" autocomplete="off" aria-keyshortcuts="Control+K Meta+K">
 							<button class="button icon-button" id="session-filter-open" type="button" aria-label="搜索条件" title="搜索条件" aria-haspopup="dialog" popovertarget="session-filter"><svg class="icon" aria-hidden="true"><use href="#icon-filter"/></svg></button>
 						</div>
 					</div>
@@ -183,11 +191,12 @@
 							</div>
 							<div class="composer-end">
 								<div class="context-meter" id="context-meter" hidden>
-									<button class="button context-ring" id="context-usage" type="button" aria-describedby="context-detail"><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="context-ring-track" cx="10" cy="10" r="7.5"/><circle class="context-ring-value" id="context-ring-value" cx="10" cy="10" r="7.5" pathLength="100"/></svg><span id="context-percent"></span></button>
-									<div class="context-detail" id="context-detail" role="tooltip">
+									<button class="button context-ring" id="context-usage" type="button" aria-describedby="context-amount context-source"><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="context-ring-track" cx="10" cy="10" r="7.5"/><circle class="context-ring-value" id="context-ring-value" cx="10" cy="10" r="7.5" pathLength="100"/></svg><span id="context-percent"></span></button>
+									<div class="context-detail" id="context-detail" role="group" aria-label="上下文详情">
 										<div class="context-detail-head"><span>上下文</span><strong id="context-amount"></strong></div>
 										<div class="context-bar" aria-hidden="true"><span id="context-bar-value"></span></div>
 										<p id="context-source"></p>
+										<button class="button quiet context-compact" id="context-compact" type="button">压缩上下文</button>
 									</div>
 								</div>
 								<button class="button model-choice" id="model-picker-open" type="button" popovertarget="model-picker" aria-haspopup="dialog" aria-label="选择模型" disabled><span id="composer-model-icon" hidden></span><span id="model">选择模型</span><span id="composer-effort" hidden></span><svg class="icon" aria-hidden="true"><use href="#icon-chevron"/></svg></button>

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Agent, type AgentEvent, type AgentMessage, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { createContextWindow, estimateRuntimeUsage, modelMessages } from "./context-window.js";
+import { compactHistory, createContextWindow, estimateRuntimeUsage, modelMessages } from "./context-window.js";
 import type {
 	AgentRuntime,
 	ContextCheckpoint,
@@ -124,6 +124,7 @@ export function createAgentRuntime(options: RuntimeOptions): AgentRuntime {
 				getContextUsage: (sessionId) => getRunner(sessionId).getContextUsage(),
 				steer: (sessionId, runId, steerId, input, attachments) =>
 					getRunner(sessionId).steer(runId, steerId, input, attachments),
+				compact: (sessionId, signal) => getRunner(sessionId).compact(signal),
 			};
 		},
 	};
@@ -236,6 +237,58 @@ class SessionRunner {
 				if (index >= 0) active.steering.splice(index, 1);
 				throw error instanceof RuntimeError ? error : new RuntimeError("invalid-input", "插话未能送入当前运行");
 			}
+		});
+	}
+
+	compact(signal?: AbortSignal): Promise<boolean> {
+		return this.withAccess((snapshot, grant) => {
+			if (!("model" in grant)) throw new RuntimeError("invalid-input", "当前宿主不支持手动压缩");
+			if (this.active || queued(snapshot.requests).length) {
+				throw new RuntimeError("invalid-input", "会话正在运行，结束后再压缩");
+			}
+			// 占用活动位：压缩期间新请求只入队，不会与摘要并行改写检查点。
+			const runId = `compact:${randomUUID()}`;
+			const controller = new AbortController();
+			this.active = { runId, controller, steering: [], steerTail: Promise.resolve(), prompted: true };
+			return {
+				grant,
+				runId,
+				controller,
+				messages: structuredClone(snapshot.messages),
+				checkpoint: snapshot.contextCheckpoint,
+			};
+		}, false).then(async ({ grant, runId, controller, messages, checkpoint }) => {
+			const abort = () => controller.abort();
+			signal?.addEventListener("abort", abort, { once: true });
+			if (signal?.aborted) abort();
+			let next: ContextCheckpoint | undefined;
+			let failure: unknown;
+			try {
+				next = await compactHistory(grant.model, grant.streamFn, messages, checkpoint, controller.signal);
+			} catch (error) {
+				failure = error;
+			} finally {
+				signal?.removeEventListener("abort", abort);
+			}
+			const changed = !failure && next !== undefined && next !== checkpoint;
+			await this.serialize(async () => {
+				if (this.active?.runId !== runId) return;
+				try {
+					if (changed && this.snapshot) {
+						const snapshot = structuredClone(this.snapshot);
+						snapshot.contextCheckpoint = next;
+						await this.commit(snapshot, []);
+					}
+				} finally {
+					this.active = undefined;
+					this.schedule();
+				}
+			});
+			if (failure) {
+				if (controller.signal.aborted) throw new RuntimeError("invalid-input", "已取消压缩，原上下文保留");
+				throw new RuntimeError("agent-error", failure instanceof Error ? failure.message : "会话摘要未完成");
+			}
+			return changed;
 		});
 	}
 

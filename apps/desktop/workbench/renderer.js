@@ -86,7 +86,15 @@ const updateSessions = agentUI.sessionList(
 	by("sessions"),
 	(id) => action(() => ui.selectSession(id))(),
 	openSidebarMenu,
+	openHit,
 );
+// 正文搜索：两个字起由 Main 查找会话正文，结果按查询序号丢弃过期响应。
+let bodyHits = new Map();
+let bodyQuery = "";
+let bodyTicket = 0;
+let bodyTimer;
+// 点击命中片段后待跳转的轮次，会话历史渲染后执行。
+let pendingReveal;
 const sidebarOptions = by("sidebar-options");
 const sidebarDialog = by("sidebar-dialog");
 let sidebarEdit;
@@ -560,20 +568,81 @@ function renderRequests(follow = false) {
 	by("thread-scroll").hidden = home;
 	by("history-status").hidden = !session || timeline?.loaded || timeline?.failed || Boolean(timeline?.requests.size);
 	thread.update(timeline?.requests.values() ?? [], follow);
+	revealPending();
+	syncCompact();
 	if (homeChanged) void refreshContextUsage(true);
 }
 
-function matchingSessions(query) {
+/** 同步详情卡的「压缩上下文」：最近一次压缩之后仍有已完成的轮次才可用，运行中停用，压缩中可取消。@returns {void} */
+function syncCompact() {
+	const button = by("context-compact");
+	const compacting = Boolean(state?.compacting);
+	const records = [...(timelines.get(session)?.requests.values() ?? [])];
+	const marker = records.findIndex(({ compactedBefore, compactedAfter }) => compactedBefore || compactedAfter);
+	const fresh = marker < 0 ? records : records.slice(records[marker].compactedAfter ? marker + 1 : marker);
+	const available = fresh.some(({ status }) => status === "succeeded");
+	const busy = !compacting && state?.sessions.find(({ id }) => id === session)?.busy;
+	button.textContent = compacting ? "正在压缩… 取消" : "压缩上下文";
+	button.toggleAttribute("data-compacting", compacting);
+	button.disabled = !compacting && (busy || !available);
+	button.title = compacting
+		? "取消压缩，保留原上下文"
+		: busy
+			? "当前任务结束后可压缩"
+			: available
+				? "把迄今的对话归纳为摘要，后续以摘要续接"
+				: "没有尚未压缩的对话";
+}
+
+function matchingSessions(query, hits) {
 	const { status, workspace: workspaceId } = sessionFilter;
 	return (state?.sessions ?? []).filter(
 		(item) =>
 			(!workspaceId || item.workspaceId === workspaceId) &&
 			(!status || statusFilters[status](item)) &&
 			(!query ||
+				hits?.has(item.id) ||
 				[item.title, item.workspace, item.path, item.awaitingWrite ? "待批准" : ""].some((value) =>
 					value?.toLocaleLowerCase().includes(query),
 				)),
 	);
+}
+
+/** 输入停顿 200 毫秒后查找会话正文，单字只按名称匹配。@returns {void} */
+function searchBodies() {
+	const query = searchInput.value.trim();
+	clearTimeout(bodyTimer);
+	const ticket = ++bodyTicket;
+	if ([...query].length < 2) {
+		if (bodyHits.size) {
+			bodyHits = new Map();
+			renderSessions();
+		}
+		return;
+	}
+	bodyTimer = setTimeout(async () => {
+		try {
+			const results = await ui.searchSessions(query);
+			if (ticket !== bodyTicket) return;
+			bodyHits = new Map(results.map(({ id, snippets }) => [id, snippets]));
+			bodyQuery = query;
+			renderSessions();
+		} catch {
+			// 正文搜索失败时保留名称匹配结果。
+		}
+	}, 200);
+}
+
+/** 打开正文命中的那一轮：切换会话后等历史渲染再跳转。@param {string} id 会话 ID @param {string} requestId 请求 ID @returns {void} */
+function openHit(id, requestId) {
+	pendingReveal = { session: id, requestId, query: bodyQuery };
+	if (id === session) revealPending();
+	else action(() => ui.selectSession(id))();
+}
+
+function revealPending() {
+	if (!pendingReveal || pendingReveal.session !== session) return;
+	if (thread.reveal(pendingReveal.requestId, pendingReveal.query)) pendingReveal = undefined;
 }
 
 function renderSessionFilter() {
@@ -598,7 +667,9 @@ function renderSessions() {
 	const query = searchInput.value.trim().toLocaleLowerCase();
 	const filtered = Boolean(sessionFilter.status || sessionFilter.workspace);
 	const pinnedFirst = (a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
-	const items = matchingSessions(query).slice().sort(pinnedFirst);
+	// 只采用与当前输入一致的正文结果，避免显示上一次查询的片段。
+	const hits = query && bodyQuery.toLocaleLowerCase() === query ? bodyHits : undefined;
+	const items = matchingSessions(query, hits).slice().sort(pinnedFirst);
 	const matches = new Set(items.map((item) => item.workspaceId));
 	const spaces = (state?.workspaces ?? [])
 		.filter(
@@ -613,7 +684,7 @@ function renderSessions() {
 	const count = groupedByWorkspace ? spaces.length : items.length;
 	// 会话列表用 query 判断是否处于搜索态并自动展开分组，筛选条件变化同样视为一次新搜索
 	const searchKey = query || filtered ? [query, sessionFilter.status, sessionFilter.workspace].join("\n") : "";
-	updateSessions(items, { active: session, grouped: groupedByWorkspace, spaces, query: searchKey });
+	updateSessions(items, { active: session, grouped: groupedByWorkspace, spaces, query: searchKey, snippets: hits });
 	listedCount = count;
 	syncSessionTools();
 	by("session-search-empty").hidden = !searchKey || Boolean(count);
@@ -687,6 +758,7 @@ function showSearch(open) {
 	} else {
 		// 收起后列表不应停留在看不见的条件上，关键字与筛选一起清空
 		searchInput.value = "";
+		searchBodies();
 		sessionFilter.status = "";
 		sessionFilter.workspace = "";
 		if (filterPanel.matches(":popover-open")) filterPanel.hidePopover();
@@ -809,7 +881,10 @@ for (const region of [searchBox, filterPanel]) {
 		if (!searchInput.value && !filterButton.hasAttribute("data-active")) showSearch(false);
 	});
 }
-searchInput.addEventListener("input", renderSessions);
+searchInput.addEventListener("input", () => {
+	renderSessions();
+	searchBodies();
+});
 searchInput.addEventListener("keydown", (event) => {
 	if (event.isComposing) return;
 	if (event.key === "Escape") {
@@ -871,7 +946,16 @@ async function reloadHistory(id) {
 			merged.set(
 				row.requestId,
 				newer
-					? { ...row, ...current, input: row.input, file: row.file, attachments: row.attachments, artifacts: row.artifacts }
+					? {
+							...row,
+							...current,
+							input: row.input,
+							file: row.file,
+							attachments: row.attachments,
+							artifacts: row.artifacts,
+							compactedBefore: row.compactedBefore,
+							compactedAfter: row.compactedAfter,
+						}
 					: row,
 			);
 		}
@@ -917,7 +1001,7 @@ function showContextUsage(usage) {
 	const ratio = usage ? Math.min(1, usage.tokens / limit) : 0;
 	const percent = ratio * 100;
 	const shortPercent = !usage ? "" : percent > 0 && percent < 1 ? "<1%" : `${Math.round(percent)}%`;
-	// 70% 起提醒，90% 时已接近运行时的自动压缩。
+	// 70% 起提醒，90% 时转红。运行时按输入预算自动压缩，实际阈值随窗口与输出上限约在 72%～89% 之间。
 	meter.dataset.level = ratio >= 0.9 ? "danger" : ratio >= 0.7 ? "warn" : "normal";
 	by("context-ring-value").style.strokeDasharray = `${percent} 100`;
 	by("context-bar-value").style.width = `${percent}%`;
@@ -1027,6 +1111,7 @@ function update(next) {
 	by("workspace").title = selected ? `切换工作区 · ${selected.path}` : workspaceLabel;
 	by("workspace").setAttribute("aria-label", selected ? `切换工作区：${workspaceLabel}` : workspaceLabel);
 	showDraftFiles(selected?.attachments, session);
+	showInterrupted(next.interrupted ?? []);
 	updateQueue(next.queue);
 	sideChat.setState(session, next.sideChats, next.runtimeRevision);
 	by("composer-workspace").querySelector("span").textContent = selected ? "切换工作区…" : "选择工作区…";
@@ -1048,6 +1133,7 @@ function update(next) {
 		if (!moving && !by("model-dialog").open) prompt.focus();
 	}
 	syncSend();
+	syncCompact();
 	if (old !== session || runtimeExited || next.modelRevision !== previous?.modelRevision || (!wasReady && next.ready)) {
 		void refreshContextUsage(true);
 	}
@@ -1056,6 +1142,38 @@ function update(next) {
 		void reloadHistory(session);
 	}
 }
+
+/** 侧栏顶部的中断横幅：列出上次被中断的会话，可全部继续或忽略。@param {{id: string, title: string}[]} items 中断的会话 @returns {void} */
+function showInterrupted(items) {
+	const banner = by("interrupted-banner");
+	banner.hidden = !items.length;
+	by("interrupted-title").textContent = `${items.length} 个任务上次被中断`;
+	const key = JSON.stringify(items);
+	if (banner.dataset.key === key) return;
+	banner.dataset.key = key;
+	by("interrupted-list").replaceChildren(
+		...items.map(({ id, title }) => {
+			const item = flowerUI.element("li");
+			const open = flowerUI.button(title, () => action(() => ui.selectSession(id))(), "quiet interrupted-session");
+			open.title = title;
+			item.append(open);
+			return item;
+		}),
+	);
+}
+by("interrupted-resume").addEventListener(
+	"click",
+	action(async () => {
+		const ids = state?.interrupted?.map(({ id }) => id) ?? [];
+		if (!ids.length) return;
+		await ui.resumeInterrupted(ids);
+		toast(`已继续 ${ids.length} 个任务。`);
+	}),
+);
+by("interrupted-dismiss").addEventListener(
+	"click",
+	action(() => ui.dismissInterrupted()),
+);
 
 function syncWriteControls(next) {
 	const mode = modeOptions.find((button) => button.dataset.writeMode === next.writeMode);
@@ -1847,6 +1965,20 @@ by("new-session").addEventListener(
 	}),
 );
 
+by("context-compact").addEventListener(
+	"click",
+	action(async () => {
+		const target = session;
+		if (state?.compacting) return ui.cancelCompaction(target);
+		const changed = await ui.compactContext(target);
+		toast(changed ? "已压缩上下文，后续以摘要续接。" : "没有尚未压缩的对话。");
+		const timeline = timelines.get(target);
+		if (timeline) invalidateHistory(timeline);
+		if (target !== session) return;
+		void reloadHistory(target);
+		void refreshContextUsage();
+	}),
+);
 by("prompt").addEventListener("input", syncSend);
 by("send").addEventListener(
 	"click",

@@ -314,6 +314,14 @@ export interface SubjectRuntime {
 		input: string,
 		attachments?: readonly RuntimeAttachment[],
 	): Promise<void>;
+
+	/**
+	 * 在会话空闲时把迄今的对话归纳为检查点摘要。压缩期间不调度新请求，完成后照常调度。
+	 * @param sessionId 当前主体可访问的会话
+	 * @param signal 调用方的取消信号
+	 * @returns 写入了新检查点时为 true，没有可归纳的新对话时为 false；失败、取消时拒绝且检查点不变
+	 */
+	compact(sessionId: string, signal?: AbortSignal): Promise<boolean>;
 }
 
 /** 用于宿主绑定已核验主体的共享运行时。 */

@@ -78,9 +78,40 @@ window.agentUI = (() => {
 		return length < parents.length ? `…${separator}${location}` : location;
 	}
 
-	/** 按平铺或工作区组织会话，复用可聚焦的会话行。@param {HTMLElement} root 列表 @param {Function} select 选择会话 @param {Function} openMenu 打开所选行的操作菜单 @returns {Function} 更新列表 */
-	function sessionList(root, select, openMenu) {
+	/** 按平铺或工作区组织会话，复用可聚焦的会话行。@param {HTMLElement} root 列表 @param {Function} select 选择会话 @param {Function} openMenu 打开所选行的操作菜单 @param {(id: string, requestId: string) => void} [openHit] 打开正文命中的那一轮 @returns {Function} 更新列表 */
+	function sessionList(root, select, openMenu, openHit) {
 		const nodes = new Map();
+		// 正文搜索的命中片段，显示在会话行下方。
+		const hitNodes = new Map();
+
+		function hits(id, list) {
+			if (!list?.length) {
+				hitNodes.get(id)?.remove();
+				hitNodes.delete(id);
+				return;
+			}
+			let node = hitNodes.get(id);
+			if (!node) {
+				node = element("div", "session-snippets");
+				hitNodes.set(id, node);
+			}
+			const key = JSON.stringify(list);
+			if (node.dataset.key !== key) {
+				node.dataset.key = key;
+				node.replaceChildren(
+					...list.map((hit) => {
+						const control = button("", () => openHit?.(id, hit.requestId), "session-snippet");
+						control.append(element("span", "", hit.before), element("mark", "", hit.match), element("span", "", hit.after));
+						control.setAttribute(
+							"aria-label",
+							`${hit.field === "input" ? "提问" : "回复"}中命中：${hit.before}${hit.match}${hit.after}`,
+						);
+						return control;
+					}),
+				);
+			}
+			return node;
+		}
 		const groups = new Map();
 		const collapsed = new Set();
 		const searchCollapsed = new Set();
@@ -151,7 +182,7 @@ window.agentUI = (() => {
 		/** 按当前搜索态取折叠集合。@returns {Set<string>} 折叠的工作区 */
 		const foldSet = () => (query ? searchCollapsed : collapsed);
 
-		const render = (items, { active, grouped, spaces, query: nextQuery }) => {
+		const render = (items, { active, grouped, spaces, query: nextQuery, snippets }) => {
 			// 搜索自动展开结果，清除查询后恢复原来的折叠状态。
 			if (query !== nextQuery) searchCollapsed.clear();
 			query = nextQuery;
@@ -161,6 +192,7 @@ window.agentUI = (() => {
 				control.remove();
 				nodes.delete(id);
 			}
+			for (const id of hitNodes.keys()) if (!live.has(id) || !snippets?.has(id)) hits(id);
 			const rows = items.map(({ id, title, awaitingWrite, pinned, indicator }) => {
 				if (!nodes.has(id)) {
 					const control = button("", () => select(id), "session-row");
@@ -182,10 +214,11 @@ window.agentUI = (() => {
 				control.setAttribute("aria-current", String(id === active));
 				const label = awaitingWrite ? "approval" : indicator;
 				control.setAttribute("aria-label", label ? `${title}，${indicators[label]}` : title);
-				return row;
+				const hit = hits(id, snippets?.get(id));
+				return hit ? [row, hit] : [row];
 			});
 			if (!grouped) {
-				orderChildren(root, rows);
+				orderChildren(root, rows.flat());
 				groups.clear();
 				return;
 			}
@@ -196,7 +229,7 @@ window.agentUI = (() => {
 			for (const [index, item] of items.entries()) {
 				const { workspaceId, awaitingWrite, id } = item;
 				const entry = entries.get(workspaceId);
-				entry.rows.push(rows[index]);
+				entry.rows.push(...rows[index]);
 				const indicator = awaitingWrite ? "approval" : item.indicator;
 				if ((indicatorRank[indicator] ?? 0) > (indicatorRank[entry.indicator] ?? 0)) entry.indicator = indicator;
 				entry.containsActive ||= id === active;
@@ -955,7 +988,7 @@ window.agentUI = (() => {
 		copy.title = "复制回复原文";
 		copy.setAttribute("aria-label", copy.title);
 		copy.append(icon("copy"));
-		// 未完成的请求没有进入模型上下文，可以原样重试，或放回输入框修改后再发。
+		// 未完成请求的回复正文不进入模型上下文（只保留工具回执），可以原样重试，或放回输入框修改后再发。
 		const retry = button("重试", () => actions.retry(id), "quiet retry-task");
 		const edit = button("编辑", () => actions.edit(id), "quiet retry-task");
 		head.append(mark("small"), element("h2", "", "Flower"), status, cancel, retry, edit, copy);
@@ -999,7 +1032,14 @@ window.agentUI = (() => {
 		const steps = toolSteps();
 		const deliveries = deliverables((path) => actions.open(id, path), actions.preview, actions.paths?.menu);
 		reply.append(head, thought, steps.node, text, failure, deliveries.node);
-		node.append(prompt, reply);
+		// 最近一次压缩落在本轮之前或之后时显示分隔。
+		const [compactedBefore, compactedAfter] = [0, 1].map(() => {
+			const divider = element("p", "compaction-divider", "以上对话已压缩为摘要");
+			divider.setAttribute("role", "separator");
+			divider.hidden = true;
+			return divider;
+		});
+		node.append(compactedBefore, prompt, reply, compactedAfter);
 		return {
 			node,
 			reply: text,
@@ -1010,6 +1050,8 @@ window.agentUI = (() => {
 			update(next) {
 				record = next;
 				node.dataset.status = record.status;
+				compactedBefore.hidden = !record.compactedBefore;
+				compactedAfter.hidden = !record.compactedAfter;
 				prompt.hidden = !record.input;
 				if (input.textContent !== (record.input ?? "")) input.textContent = record.input ?? "";
 				showFiles(record.attachments ?? (record.file ? [{ id: `file:${record.file}`, name: record.file }] : []));
@@ -1027,6 +1069,8 @@ window.agentUI = (() => {
 				const unfinished =
 					["failed", "cancelled", "interrupted", "denied"].includes(record.status) && Boolean(record.input);
 				retry.hidden = edit.hidden = !unfinished;
+				const retryText = record.status === "interrupted" ? "继续任务" : "重试";
+				if (retry.textContent !== retryText) retry.textContent = retryText;
 				copyInput.hidden = !record.input;
 				copy.hidden = !record.text || !record.status || ["queued", "running", "cancelling"].includes(record.status);
 				showSteers(record.steers ?? [], record.text ?? "");
@@ -1036,6 +1080,50 @@ window.agentUI = (() => {
 				deliveries.update(record.artifacts ?? []);
 			},
 		};
+	}
+
+	/** 把一轮滚到会话区顶部附近，减弱动效时直接跳转。@param {HTMLElement} scroll 滚动区域 @param {HTMLElement} node 该轮节点 @returns {void} */
+	function scrollToTurn(scroll, node) {
+		const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+		const top = scroll.scrollTop + node.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 12;
+		scroll.scrollTo({ top, behavior: reduced ? "auto" : "smooth" });
+	}
+
+	let flashTimer;
+	/**
+	 * 短暂高亮该轮中的关键词约 2 秒；关键词被格式拆开找不到时，整轮短暂提示。
+	 * @param {HTMLElement} node 该轮节点
+	 * @param {string} query 关键词
+	 * @returns {void}
+	 */
+	function flashTurn(node, query) {
+		const needle = query?.toLocaleLowerCase();
+		const ranges = [];
+		if (needle && window.CSS?.highlights) {
+			const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+			for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+				const value = text.nodeValue.toLocaleLowerCase();
+				if (value.length !== text.nodeValue.length) continue;
+				for (let index = value.indexOf(needle); index >= 0; index = value.indexOf(needle, index + needle.length)) {
+					const range = new Range();
+					range.setStart(text, index);
+					range.setEnd(text, index + needle.length);
+					ranges.push(range);
+				}
+			}
+		}
+		clearTimeout(flashTimer);
+		window.CSS?.highlights?.delete("flower-search");
+		if (ranges.length) window.CSS.highlights.set("flower-search", new Highlight(...ranges));
+		else {
+			node.removeAttribute("data-located");
+			void node.offsetWidth;
+			node.toggleAttribute("data-located", true);
+		}
+		flashTimer = setTimeout(() => {
+			window.CSS?.highlights?.delete("flower-search");
+			node.removeAttribute("data-located");
+		}, 2000);
 	}
 
 	/**
@@ -1119,10 +1207,7 @@ window.agentUI = (() => {
 		}
 		function jump(index) {
 			const node = views.get(records[index]?.requestId)?.node;
-			if (!node) return;
-			const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-			const top = scroll.scrollTop + node.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 12;
-			scroll.scrollTo({ top, behavior: reduced ? "auto" : "smooth" });
+			if (node) scrollToTurn(scroll, node);
 		}
 		function sync() {
 			frame = 0;
@@ -1312,6 +1397,20 @@ window.agentUI = (() => {
 				}
 				syncBottom();
 				navigation?.update(list);
+			},
+			/**
+			 * 跳到某轮并短暂高亮关键词，覆盖切换会话时待恢复的阅读位置。
+			 * @param {string} requestId 请求 ID
+			 * @param {string} [query] 关键词
+			 * @returns {boolean} 该轮已渲染时为 true
+			 */
+			reveal(requestId, query) {
+				const view = views.get(requestId);
+				if (!view) return false;
+				pending = undefined;
+				scrollToTurn(scroll, view.node);
+				flashTurn(view.node, query);
+				return true;
 			},
 		};
 	}

@@ -22,7 +22,7 @@
 | Guide | 说明 |
 |-------|------|
 | [Windows Verification](./windows-verification.md) | Playwright `_electron` 实机验收脚本：私有桌面运行、主进程替身、收尾与超时、前台焦点的限制 |
-| [Workbench Contracts](./workbench-contracts.md) | 回复路径核对 IPC、推理档位「关闭思考」的请求字段映射、本机排队消息与插话、侧边追问会话、@ 补全文件清单 |
+| [Workbench Contracts](./workbench-contracts.md) | 回复路径核对 IPC、推理档位「关闭思考」的请求字段映射、本机排队消息与插话、侧边追问会话、@ 补全文件清单、正文搜索与中断恢复 |
 
 > 共享运行时的事件持久化契约见 [agent-runtime backend spec](../../agent-runtime/backend/index.md)。
 

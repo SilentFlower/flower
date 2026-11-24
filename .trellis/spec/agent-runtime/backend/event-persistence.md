@@ -126,3 +126,44 @@ RuntimeEvent += { type: "steered"; steerId: string };
 
 - `packages/agent-runtime/test/context-window.test.ts`「运行中插话」：送达位置、附件读入、重复与已结束拒绝；送达前取消不记录；`createExecution` 执行体拒绝。
 - `packages/agent-runtime/test/dual-host.test.ts`「企业宿主运行中插话」：读取闸点期间插话，`steered` 送达且事件序号连续，记录含插话，模型最后一次调用含插话原文。
+
+---
+
+## Scenario: 手动压缩（compact）
+
+### 1. Scope / Trigger
+
+- 触发：改动 `SubjectRuntime.compact`、`context-window.ts` 的 `compactHistory`，或宿主在时间线中推导压缩位置。
+
+### 2. Signatures
+
+```ts
+SubjectRuntime.compact(sessionId: string, signal?: AbortSignal): Promise<boolean>; // true 表示写入了新检查点
+export async function compactHistory(model, stream, history, checkpoint, signal): Promise<ContextCheckpoint | undefined>;
+```
+
+### 3. Contracts
+
+- 只对原生 `model` 授权生效；会话有活动运行或排队请求时拒绝。开始时占用 `active`（`runId = "compact:<uuid>"`），期间提交的请求只入队，结束后清除并 `schedule()`。
+- 摘要从现有 `through` 归纳到 `modelMessages(history)` 非系统部分的末尾，与已有摘要滚动合并，结果 `through = body.length`。没有新增可归纳的消息时不调用模型，返回 `false`。
+- 只写回 `contextCheckpoint`，`commit(snapshot, [])` 不发事件，不改 `requests` 与 `messages`。
+- 宿主推导压缩位置：`through` 与成功请求的 `userMessageIndex`（旧记录用消息上的 `flowerRequestId`）在 `snapshot.messages` 的同一下标空间；第一条 `index >= through` 的成功请求之前，或全部已归纳时最后一条成功请求之后。任一成功请求无法定位时不显示。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| `createExecution` 授权 | `RuntimeError("invalid-input", "当前宿主不支持手动压缩")` |
+| 有活动运行或排队请求 | `RuntimeError("invalid-input", "会话正在运行，结束后再压缩")` |
+| 调用方取消 | `RuntimeError("invalid-input", "已取消压缩，原上下文保留")`，检查点不变 |
+| 摘要失败 | `RuntimeError("agent-error", <摘要错误说明>)`，检查点不变 |
+
+### 5. Scenarios and Examples
+
+- Normal：两轮后压缩 → `true`，下一轮请求以「此前会话的检查点」开头，不再包含第一轮原文；再次压缩 → `false` 且不调用模型。
+- Incorrect use：在串行区内直接 await 摘要，压缩期间的提交、历史查询全部卡住，宿主 20 秒调用超时会把工作进程判为失去响应。
+- Correct handling：串行区内只做校验与占位，摘要在区外执行，结束时再进串行区写回并释放活动位；宿主为压缩调用单独放宽超时。
+
+### 6. Tests Required
+
+- `packages/agent-runtime/test/context-window.test.ts`「手动压缩」：全量归纳与续接、无新对话不调用模型、失败与取消保留检查点、压缩期间提交的请求排队并在之后完成、运行中与 `createExecution` 拒绝。

@@ -192,7 +192,10 @@ test("Desktop 子进程经真实 pi、回环网关和附件，摘要后重启续
 	const resumed = trace.at(-1);
 	assert.match(resumed.body, /此前会话的检查点[\s\S]*报价金额 537（供应商报价.pdf 第 2 页）/);
 	assert.match(resumed.body, /预算金额 500（预算.xlsx 预算表!B7）[\s\S]*差额 37/);
-	const original = (await restart.host.call("history", { session })).find(({ requestId }) => requestId === id);
+	const restored = await restart.host.call("history", { session });
+	// 自动压缩同样标出最近一次压缩的位置，且只有一处。
+	assert.equal(restored.filter(({ compactedBefore, compactedAfter }) => compactedBefore || compactedAfter).length, 1);
+	const original = restored.find(({ requestId }) => requestId === id);
 	assert.equal(original.input, "核对两份附件并生成核对报告");
 	assert.deepEqual(original.attachments, attachments);
 	// 工具步骤与起止时间随会话落盘，重启后附件编号仍显示为附件名。

@@ -19,6 +19,8 @@ const sidePrompt =
 	"当前是侧边追问：基于此前主会话的记录回答用户的追问，只读取和分析，不生成报告或工作簿，也不写入工作区。";
 const streams = new Map();
 const running = new Map();
+// 进行中的手动压缩，按会话保存取消控制。
+const compactions = new Map();
 const writes = new Map();
 // 工具步骤在运行时同步描述，附件名需要提前缓存；本轮附件在读取时登记，历史附件在读取会话历史时登记。
 const attachmentNames = new Map();
@@ -237,9 +239,32 @@ function init(frame) {
 	return { pi: PI_AI_VERSION, pid: process.pid };
 }
 
+/**
+ * 推导最近一次压缩（自动或手动）在时间线中的位置：检查点之后第一条成功请求之前；全部已归纳时在最后一条成功请求之后。
+ * @param {object} snapshot 会话快照
+ * @returns {{before?: string, after?: string} | undefined} 分隔所在的请求，无法确定时为空
+ */
+function compactionMark(snapshot) {
+	const through = snapshot.contextCheckpoint?.through;
+	if (!Number.isSafeInteger(through) || through < 1) return;
+	// 早期记录没有 userMessageIndex，按消息上的 flowerRequestId 找回位置。
+	const tagged = new Map(
+		snapshot.messages.flatMap((message, index) => (message.flowerRequestId ? [[message.flowerRequestId, index]] : [])),
+	);
+	const succeeded = snapshot.requests.filter(({ status }) => status === "succeeded");
+	for (const record of succeeded) {
+		const index = record.userMessageIndex ?? tagged.get(record.requestId);
+		if (index === undefined) return;
+		if (index >= through) return { before: record.requestId };
+	}
+	const last = succeeded.at(-1);
+	return last && { after: last.requestId };
+}
+
 function history(session) {
-	return runtime.getSession(session).then((snapshot) =>
-		snapshot.requests.map((record) => {
+	return runtime.getSession(session).then((snapshot) => {
+		const mark = compactionMark(snapshot);
+		return snapshot.requests.map((record) => {
 			const artifacts = [];
 			for (const result of record.toolResults ?? []) {
 				if (result.isError || !["analyze_excel", "write_report"].includes(result.toolName)) continue;
@@ -272,9 +297,11 @@ function history(session) {
 				})),
 				startedAt: record.startedAt,
 				endedAt: record.endedAt,
+				compactedBefore: mark?.before === requestId,
+				compactedAfter: mark?.after === requestId,
 			};
-		}),
-	);
+		});
+	});
 }
 
 port.on("message", async ({ data: frame }) => {
@@ -331,6 +358,19 @@ port.on("message", async ({ data: frame }) => {
 					break;
 				case "steer":
 					await runtime.steer(frame.session, frame.runId, frame.steerId, frame.input, frame.attachments);
+					break;
+				case "compact": {
+					const controller = new AbortController();
+					compactions.set(frame.session, controller);
+					try {
+						value = await runtime.compact(frame.session, controller.signal);
+					} finally {
+						if (compactions.get(frame.session) === controller) compactions.delete(frame.session);
+					}
+					break;
+				}
+				case "cancel-compact":
+					compactions.get(frame.session)?.abort();
 					break;
 				default:
 					throw new Error("无效命令");

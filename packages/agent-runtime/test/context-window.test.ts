@@ -633,3 +633,97 @@ describe("运行中插话", () => {
 		expect(events.find(({ type }) => type === "terminal")).toMatchObject({ status: "cancelled" });
 	});
 });
+
+describe("手动压缩", () => {
+	/** 普通回答直接给出事实；摘要请求按 failSummary 返回失败或结果。 */
+	function summarizer(options: { failSummary?: boolean; holdSummary?: Promise<void> } = {}) {
+		const calls: { summary: boolean; body: string }[] = [];
+		const streamFn: StreamFn = async (_model, context) => {
+			const isSummary = summary(context.messages);
+			calls.push({ summary: isSummary, body: JSON.stringify(context.messages) });
+			if (!isSummary) return response([{ type: "text", text: fact }]);
+			await options.holdSummary;
+			return options.failSummary
+				? response([], "error", "摘要服务不可用")
+				: response([{ type: "text", text: `检查点：${fact}` }]);
+		};
+		return { calls, streamFn };
+	}
+
+	it("把迄今的对话整体归纳为检查点，下一轮以摘要续接；没有新对话时不调用模型", async () => {
+		const run = summarizer();
+		const host = fixture(memory(), run.streamFn);
+		expect(await host.submit("第一问")).toMatchObject({ status: "succeeded" });
+		expect(await host.submit("第二问")).toMatchObject({ status: "succeeded" });
+		expect(await host.client.compact(session)).toBe(true);
+		const snapshot = await host.client.getSession(session);
+		expect(snapshot.contextCheckpoint).toEqual({ through: snapshot.messages.length, summary: `检查点：${fact}` });
+		const calls = run.calls.length;
+		expect(await host.client.compact(session)).toBe(false);
+		expect(run.calls).toHaveLength(calls);
+		expect(await host.submit("第三问")).toMatchObject({ status: "succeeded" });
+		const next = run.calls.at(-1)?.body ?? "";
+		expect(next).toContain("此前会话的检查点");
+		expect(next).toContain("第三问");
+		expect(next).not.toContain("第一问");
+	});
+
+	it("摘要失败或取消时检查点不变，之后的请求照常运行", async () => {
+		const failing = summarizer({ failSummary: true });
+		const host = fixture(memory(), failing.streamFn);
+		expect(await host.submit("第一问")).toMatchObject({ status: "succeeded" });
+		await expect(host.client.compact(session)).rejects.toMatchObject({ code: "agent-error" });
+		expect((await host.client.getSession(session)).contextCheckpoint).toBeUndefined();
+		expect(await host.submit("第二问")).toMatchObject({ status: "succeeded" });
+
+		let release = () => {};
+		const held = summarizer({ holdSummary: new Promise<void>((resolve) => (release = resolve)) });
+		const other = fixture(memory(), held.streamFn);
+		expect(await other.submit("第一问")).toMatchObject({ status: "succeeded" });
+		const controller = new AbortController();
+		const compacting = other.client.compact(session, controller.signal);
+		while (!held.calls.some(({ summary: isSummary }) => isSummary))
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		// 压缩期间提交的请求排队，压缩结束后才开始。
+		const queued = await other.client.submit(session, "压缩期间提交");
+		expect(queued.status).toBe("queued");
+		controller.abort();
+		release();
+		await expect(compacting).rejects.toThrow("已取消压缩");
+		expect(await other.result(queued.requestId)).toMatchObject({ status: "succeeded" });
+		expect((await other.client.getSession(session)).contextCheckpoint).toBeUndefined();
+	});
+
+	it("运行中或宿主执行体不支持时拒绝", async () => {
+		let stop = () => {};
+		const done = new Promise<void>((resolve) => {
+			stop = resolve;
+		});
+		const events: RuntimeEvent[] = [];
+		const client = createAgentRuntime({
+			host: "enterprise-node",
+			store: memory(),
+			authorize: () => ({
+				workspaceId: "workspace-a",
+				createExecution: () => ({
+					prompt: () => done,
+					subscribe: () => () => {},
+					abort: stop,
+					waitForIdle: async () => {},
+					getMessages: () => [],
+				}),
+			}),
+		}).bindSubject(subject, (event) => events.push(event));
+		await expect(client.compact(session)).rejects.toThrow("不支持手动压缩");
+		const run = summarizer();
+		const host = fixture(memory(), async (model, context, options) => {
+			await done;
+			return run.streamFn(model, context, options);
+		});
+		const { requestId } = await host.client.submit(session, "长任务");
+		await expect(host.client.compact(session)).rejects.toThrow("会话正在运行");
+		stop();
+		expect(await host.result(requestId)).toMatchObject({ status: "succeeded" });
+		expect(events).toEqual([]);
+	});
+});

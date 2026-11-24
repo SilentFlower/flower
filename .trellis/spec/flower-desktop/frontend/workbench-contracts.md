@@ -256,3 +256,54 @@ export function rankWorkspaceFiles(files, query, limit = 50)
 - `testing/workspace-panel.test.mjs`：`rankWorkspaceFiles` 排序、过滤与上限、查询校验。
 - `testing/composer.test.mjs`：`mentionQuery` 的行首、空白与邮箱地址判定。
 - `testing/queue-side-chat.test.mjs`：经真实 Main 只返回可加入对话的文件。
+
+---
+
+## Scenario: 正文索引、会话搜索与中断恢复
+
+### 1. Scope / Trigger
+
+- 触发：改动 Main 的 `indexedTurns` / `search-sessions` / `resume-interrupted` / `dismiss-interrupted` / `compact-context`，`session-search.mjs`，worker 的 `compactionMark`，或渲染层 `searchBodies` / `openHit` / `thread().reveal`。
+
+### 2. Signatures
+
+```js
+searchSessions(query)        // → [{ id, snippets: [{ requestId, field: "input" | "text", before, match, after }] }]
+resumeInterrupted(ids) / dismissInterrupted()
+compactContext(session)      // → boolean；runtime-host 调用超时 600 000 毫秒
+cancelCompaction(session)
+// state()
+interrupted: [{ id, title }]; compacting: boolean
+// history 行
+compactedBefore: boolean; compactedAfter: boolean
+```
+
+### 3. Contracts
+
+- 正文索引按记录文件 `mtimeMs` 与 `size` 复用，只含提问原话（`desktopMessages`）与回复正文，不含工具结果；只遍历 `workbench.sessions`，侧边追问不入结果。查询去空白后不足 2 个码点返回空；每会话最多 3 条片段，最多 50 个会话。
+- 中断识别在 `loadLocal` 宣告就绪后后台执行，不放进处理器等待的初始化；最后一条请求为 `interrupted`、`queued`、`running` 或 `cancelling` 即中断。提交、重试、继续或删除该会话时移出；忽略只影响本次运行的横幅。
+- 「全部继续」逐个取最后一条未完成请求，以原输入与原附件重新发送；会话有保留的排队消息时插到队首再恢复队列，保证先续跑中断的任务。
+- 压缩期间 `sessionBusy` 为真：新消息排队、模型设置不可改；结束后补派发队列。
+- 渲染层：正文结果按查询序号丢弃过期响应，只采用与当前输入一致的结果；点击片段先记下 `pendingReveal`，会话历史渲染后由 `thread().reveal` 跳转并用 `CSS.highlights`（找不到时整轮提示）高亮约 2 秒，覆盖待恢复的阅读位置。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| `query` 不是字符串或超过 180 字 | 「搜索内容无效」 |
+| `resume-interrupted` 含不在中断列表的会话 | 「中断任务已变化，请重新查看。」 |
+| 个别会话无法继续 | 其余照常继续，最后报「以下任务未能继续：…」 |
+| 压缩时会话忙 | 「会话正在运行，结束后再压缩。」 |
+
+### 5. Scenarios and Examples
+
+- Normal：搜「二月核对」→ 命中回复正文的片段，点击后切到会话并跳到该轮，关键词高亮。
+- Base：重启时有运行中的请求 → 横幅列出该会话；「全部继续」后先续跑该请求，再发送重启前保留的排队消息。
+- Incorrect use：`revealPending` 写成 `if (pendingReveal?.session !== session) return`，启动时两者都是 `undefined`，继续执行后读取 `pendingReveal.requestId` 崩溃。
+- Correct handling：先判断 `!pendingReveal`。
+
+### 6. Tests Required
+
+- `testing/session-search.test.mjs`：原话优先、片段截取与省略号、大小写、上限、中断判定。
+- `testing/queue-side-chat.test.mjs`：正文命中与片段字段、单字不搜、侧边追问不被搜到、删除后不命中；运行中拒绝压缩、手动压缩与分隔位置、不重复压缩；重启后的中断横幅、忽略、全部继续的执行顺序。
+- `testing/context-continuity.test.mjs`：自动压缩后历史中只有一处压缩标记。

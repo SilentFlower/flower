@@ -272,6 +272,29 @@ export function estimateRuntimeUsage(
 	};
 }
 
+/** 手动压缩：把归档中尚未进入检查点的对话整体归纳为摘要，与已有摘要滚动合并。
+ * @param model 当前授权模型
+ * @param stream 宿主模型调用，摘要请求带 purpose: "summary"
+ * @param history 完整归档消息
+ * @param checkpoint 已提交的检查点
+ * @param signal 取消信号
+ * @returns 覆盖全部现有对话的新检查点；没有新增可归纳的对话时返回原检查点
+ */
+export async function compactHistory(
+	model: Model<Api>,
+	stream: RuntimeModelStream,
+	history: readonly AgentMessage[],
+	checkpoint: ContextCheckpoint | undefined,
+	signal: AbortSignal,
+): Promise<ContextCheckpoint | undefined> {
+	const { body } = split(normalizeContext({ messages: compatibleImages(model, modelMessages(history)) }));
+	const current = validCheckpoint(checkpoint, body.length);
+	const start = current?.through ?? 0;
+	if (start >= body.length) return current;
+	const summary = await summarize(model, stream, body.slice(start), current?.summary ?? "", { signal });
+	return { through: body.length, summary };
+}
+
 function failureEvent(model: Model<Api>, signal: AbortSignal | undefined): AssistantMessageEvent {
 	const reason = signal?.aborted ? "aborted" : "error";
 	return {
