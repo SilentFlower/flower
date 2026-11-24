@@ -361,6 +361,7 @@ const thread = agentUI.thread(
 			})(),
 	},
 	by("back-to-bottom"),
+	by("thread-navigator"),
 );
 
 /**

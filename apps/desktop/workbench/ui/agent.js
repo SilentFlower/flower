@@ -38,6 +38,14 @@ window.agentUI = (() => {
 		denied: "未获授权，耗时",
 		interrupted: "运行已中断",
 	};
+	// 导航预览卡在回复尚无正文时显示的状态说明；失败另取失败原因。
+	const previewStates = {
+		queued: "正在处理…",
+		running: "正在处理…",
+		cancelled: "已取消",
+		interrupted: "上次运行已中断",
+		denied: "未获授权",
+	};
 
 	function orderChildren(parent, children) {
 		let cursor = parent.firstElementChild;
@@ -492,6 +500,7 @@ window.agentUI = (() => {
 		node.append(prompt, reply);
 		return {
 			node,
+			reply: text,
 			dispose: showFiles.dispose,
 			update(next) {
 				record = next;
@@ -525,16 +534,226 @@ window.agentUI = (() => {
 	}
 
 	/**
+	 * 判定当前阅读的轮次：贴底时为最后一轮，否则为顶部已进入视口上部三分之一的最后一轮。
+	 * @param {number[]} tops 各轮顶部相对滚动视口顶部的偏移，按时间顺序递增
+	 * @param {number} viewport 滚动视口高度
+	 * @param {boolean} atBottom 是否贴底
+	 * @returns {number} 当前轮次下标，没有轮次时为 -1
+	 */
+	function navigatorTurn(tops, viewport, atBottom) {
+		if (!tops.length) return -1;
+		// 最后一轮可能很短，顶部到不了阅读线，贴底时直接视为在读最后一轮。
+		if (atBottom) return tops.length - 1;
+		let current = 0;
+		for (const [index, top] of tops.entries()) {
+			if (top > viewport / 3) break;
+			current = index;
+		}
+		return current;
+	}
+
+	/**
+	 * 生成导航预览卡文案：提问取原话，只有附件时取附件名；回复取正文开头，尚无正文时按状态说明。
+	 * @param {object} record 请求记录
+	 * @param {string} replyText 回复正文的纯文本
+	 * @returns {{title: string, body: string}} 提问与回复开头
+	 */
+	function turnPreview(record, replyText) {
+		const files = record.attachments ?? (record.file ? [{ name: record.file }] : []);
+		const input = (record.input ?? "").replace(/\s+/g, " ").trim();
+		const title = input || files.map(({ name }) => name).join("、") || "（无文字）";
+		const reply = (replyText ?? "").replace(/\s+/g, " ").trim();
+		// 按码点截取，避免把表情等代理对切成乱码。
+		if (reply) return { title, body: Array.from(reply.slice(0, 320)).slice(0, 160).join("") };
+		if (record.status === "failed") return { title, body: record.failure || "运行失败" };
+		return { title, body: previewStates[record.status] ?? "" };
+	}
+
+	/**
+	 * 会话导航条：每轮一个刻度并高亮当前阅读的轮次，悬停或聚焦刻度时预览该轮，点击跳到该轮开头。
+	 * 只占一个 Tab 停留点，方向键在刻度间移动。
+	 * @param {HTMLElement} nav 导航条
+	 * @param {HTMLElement} scroll 滚动区域
+	 * @param {HTMLElement} root 消息列表
+	 * @param {Map<string, object>} views 按请求 ID 保存的消息视图
+	 * @returns {{update(records: object[]): void, reset(): void}} 刻度更新与清空接口
+	 */
+	function navigatorView(nav, scroll, root, views) {
+		const list = nav.querySelector(".navigator-ticks");
+		const card = nav.querySelector(".navigator-card");
+		const [title, body] = card.children;
+		const items = new Map();
+		let records = [];
+		let ticks = [];
+		let current = -1;
+		let previewed = -1;
+		let frame = 0;
+
+		function rove(index) {
+			for (const [position, tick] of ticks.entries()) tick.tabIndex = position === Math.max(index, 0) ? 0 : -1;
+		}
+		function hide() {
+			card.hidden = true;
+			previewed = -1;
+		}
+		function preview(index) {
+			const view = views.get(records[index]?.requestId);
+			if (!view) return hide();
+			// 每次显示都从回复节点读取，流式输出中也是最新内容。
+			const text = turnPreview(records[index], view.reply.textContent);
+			if (title.textContent !== text.title) title.textContent = text.title;
+			if (body.textContent !== text.body) body.textContent = text.body;
+			body.hidden = !text.body;
+			card.hidden = false;
+			previewed = index;
+			// 卡片与刻度垂直居中对齐，靠近上下边缘时收在导航条内。
+			const tick = ticks[index].getBoundingClientRect();
+			const center = tick.top + tick.height / 2 - nav.getBoundingClientRect().top;
+			const top = Math.min(center - card.offsetHeight / 2, nav.clientHeight - card.offsetHeight);
+			card.style.top = `${Math.max(0, top)}px`;
+		}
+		function jump(index) {
+			const node = views.get(records[index]?.requestId)?.node;
+			if (!node) return;
+			const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+			const top = scroll.scrollTop + node.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 12;
+			scroll.scrollTo({ top, behavior: reduced ? "auto" : "smooth" });
+		}
+		function sync() {
+			frame = 0;
+			const viewport = scroll.getBoundingClientRect();
+			// 留白从消息列正文左缘量起，窄窗时只剩边距，放不下刻度就不显示。
+			const gap =
+				root.getBoundingClientRect().left + Number.parseFloat(getComputedStyle(root).paddingLeft) - viewport.left;
+			const shown = !scroll.hidden && ticks.length >= 3 && scroll.scrollHeight > scroll.clientHeight && gap >= 40;
+			nav.hidden = !shown;
+			if (!shown) return hide();
+			// 导航条覆盖滚动区域的可视高度，横向位于左侧留白的中线。
+			nav.style.top = `${scroll.offsetTop}px`;
+			nav.style.height = `${scroll.clientHeight}px`;
+			nav.style.left = `${scroll.offsetLeft + gap / 2}px`;
+			const tops = records.map(({ requestId }) => views.get(requestId).node.getBoundingClientRect().top - viewport.top);
+			const atBottom = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop < 65;
+			const next = navigatorTurn(tops, scroll.clientHeight, atBottom);
+			if (next !== current) {
+				ticks[current]?.removeAttribute("aria-current");
+				ticks[next]?.setAttribute("aria-current", "true");
+				current = next;
+				// 刻度多到在导航条内滚动时，让当前刻度保持可见。
+				ticks[next]?.scrollIntoView({ block: "nearest" });
+			}
+			// 焦点在导航条内时停留点跟随焦点，离开后回到当前轮次。
+			if (!nav.contains(document.activeElement)) rove(current);
+			if (previewed >= 0) preview(previewed);
+		}
+		function schedule() {
+			if (!frame) frame = requestAnimationFrame(sync);
+		}
+
+		scroll.addEventListener("scroll", schedule, { passive: true });
+		list.addEventListener("scroll", schedule, { passive: true });
+		const observer = new ResizeObserver(schedule);
+		observer.observe(scroll);
+		observer.observe(root);
+		list.addEventListener("click", (event) => jump(ticks.indexOf(event.target.closest(".navigator-tick"))));
+		list.addEventListener("pointerover", (event) => {
+			const index = ticks.indexOf(event.target.closest(".navigator-tick"));
+			if (index >= 0 && index !== previewed) preview(index);
+		});
+		list.addEventListener("focusin", (event) => {
+			const index = ticks.indexOf(event.target);
+			if (index < 0) return;
+			rove(index);
+			preview(index);
+		});
+		list.addEventListener("keydown", (event) => {
+			const index = ticks.indexOf(event.target);
+			if (index < 0) return;
+			if (event.key === "Escape") {
+				if (card.hidden) return;
+				event.preventDefault();
+				hide();
+				return;
+			}
+			const target = { ArrowUp: index - 1, ArrowDown: index + 1, Home: 0, End: ticks.length - 1 }[event.key];
+			if (target === undefined) return;
+			event.preventDefault();
+			ticks[Math.max(0, Math.min(target, ticks.length - 1))].focus();
+		});
+		// 指针离开时若刻度仍有键盘焦点，卡片回到该刻度，否则收起。
+		nav.addEventListener("pointerleave", () => {
+			const focused = ticks.findIndex((tick) => tick.matches(":focus-visible"));
+			if (focused >= 0) preview(focused);
+			else hide();
+		});
+		nav.addEventListener("focusout", ({ relatedTarget }) => {
+			if (nav.contains(relatedTarget)) return;
+			rove(current);
+			if (!nav.matches(":hover")) hide();
+		});
+		// 点击卡片不抢走刻度焦点，效果与点击刻度相同。
+		card.addEventListener("mousedown", (event) => event.preventDefault());
+		card.addEventListener("click", () => jump(previewed));
+
+		return {
+			/** 按请求记录同步刻度与名称。@param {object[]} next 当前会话的请求记录 @returns {void} */
+			update(next) {
+				const ids = next.map(({ requestId }) => requestId);
+				if (ids.join("\n") !== records.map(({ requestId }) => requestId).join("\n")) {
+					for (const id of items.keys()) if (!ids.includes(id)) items.delete(id);
+					for (const id of ids) {
+						if (items.has(id)) continue;
+						const item = element("li");
+						const tick = element("button", "navigator-tick");
+						tick.type = "button";
+						tick.tabIndex = -1;
+						tick.dataset.request = id;
+						item.append(tick);
+						items.set(id, item);
+					}
+					// 复用已有刻度，新增轮次时不打断正在刻度上的键盘焦点。
+					orderChildren(
+						list,
+						ids.map((id) => items.get(id)),
+					);
+					ticks = ids.map((id) => items.get(id).firstElementChild);
+					for (const tick of ticks) tick.removeAttribute("aria-current");
+					current = -1;
+					hide();
+				}
+				records = next;
+				for (const [index, tick] of ticks.entries()) {
+					const label = `第 ${index + 1} 轮：${Array.from(turnPreview(records[index], "").title).slice(0, 40).join("")}`;
+					if (tick.getAttribute("aria-label") !== label) tick.setAttribute("aria-label", label);
+				}
+				schedule();
+			},
+			/** 切换会话时清空刻度并隐藏导航条。@returns {void} */
+			reset() {
+				records = [];
+				ticks = [];
+				items.clear();
+				list.replaceChildren();
+				current = -1;
+				hide();
+				nav.hidden = true;
+			},
+		};
+	}
+
+	/**
 	 * 更新同一会话的消息，保留工具折叠、键盘焦点与阅读位置；切换会话时记住并恢复各自的位置。
 	 * @param {HTMLElement} root 消息列表
 	 * @param {HTMLElement} scroll 滚动区域
 	 * @param {object} actions 取消与打开交付物
 	 * @param {HTMLButtonElement} bottom 回到底部按钮
+	 * @param {HTMLElement} [navigator] 会话导航条，未传时不显示导航
 	 * @returns {object} 消息更新与重置接口
 	 */
-	function thread(root, scroll, actions, bottom) {
+	function thread(root, scroll, actions, bottom, navigator) {
 		const views = new Map();
 		const positions = new Map();
+		const navigation = navigator && navigatorView(navigator, scroll, root, views);
 		let pending;
 		let unseen = false;
 		const distance = () => scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop;
@@ -560,6 +779,7 @@ window.agentUI = (() => {
 				scroll.scrollTop = 0;
 				pending = next ? positions.get(next) : undefined;
 				unseen = false;
+				navigation?.reset();
 			},
 			update(records, forceFollow = false) {
 				// 紧凑会话刚出现滚动条时，停在顶部仍代表用户正在回看。
@@ -568,7 +788,8 @@ window.agentUI = (() => {
 				const overflow = height - scroll.clientHeight;
 				const follow = forceFollow || overflow <= 0 || (offset > 0 && overflow - offset < 65);
 				let cursor = root.firstElementChild;
-				for (const record of records) {
+				const list = [...records];
+				for (const record of list) {
 					if (!views.has(record.requestId)) views.set(record.requestId, message(record.requestId, actions));
 					const view = views.get(record.requestId);
 					view.update(record);
@@ -585,9 +806,10 @@ window.agentUI = (() => {
 					scroll.scrollTop = follow ? scroll.scrollHeight : offset;
 				}
 				syncBottom();
+				navigation?.update(list);
 			},
 		};
 	}
 
-	return { sessionList, bindComposer, thread, inputRecall };
+	return { sessionList, bindComposer, thread, inputRecall, navigatorTurn, turnPreview };
 })();

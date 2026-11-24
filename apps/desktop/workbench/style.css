@@ -1459,6 +1459,7 @@ summary:focus-visible {
 
 .conversation-body {
 	--gutter: clamp(17px, calc(4 * var(--layout-vw, 1vw)), 48px);
+	position: relative;
 	display: flex;
 	flex: 1;
 	flex-direction: column;
@@ -1517,6 +1518,119 @@ summary:focus-visible {
 	height: 8px;
 	border-radius: 50%;
 	background: var(--accent);
+}
+/* 会话导航条：浮在消息列左侧留白的中线上，覆盖滚动区域的可视高度，刻度列表纵向居中。
+   容器本身不接收指针，避免整条透明区域挡住留白处的点击；刻度与卡片单独接收。 */
+.thread-navigator {
+	position: absolute;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	width: 28px;
+	translate: -50% 0;
+	pointer-events: none;
+}
+.thread-navigator[hidden] {
+	display: none;
+}
+/* 刻度列表不显示滚动条：12 像素的滑块会挤占 28 像素的命中区，滚轮与当前刻度自动滚入视野已足够定位。 */
+.navigator-ticks {
+	display: grid;
+	gap: 4px;
+	max-height: 60%;
+	margin: 0;
+	padding: 4px 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	list-style: none;
+	scrollbar-width: none;
+	pointer-events: auto;
+}
+.navigator-tick {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 8px;
+	padding: 0;
+	border: 0;
+	border-radius: 2px;
+	background: none;
+	cursor: pointer;
+}
+.navigator-tick::before {
+	content: "";
+	width: 12px;
+	height: 2px;
+	border-radius: 1px;
+	background: var(--edge);
+}
+.navigator-tick:hover::before {
+	background: var(--muted);
+}
+.navigator-tick[aria-current="true"]::before {
+	width: 20px;
+	height: 3px;
+	background: var(--ink);
+}
+/* 列表裁切溢出内容，焦点环收进按钮内侧才能完整显示。 */
+.navigator-tick:focus-visible {
+	outline-offset: -2px;
+}
+.navigator-card {
+	position: absolute;
+	left: calc(100% + 8px);
+	width: 280px;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--surface);
+	box-shadow: 0 8px 28px rgb(0 0 0 / 12%);
+	color: var(--ink);
+	font-size: 12px;
+	line-height: 1.5;
+	cursor: pointer;
+	pointer-events: auto;
+}
+/* 透明桥接刻度与卡片之间的空隙，指针移到卡片上时仍在导航条内，卡片不会收起。 */
+.navigator-card::before {
+	content: "";
+	position: absolute;
+	inset: 0 100% 0 auto;
+	width: 9px;
+}
+.navigator-card strong,
+.navigator-card p {
+	display: -webkit-box;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+	-webkit-box-orient: vertical;
+}
+.navigator-card strong {
+	font-size: 13px;
+	font-weight: 600;
+	-webkit-line-clamp: 2;
+}
+.navigator-card p {
+	margin-top: 4px;
+	color: var(--muted);
+	-webkit-line-clamp: 3;
+}
+@media (prefers-reduced-motion: no-preference) {
+	.navigator-tick::before {
+		transition:
+			width 0.15s ease,
+			height 0.15s ease,
+			background-color 0.15s ease;
+	}
+}
+@media (forced-colors: active) {
+	.navigator-tick::before {
+		background: CanvasText;
+	}
+	.navigator-tick[aria-current="true"]::before {
+		background: Highlight;
+	}
 }
 .workbench[data-home="true"] .composition {
 	--gutter: clamp(20px, calc(3.51 * var(--layout-vw, 1vw)), 46px);

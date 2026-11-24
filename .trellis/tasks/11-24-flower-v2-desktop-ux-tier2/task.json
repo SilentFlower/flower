@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "11-24-flower-v2-desktop-ux-tier2-navigator"
+  ],
   "parent": "11-24-flower-v2-desktop-ux",
   "relatedFiles": [],
   "notes": "",
