@@ -3,7 +3,7 @@
   "name": "flower-v2-desktop-ux-tier2",
   "title": "第二档 追问、队列与会话检索",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": "flower-code-reviewer",
@@ -11,7 +11,7 @@
   "creator": "silentflower",
   "assignee": "silentflower",
   "createdAt": "2026-11-24",
-  "completedAt": null,
+  "completedAt": "2026-11-24",
   "branch": null,
   "base_branch": "v2",
   "worktree_path": null,
@@ -26,18 +26,19 @@
   "notes": "",
   "meta": {},
   "closeout": {
-    "status": "pending",
-    "closedAt": null,
+    "status": "closed",
+    "closedAt": "2026-11-24T10:19:17Z",
     "blockers": []
   },
   "progress": {
     "completedSteps": [
       "第一批 输入区：排队与插话、选区引用与侧边追问、@ 提及与拖入、Toast 组件",
-      "第二批 检索与上下文：手动压缩与压缩分隔、会话正文搜索、中断恢复"
+      "第二批 检索与上下文：手动压缩与压缩分隔、会话正文搜索、中断恢复",
+      "第三批 零散体验：交付卡片元信息、删除会话撤销、全局指令与 FLOWER.md，文档与 Windows 实机回归"
     ],
     "partialStep": null,
-    "nextStep": "第三批 零散体验：交付卡片元信息、撤销删除会话、全局指令与 FLOWER.md，收尾文档与 Windows 实机回归",
-    "notes": "",
-    "updatedAt": "2026-11-24T09:55:51Z"
+    "nextStep": "第三档规划：本轮变更撤销、编辑重发与回退分叉、结构化提问卡、导出与复制为图片、应用内更新",
+    "notes": "Windows 候选包复用第一档已验收的 Electron 45.3.2 运行时组装，正式发版仍需 package:windows",
+    "updatedAt": "2026-11-24T10:19:17Z"
   }
 }

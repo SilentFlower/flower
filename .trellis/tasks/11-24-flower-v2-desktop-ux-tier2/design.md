@@ -76,7 +76,7 @@ code-reviewer 走 `createExecution` 授权：`steer` 在无 `execution.steer` �
 
 ## 7. 交付卡片元信息（R7）
 
-- IPC `artifact-info(session, requestId, path)`：沿用 `open-artifact` 的归属校验；`.xlsx` 用 exceljs 读取（16 MB 上限）返回工作表数与有值行数合计（不含表头），`.md` 返回去空白后的字数。按路径与 `mtimeMs` 缓存。渲染层在卡片渲染后异步填充，失败静默。
+- IPC `artifact-info(session, path)`：限当前会话工作区内符合分析产物格式（`Flower-分析-<uuid>/` 下的三种固定文件）的路径，只读元信息、不启动外部程序，因此不像 `open-artifact` 那样核对请求归属，避免每张卡片都读取整段历史；`.xlsx` 用 exceljs 读取（16 MB 上限）返回工作表数与有值行数合计（不含表头），`.md` 返回去空白后的字数。按路径与 `mtimeMs` 缓存。渲染层在卡片渲染后异步填充，失败静默。
 
 ## 8. Toast 与撤销删除（R8）
 
