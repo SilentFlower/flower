@@ -140,7 +140,10 @@ window.agentUI = (() => {
 			return group;
 		}
 
-		return (items, { active, grouped, spaces, query: nextQuery }) => {
+		/** 按当前搜索态取折叠集合。@returns {Set<string>} 折叠的工作区 */
+		const foldSet = () => (query ? searchCollapsed : collapsed);
+
+		const render = (items, { active, grouped, spaces, query: nextQuery }) => {
 			// 搜索自动展开结果，清除查询后恢复原来的折叠状态。
 			if (query !== nextQuery) searchCollapsed.clear();
 			query = nextQuery;
@@ -211,6 +214,39 @@ window.agentUI = (() => {
 				if (!entries.has(id)) groups.delete(id);
 			}
 		};
+		/** 折叠或展开全部工作区分组，搜索中作用于搜索结果。@param {boolean} collapse 为 true 时全部折叠 @returns {void} */
+		render.collapseAll = (collapse) => {
+			for (const [id, group] of groups) {
+				if (collapse) foldSet().add(id);
+				else foldSet().delete(id);
+				showGroup(group, !collapse);
+			}
+		};
+		/** 是否还有展开的分组。@returns {boolean} 有展开分组时为 true */
+		render.anyExpanded = () => [...groups.keys()].some((id) => !foldSet().has(id));
+		/**
+		 * 展开会话所在分组，滚动到侧栏中部并聚焦、短暂高亮。
+		 * @param {string} id 会话 ID
+		 * @returns {boolean} 会话行在列表中时为 true
+		 */
+		render.reveal = (id) => {
+			const row = nodes.get(id);
+			if (!row?.isConnected) return false;
+			for (const [key, group] of groups) {
+				if (!group.entries.contains(row) || !foldSet().delete(key)) continue;
+				showGroup(group, true);
+			}
+			const control = row.firstElementChild;
+			const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+			control.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
+			control.focus({ preventScroll: true });
+			control.removeAttribute("data-located");
+			void control.offsetWidth;
+			control.toggleAttribute("data-located", true);
+			setTimeout(() => control.removeAttribute("data-located"), 1200);
+			return true;
+		};
+		return render;
 	}
 
 	/**

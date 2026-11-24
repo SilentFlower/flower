@@ -290,6 +290,57 @@ try {
 	);
 
 	// 窗口状态
+	step("侧栏折叠定位、细滚动条与右栏样式");
+	if (!(await page.locator("#sessions-collapse").isVisible())) await page.locator("#sidebar-view").click();
+	await page.locator("#sessions-collapse").waitFor();
+	if ((await page.locator("#sessions-collapse").getAttribute("title")) === "全部折叠")
+		await page.locator("#sessions-collapse").click();
+	assert.equal(await page.locator("#sessions-collapse").getAttribute("title"), "全部展开");
+	assert.equal(await page.locator(".session-row:visible").count(), 0);
+	await page.locator("#sessions-locate").click();
+	await until(() =>
+		page.evaluate(
+			() =>
+				document.activeElement?.classList.contains("session-row") &&
+				document.activeElement.getAttribute("aria-current") === "true",
+		),
+	);
+	assert.equal(await page.locator("#sessions-collapse").getAttribute("title"), "全部折叠");
+	// 标准属性 scrollbar-width 会让自定义滑块失效，三个滚动区都应使用自动隐藏的细滚动条。
+	const scrollers = await page.evaluate(() =>
+		["#sidebar-scroll", "#thread-scroll", "#workspace-panel-view"].map((selector) => {
+			const node = document.querySelector(selector);
+			return [node.classList.contains("soft-scroll"), getComputedStyle(node).scrollbarWidth];
+		}),
+	);
+	assert.deepEqual(scrollers, [
+		[true, "auto"],
+		[true, "auto"],
+		[true, "auto"],
+	]);
+	await page.locator("#thread-scroll").evaluate((node) => {
+		node.scrollTop = node.scrollHeight / 3;
+	});
+	await page.screenshot({ path: join(evidence, "细滚动条-主会话.png") });
+	if (await page.locator("#workspace-panel").isHidden()) await page.locator("#workspace-panel-toggle").click();
+	// 前面预览过 notes.txt，返回上一级回到文件列表。
+	if (await page.locator("#panel-up").isVisible()) await page.locator("#panel-up").click();
+	await page.locator("#workspace-panel .panel-file-row").first().waitFor();
+	const tones = await page.evaluate(() =>
+		Object.fromEntries(
+			[...document.querySelectorAll("#workspace-panel .panel-file-row")].map((row) => [
+				row.dataset.ext || row.dataset.kind,
+				getComputedStyle(row.querySelector(".icon")).color,
+			]),
+		),
+	);
+	assert.notEqual(tones.png, tones.txt);
+	assert.notEqual(tones.xlsx, tones.txt);
+	await page.screenshot({ path: join(evidence, "右栏文件.png") });
+	results.push(
+		`工作区模式下全部折叠、定位当前会话可用；三个滚动区使用自动隐藏细滚动条；右栏图标按类型着色 ${JSON.stringify(tones)}`,
+	);
+
 	step("窗口状态");
 	// 前面预览路径时已打开侧栏，先收起，确保外扩从未扩展的外框开始。
 	if (await page.locator("#workspace-panel").isVisible()) {

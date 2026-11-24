@@ -18,6 +18,7 @@
 		const content = by("panel-content");
 		const location = by("panel-location");
 		const view = by("workspace-panel-view");
+		window.flowerUI.softScroll(view);
 		const narrow = matchMedia("(max-width: 980px)");
 		const previewAdd = by("panel-reference");
 		let attached = new Set();
@@ -194,6 +195,8 @@
 				else if (/\.(?:md|mdx|pdf|docx|txt)$/i.test(entry.name)) type = "report";
 				else if (/\.(?:[cm]?[jt]sx?|json|css|html|py|sh|go|rs|java|ya?ml)$/i.test(entry.name)) type = "code";
 				control.dataset.kind = type;
+				// 同属文档类的 PDF 与 Word 按扩展名再区分图标颜色。
+				control.dataset.ext = directory ? "" : (/\.([^.]+)$/.exec(entry.name)?.[1] ?? "").toLowerCase();
 				control.append(icon(type), name);
 				control.title = entry.name;
 				control.setAttribute("aria-label", `${directory ? "进入目录" : "预览文件"}：${entry.name}`);
@@ -294,6 +297,7 @@
 					return;
 				}
 				const diff = element("div", "git-diff");
+				window.flowerUI.softScroll(diff);
 				const caption = element("div", "diff-caption", change.group === "staged" ? "已暂存的更改" : "工作区更改");
 				content.append(caption, diff);
 				let oldLine = 0;

@@ -104,7 +104,6 @@
 	min-height: 0;
 	padding: 10px 12px 18px;
 	overflow: auto;
-	scrollbar-width: thin;
 }
 
 .workspace-panel-path {
@@ -422,21 +421,55 @@
 	color: var(--muted);
 	font-weight: normal;
 }
+/* 文件类型与 Git 状态的识别色，深色模式提高明度。 */
+#workspace-panel {
+	--tone-folder: light-dark(#a88143, #d4ad6e);
+	--tone-pdf: light-dark(#c4473c, #ee7d72);
+	--tone-word: light-dark(#2f6bc9, #7ea8ef);
+	--tone-image: light-dark(#8656c2, #b998e6);
+	--tone-code: light-dark(#14857a, #52bfb2);
+	--tone-modified: light-dark(#b57417, #e2b25b);
+}
 .panel-file-list li {
 	border-radius: 6px;
+	transition: background-color 0.12s ease;
 }
 .panel-file-list li:is(:hover, :focus-within) {
 	background: var(--wash);
 }
+.panel-file-row[data-kind="folder"] {
+	font-weight: 500;
+}
 .panel-file-row[data-kind="folder"] .icon:first-child {
-	color: #a88143;
-	fill: color-mix(in srgb, currentColor 13%, transparent);
+	color: var(--tone-folder);
+	fill: color-mix(in srgb, currentColor 16%, transparent);
 }
 .panel-file-row[data-kind="table"] .icon {
 	color: var(--good);
 }
 .panel-file-row[data-kind="report"] .icon {
 	color: color-mix(in srgb, var(--accent) 55%, var(--muted));
+}
+.panel-file-row[data-ext="pdf"] .icon {
+	color: var(--tone-pdf);
+}
+.panel-file-row[data-ext="docx"] .icon {
+	color: var(--tone-word);
+}
+.panel-file-row[data-kind="image"] .icon {
+	color: var(--tone-image);
+}
+.panel-file-row[data-kind="code"] .icon {
+	color: var(--tone-code);
+}
+.panel-file-row .panel-enter {
+	color: var(--muted);
+	opacity: 0.7;
+}
+@media (prefers-reduced-motion: reduce) {
+	.panel-file-list li {
+		transition: none;
+	}
 }
 #panel-content > :is(.markdown-reply, .panel-prose, .panel-document) {
 	margin: 12px auto;
@@ -479,28 +512,48 @@
 	gap: 9px;
 }
 .git-branch {
-	padding: 8px;
-	font-size: 13px;
+	width: fit-content;
+	max-width: 100%;
+	margin: 4px 6px;
+	padding: 4px 10px 4px 8px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--surface);
+	font-size: 12px;
 	overflow-wrap: anywhere;
 }
 .git-branch .icon {
-	color: var(--muted);
+	width: 14px;
+	height: 14px;
+	color: var(--accent);
 }
 .git-group {
-	margin: 15px 8px 5px;
+	margin: 16px 8px 6px;
 	font-size: 12px;
 	font-weight: 600;
 	color: var(--muted);
 }
 .git-group small {
-	font-weight: 400;
+	min-width: 18px;
+	padding: 0 6px;
+	border-radius: 999px;
+	background: var(--wash);
+	font-weight: 500;
+	text-align: center;
 }
 .button.git-row {
 	width: 100%;
 	padding: 5px 8px;
+	border-radius: 6px;
 	text-align: start;
-	min-height: 33px;
+	min-height: 32px;
 	font-size: 13px;
+}
+.git-row .icon {
+	width: 15px;
+	height: 15px;
+	flex: none;
+	color: var(--muted);
 }
 .git-name,
 .git-parent {
@@ -512,18 +565,41 @@
 	color: var(--muted);
 	font-size: 11px;
 }
+/* 状态标签：修改为琥珀色，新增与未跟踪为绿色，删除为红色，重命名为蓝色。 */
+.git-row {
+	--git-tone: var(--muted);
+}
+.git-row[data-code="M"] {
+	--git-tone: var(--tone-modified);
+}
+.git-row:is([data-code="?"], [data-code="A"]) {
+	--git-tone: var(--good);
+}
+.git-row[data-code="D"] {
+	--git-tone: var(--danger);
+}
+.git-row[data-code="R"] {
+	--git-tone: var(--tone-word);
+}
+.git-row .icon {
+	color: var(--git-tone);
+}
 .git-state {
+	flex: none;
+	min-width: 20px;
 	margin-left: auto;
+	padding: 1px 5px;
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--git-tone) 15%, transparent);
+	color: var(--git-tone);
 	font:
-		600 12px Consolas,
+		700 11px / 16px Consolas,
 		monospace;
+	text-align: center;
+}
+.git-row[data-code="D"] .git-name {
 	color: var(--muted);
-}
-.git-row:is([data-code="?"], [data-code="A"]) .git-state {
-	color: var(--good);
-}
-.git-row[data-code="D"] .git-state {
-	color: var(--danger);
+	text-decoration: line-through;
 }
 .diff-caption {
 	margin: 16px 2px 8px;
@@ -559,8 +635,19 @@
 	text-align: end;
 	font-size: 11px;
 }
+/* 行号栏用底色与正文分开，增删行左侧加色条，便于快速扫读。 */
+.git-diff :is(.diff-added, .diff-removed, .diff-context) {
+	box-shadow: inset 3px 0 transparent;
+}
+.git-diff .diff-number {
+	padding-inline-end: 4px;
+	background: color-mix(in srgb, var(--wash) 70%, transparent);
+}
 .diff-added {
 	background: color-mix(in srgb, var(--good) 12%, transparent);
+}
+.git-diff .diff-added {
+	box-shadow: inset 3px 0 var(--good);
 }
 .diff-added .diff-sign {
 	color: var(--good);
@@ -568,14 +655,18 @@
 .diff-removed {
 	background: color-mix(in srgb, var(--danger) 11%, transparent);
 }
+.git-diff .diff-removed {
+	box-shadow: inset 3px 0 var(--danger);
+}
 .diff-removed .diff-sign {
 	color: var(--danger);
 }
 .diff-hunk {
 	padding: 5px 12px;
+	border-block: 1px solid var(--line);
 	font: 12px var(--body);
-	color: var(--muted);
-	background: var(--wash);
+	color: color-mix(in srgb, var(--accent) 60%, var(--muted));
+	background: color-mix(in srgb, var(--accent) 6%, var(--wash));
 }
 
 /* 面板停靠：左侧时交换面板与聊天区的网格列，窄窗抽屉从左缘展开。 */

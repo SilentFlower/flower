@@ -804,6 +804,40 @@ summary:focus-visible {
 	font-size: 12px;
 	font-weight: 500;
 }
+.session-list-head {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin: 0 3px 4px 0;
+}
+.session-list-head h2 {
+	flex: 1;
+	margin-block: 0;
+}
+.button.session-list-tool {
+	width: 24px;
+	min-height: 24px;
+	padding: 0;
+	color: var(--muted);
+}
+.session-list-tool .icon {
+	width: 14px;
+	height: 14px;
+}
+/* 定位后短暂高亮当前会话行，减弱动效时只保留静态底色。 */
+.session-row[data-located] {
+	box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+	.session-row[data-located] {
+		animation: session-located 1.2s ease-out;
+	}
+}
+@keyframes session-located {
+	from {
+		background: color-mix(in srgb, var(--accent) 18%, transparent);
+	}
+}
 .sidebar-assistant {
 	margin-bottom: 15px;
 }
@@ -843,29 +877,34 @@ summary:focus-visible {
 	padding: 3px;
 }
 
-/* 滑块隐藏时仍保留滚动条的命中范围，显示和收起不会移动会话行。 */
+/* 自动隐藏的细滚动条（侧栏、主会话区、右栏共用，脚本见 flowerUI.softScroll）。
+   滑块隐藏时仍保留滚动条的命中范围，显示和收起不会移动内容。
+   标准属性 scrollbar-width 会让 ::-webkit-scrollbar 失效，这些容器不能再设置它。 */
 @media (forced-colors: none) {
-	.sidebar-scroll::-webkit-scrollbar {
+	.soft-scroll::-webkit-scrollbar {
 		width: 12px;
+		height: 12px;
 	}
-	.sidebar-scroll::-webkit-scrollbar-track {
+	.soft-scroll::-webkit-scrollbar-track,
+	.soft-scroll::-webkit-scrollbar-corner {
 		background: transparent;
 	}
-	.sidebar-scroll::-webkit-scrollbar-button {
+	.soft-scroll::-webkit-scrollbar-button {
 		display: none;
 	}
-	.sidebar-scroll::-webkit-scrollbar-thumb {
+	.soft-scroll::-webkit-scrollbar-thumb {
 		min-height: 32px;
+		min-width: 32px;
 		border: 3px solid transparent;
 		border-radius: 6px;
 		background-color: transparent;
 		background-clip: padding-box;
 	}
-	.sidebar-scroll[data-scrolling]::-webkit-scrollbar-thumb {
+	.soft-scroll[data-scrolling]::-webkit-scrollbar-thumb {
 		background-color: light-dark(#d7d7d4, #3c3c3a);
 	}
-	.sidebar-scroll[data-scrolling]::-webkit-scrollbar-thumb:hover,
-	.sidebar-scroll::-webkit-scrollbar-thumb:active {
+	.soft-scroll[data-scrolling]::-webkit-scrollbar-thumb:hover,
+	.soft-scroll::-webkit-scrollbar-thumb:active {
 		background-color: light-dark(#b0b0ae, #555553);
 	}
 }
@@ -1428,7 +1467,6 @@ summary:focus-visible {
 	flex: 1;
 	min-height: 0;
 	overflow: auto;
-	scrollbar-width: thin;
 	overflow-anchor: none;
 }
 .timeline,

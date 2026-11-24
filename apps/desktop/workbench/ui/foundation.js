@@ -42,5 +42,33 @@ window.flowerUI = (() => {
 		if (node.textContent !== text) node.textContent = text;
 	}
 
-	return { element, button, icon, mark, feedback };
+	/**
+	 * 使用自动隐藏的细滚动条：静止时只保留命中区，滚动或指针移到右缘时显示滑块，停止操作 2 秒后隐藏。
+	 * @param {HTMLElement} node 滚动容器
+	 * @returns {void}
+	 */
+	function softScroll(node) {
+		node.classList.add("soft-scroll");
+		let timer;
+		const reveal = () => {
+			node.toggleAttribute("data-scrolling", true);
+			clearTimeout(timer);
+			timer = setTimeout(() => node.removeAttribute("data-scrolling"), 2000);
+		};
+		node.addEventListener("scroll", reveal, { passive: true });
+		node.addEventListener(
+			"mousemove",
+			(event) => {
+				if (node.scrollHeight <= node.clientHeight && node.scrollWidth <= node.clientWidth) return;
+				const rect = node.getBoundingClientRect();
+				// 滚动条宽 12 像素，指针进入右缘或下缘时提前显示滑块，便于抓取。
+				const right = rect.right - event.clientX;
+				const bottom = rect.bottom - event.clientY;
+				if ((right >= 0 && right <= 12) || (bottom >= 0 && bottom <= 12)) reveal();
+			},
+			{ passive: true },
+		);
+	}
+
+	return { element, button, icon, mark, feedback, softScroll };
 })();

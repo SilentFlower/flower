@@ -23,6 +23,8 @@ const sidebarPreference = "flower.desktop.sidebar.collapsed";
 const sidebarViewPreference = "flower.desktop.sidebar.view";
 const sidebarView = by("sidebar-view");
 let groupedByWorkspace = false;
+// 侧栏当前列出的工作区或会话数，决定「全部折叠」是否显示。
+let listedCount = 0;
 const searchBox = by("session-search-box");
 const searchInput = by("session-search");
 const searchButton = by("session-search-toggle");
@@ -442,6 +444,8 @@ function renderSessions() {
 	// 会话列表用 query 判断是否处于搜索态并自动展开分组，筛选条件变化同样视为一次新搜索
 	const searchKey = query || filtered ? [query, sessionFilter.status, sessionFilter.workspace].join("\n") : "";
 	updateSessions(items, { active: session, grouped: groupedByWorkspace, spaces, query: searchKey });
+	listedCount = count;
+	syncSessionTools();
 	by("session-search-empty").hidden = !searchKey || Boolean(count);
 	const empty = by("session-list-empty");
 	empty.hidden = !state?.ready || Boolean(searchKey) || Boolean(count);
@@ -460,22 +464,7 @@ function setSidebarView(grouped) {
 }
 
 const sidebarScroll = by("sidebar-scroll");
-let sidebarScrollTimer;
-function revealSidebarScroll() {
-	sidebarScroll.toggleAttribute("data-scrolling", true);
-	clearTimeout(sidebarScrollTimer);
-	sidebarScrollTimer = setTimeout(() => sidebarScroll.removeAttribute("data-scrolling"), 2000);
-}
-sidebarScroll.addEventListener("scroll", revealSidebarScroll, { passive: true });
-sidebarScroll.addEventListener(
-	"mousemove",
-	(event) => {
-		if (sidebarScroll.scrollHeight <= sidebarScroll.clientHeight) return;
-		const edge = sidebarScroll.getBoundingClientRect().right - event.clientX;
-		if (edge >= 0 && edge <= 12) revealSidebarScroll();
-	},
-	{ passive: true },
-);
+for (const node of [sidebarScroll, by("thread-scroll")]) flowerUI.softScroll(node);
 
 function collapseSidebar(collapsed) {
 	workbench.dataset.sidebar = collapsed ? "collapsed" : "expanded";
@@ -490,6 +479,33 @@ function collapseSidebar(collapsed) {
 		// 本机偏好不可写时仍允许折叠当前窗口。
 	}
 }
+
+/** 同步侧栏标题行的折叠与定位按钮。@returns {void} */
+function syncSessionTools() {
+	const collapse = by("sessions-collapse");
+	collapse.hidden = !groupedByWorkspace || !listedCount;
+	const expanded = updateSessions.anyExpanded();
+	collapse.title = expanded ? "全部折叠" : "全部展开";
+	collapse.setAttribute("aria-label", collapse.title);
+	collapse.querySelector("use").setAttribute("href", expanded ? "#icon-collapse-all" : "#icon-expand-all");
+	by("sessions-locate").disabled = !session;
+}
+by("sessions-collapse").addEventListener("click", () => {
+	updateSessions.collapseAll(updateSessions.anyExpanded());
+	syncSessionTools();
+});
+// 单独展开或折叠某个分组后，同步「全部折叠 / 全部展开」。
+by("sessions").addEventListener("click", syncSessionTools);
+by("sessions-locate").addEventListener("click", () => {
+	if (!session) return;
+	if (workbench.dataset.sidebar === "collapsed") collapseSidebar(false);
+	// 搜索或筛选可能把当前会话隐藏，恢复完整列表后再定位。
+	if (!updateSessions.reveal(session) && (searchInput.value || sessionFilter.status || sessionFilter.workspace)) {
+		showSearch(false);
+		updateSessions.reveal(session);
+	}
+	syncSessionTools();
+});
 
 function showSearch(open) {
 	if (open && workbench.dataset.sidebar === "collapsed") collapseSidebar(false);
