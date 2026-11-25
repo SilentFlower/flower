@@ -273,7 +273,8 @@ describe("共享 pi 核心的双宿主验证", () => {
 		expect(nodePid).toBe(process.pid);
 		expect(childPid).not.toBe(process.pid);
 		expect(childBuild).toEqual(nodeBuild);
-		expect(nodeBuild).toMatchObject({ packageVersion: "0.1.0", piAgentVersion: "1.6.0", piAiVersion: "1.6.0" });
+		const { version: packageVersion } = require("../package.json") as { version: string };
+		expect(nodeBuild).toMatchObject({ packageVersion, piAgentVersion: "1.6.0", piAiVersion: "1.6.0" });
 		expect(nodeBuild.entry).toMatch(/packages\/agent-runtime\/dist\/index\.js$/);
 		expect(nodeBuild.fingerprint).toMatch(/^[a-f0-9]{64}$/);
 		console.info("双宿主构建信息", { ...nodeBuild, enterprisePid: nodePid, desktopPid: childPid });

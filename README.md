@@ -78,7 +78,7 @@ npm publish "$release_dir/agent-runtime.tgz" --access public --registry https://
 npm run release
 ```
 
-目标 registry 已有本批精确版本的核心时，直接运行 `npm run release`。Changesets 会跳过已发布的核心版本。首次核心沿用仓库 `0.1.0` 起始版本。应用对 Flower 工作区依赖使用精确版本，Changesets 升版时同步依赖声明。同步锁文件后，按同批候选版本执行试装和发布。
+目标 registry 已有本批精确版本的核心时，直接运行 `npm run release`。Changesets 会跳过已发布的核心版本。核心包按自己的 Changeset 升版，宿主可通过 `npm install --save-exact @flower-ai/agent-runtime@0.2.0` 安装。应用对 Flower 工作区依赖使用精确版本，Changesets 升版时同步依赖声明。同步锁文件后，按同批候选版本执行试装和发布。
 
 ## v2 计划
 

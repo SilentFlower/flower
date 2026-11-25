@@ -1,6 +1,6 @@
 {
 	"name": "@flower-ai/agent-runtime",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"type": "module",
 	"description": "Flower 双宿主共享 pi 运行时",
 	"repository": {

@@ -1,6 +1,6 @@
 {
 	"name": "@flower-ai/flower-code-reviewer",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"type": "module",
 	"description": "GitLab Pipeline 代码评审 Agent,运行在 CI 容器内,自动评审 MR 并发表行内/整体评论",
 	"keywords": [
@@ -43,7 +43,7 @@
 	},
 	"dependencies": {
 		"@earendil-works/pi-coding-agent": "1.6.0",
-		"@flower-ai/agent-runtime": "0.1.0",
+		"@flower-ai/agent-runtime": "0.2.0",
 		"@flower-ai/flower-compliance": "0.1.0",
 		"@flower-ai/flower-providers": "0.1.0",
 		"@flower-ai/flower-telemetry": "0.1.0",
