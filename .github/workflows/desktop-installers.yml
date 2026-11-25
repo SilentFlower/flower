@@ -7,6 +7,7 @@ on:
       - '.github/workflows/desktop-installers.yml'
       - 'apps/desktop/installer/**'
       - 'apps/desktop/testing/verify-setup-windows.ps1'
+      - 'apps/desktop/testing/verify-setup-wizard.py'
       - 'apps/desktop/testing/test_desktop_installers.py'
   push:
     tags: ['flower-desktop-installers-v*']
@@ -85,6 +86,13 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP installers
           ./apps/desktop/installer/build-windows.ps1 -Version $env:VERSION -Downloads (Join-Path $env:RUNNER_TEMP downloads) -BuildDir (Join-Path $env:RUNNER_TEMP build) -Output $out
           ./apps/desktop/testing/verify-setup-windows.ps1 -Version $env:VERSION -Setup (Join-Path $out "Flower-Desktop-$env:VERSION-win32-x64-setup.exe")
+      - name: 保存 Windows 原生向导截图
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-wizard-screenshots
+          path: ${{ runner.temp }}/wizard-evidence/*.png
+          if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: installer-win32-x64
