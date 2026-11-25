@@ -196,7 +196,8 @@ try {
 	await by("base-url").fill(baseUrl);
 	await by("model-id").fill("markdown-local");
 	await by("save-settings").click();
-	await by("model-dialog").waitFor({ state: "hidden" });
+	await by("model-overview").waitFor();
+	await by("settings-close-dialog").click();
 	await by("workspace").click();
 	await page.waitForFunction(() => window.flower.state().then(({ selected }) => Boolean(selected)));
 	const session = (await page.evaluate(() => window.flower.state())).selected;
@@ -288,6 +289,7 @@ try {
 	await by("settings-appearance").click();
 	await page.locator(".theme-settings").getByText("深色", { exact: true }).click();
 	await page.locator(".theme-save").click();
+	await page.locator("#settings-close-dialog").click();
 	await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(660, 710));
 	await page.waitForFunction(() => innerWidth === 660 && innerHeight === 710);
 	const scroll = await assistant().evaluate((node) => {

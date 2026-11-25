@@ -1,0 +1,113 @@
+.ask-user {
+	margin-block-end: 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-l);
+	background: var(--surface);
+}
+.ask-user-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 9px 16px;
+	border-block-end: 1px solid var(--line);
+}
+.ask-user-header .icon {
+	width: 16px;
+	color: var(--accent);
+}
+.ask-user-header h2 {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 650;
+}
+.ask-user-body {
+	max-block-size: min(35vh, 280px);
+	padding: 11px 16px;
+	overflow: auto;
+}
+.ask-user-question {
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+.ask-user-question + .ask-user-question {
+	margin-block-start: 12px;
+	padding-block-start: 4px;
+}
+.ask-user-question legend {
+	max-width: 100%;
+	padding: 0;
+	color: var(--ink);
+	font-size: 14px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+.ask-user-multiple {
+	margin-inline-start: 7px;
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 400;
+	white-space: nowrap;
+}
+.ask-user-options {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+	gap: 5px 8px;
+	margin-block-start: 6px;
+}
+.ask-user-option {
+	display: flex;
+	align-items: baseline;
+	gap: 7px;
+	min-width: 0;
+	padding: 5px 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	color: var(--ink);
+	font-size: 13px;
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+	cursor: pointer;
+}
+.ask-user-option:hover {
+	background: var(--wash);
+}
+.ask-user-option:has(:checked) {
+	border-color: var(--accent);
+	background: var(--accent-tint);
+}
+.ask-user-option:has(:focus-visible) {
+	outline: 2px solid var(--focus);
+	outline-offset: -2px;
+}
+.ask-user-option input {
+	flex: none;
+	margin: 0;
+	accent-color: var(--accent);
+}
+.ask-user-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 6px;
+	padding: 8px 16px;
+	border-block-start: 1px solid var(--line);
+}
+.ask-user-actions .button {
+	min-height: 30px;
+}
+#stop-question {
+	margin-inline-end: auto;
+}
+#ask-user-error {
+	margin: 0;
+	padding: 0 16px 8px;
+}
+#ask-user-error:empty {
+	display: none;
+}
+
+.status[data-state="awaiting-answer"] {
+	color: var(--accent);
+}

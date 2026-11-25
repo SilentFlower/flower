@@ -11,15 +11,21 @@ window.agentUI = (() => {
 		interrupted: "上次运行已中断",
 	};
 	const stepStates = { error: "出错", stopped: "已结束" };
-	// 侧栏状态点的读屏文案；待批准沿用原有徽标显示文字。
-	const indicators = { running: "运行中", done: "已完成，未查看", failed: "失败，未查看", approval: "待批准" };
-	const indicatorRank = { approval: 4, running: 3, failed: 2, done: 1 };
+	// 需要用户处理的状态显示文字徽标，其余状态以点提示。
+	const indicators = {
+		running: "运行中",
+		done: "已完成，未查看",
+		failed: "失败，未查看",
+		approval: "待批准",
+		answer: "待回答",
+	};
+	const indicatorRank = { approval: 5, answer: 4, running: 3, failed: 2, done: 1 };
+	const needsUser = (indicator) => indicator === "approval" || indicator === "answer";
 
 	/** 设置状态点。@param {HTMLElement} dot 状态点 @param {string | undefined} indicator 状态 @returns {void} */
 	function showIndicator(dot, indicator) {
 		dot.dataset.indicator = indicator ?? "";
-		// 待批准已有文字徽标，状态点只表示其余三种状态。
-		dot.hidden = !indicator || indicator === "approval";
+		dot.hidden = !indicator || needsUser(indicator);
 	}
 	const activeStatuses = new Set(["queued", "running", "cancelling"]);
 	// 每个工具的进行中、完成、基础动作与摘要量词；未知工具归入「另外 N 项」。
@@ -29,6 +35,7 @@ window.agentUI = (() => {
 		inspect_excel: ["正在检查", "已检查", "检查", "个工作簿"],
 		analyze_excel: ["正在分析", "已分析", "分析", "个工作簿"],
 		write_report: ["正在写入", "已写入", "写入", "份报告"],
+		ask_user_question: ["提出问题", "已询问", "询问", "组问题"],
 	};
 	const otherAction = ["正在调用工具", "已调用工具", "调用工具"];
 	const endings = {
@@ -146,7 +153,8 @@ window.agentUI = (() => {
 			group.control.setAttribute("aria-label", `${group.name.textContent}，${group.control.title}${badge}`);
 			group.control.dataset.current = String(!expanded && group.containsActive);
 			group.entries.hidden = !expanded;
-			group.badge.hidden = indicator !== "approval";
+			group.badge.hidden = !needsUser(indicator);
+			group.badge.textContent = needsUser(indicator) ? indicators[indicator] : "";
 			showIndicator(group.dot, indicator);
 		}
 
@@ -198,7 +206,7 @@ window.agentUI = (() => {
 				nodes.delete(id);
 			}
 			for (const id of hitNodes.keys()) if (!live.has(id) || !snippets?.has(id)) hits(id);
-			const rows = items.map(({ id, title, awaitingWrite, pinned, indicator }) => {
+			const rows = items.map(({ id, title, awaitingWrite, awaitingAnswer, pinned, indicator }) => {
 				if (!nodes.has(id)) {
 					const control = button("", () => select(id), "session-row");
 					control.append(
@@ -213,11 +221,12 @@ window.agentUI = (() => {
 				row.lastElementChild.setAttribute("aria-label", `会话操作：${title}`);
 				const control = row.firstElementChild;
 				control.firstElementChild.textContent = title;
-				control.lastElementChild.hidden = !awaitingWrite;
-				showIndicator(control.children[1], indicator);
+				const label = awaitingWrite ? "approval" : awaitingAnswer ? "answer" : indicator;
+				control.lastElementChild.hidden = !needsUser(label);
+				control.lastElementChild.textContent = needsUser(label) ? indicators[label] : "";
+				showIndicator(control.children[1], label);
 				control.title = title;
 				control.setAttribute("aria-current", String(id === active));
-				const label = awaitingWrite ? "approval" : indicator;
 				control.setAttribute("aria-label", label ? `${title}，${indicators[label]}` : title);
 				const hit = hits(id, snippets?.get(id));
 				return hit ? [row, hit] : [row];
@@ -232,10 +241,10 @@ window.agentUI = (() => {
 				spaces.map((space) => [space.workspaceId, { ...space, rows: [], indicator: undefined, containsActive: false }]),
 			);
 			for (const [index, item] of items.entries()) {
-				const { workspaceId, awaitingWrite, id } = item;
+				const { workspaceId, awaitingWrite, awaitingAnswer, id } = item;
 				const entry = entries.get(workspaceId);
 				entry.rows.push(...rows[index]);
-				const indicator = awaitingWrite ? "approval" : item.indicator;
+				const indicator = awaitingWrite ? "approval" : awaitingAnswer ? "answer" : item.indicator;
 				if ((indicatorRank[indicator] ?? 0) > (indicatorRank[entry.indicator] ?? 0)) entry.indicator = indicator;
 				entry.containsActive ||= id === active;
 			}
@@ -562,7 +571,7 @@ window.agentUI = (() => {
 					entry.files.hidden = !item.attachments.length;
 					entry.files.title = item.attachments.map(({ name }) => name).join("、");
 					entry.steering.hidden = !item.steering;
-					entry.steer.hidden = item.steering || !view.steerable;
+					entry.steer.hidden = item.steering || !view.steerable || Boolean(item.skill);
 					for (const control of [entry.edit, entry.remove, entry.more]) control.disabled = item.steering;
 					entry.row.draggable = !item.steering;
 					entry.row.dataset.steering = String(Boolean(item.steering));
@@ -985,6 +994,17 @@ window.agentUI = (() => {
 		};
 	}
 
+	function shareCheckbox(kind, index, name) {
+		const label = element("label", "tier3-select-message");
+		const input = element("input");
+		input.type = "checkbox";
+		input.dataset.kind = kind;
+		input.dataset.index = String(index);
+		input.setAttribute("aria-label", name);
+		label.append(input, element("span", "", "选择"));
+		return label;
+	}
+
 	function message(id, actions) {
 		const node = element("article", "task");
 		node.dataset.request = id;
@@ -996,7 +1016,9 @@ window.agentUI = (() => {
 		copyInput.title = "复制提问原文";
 		copyInput.setAttribute("aria-label", copyInput.title);
 		copyInput.append(icon("copy"));
-		prompt.append(input, file, copyInput);
+		const selectInput = shareCheckbox("user", 0, "选择提问");
+		prompt.classList.add("tier3-share-piece");
+		prompt.append(input, file, copyInput, selectInput);
 		const reply = element("section", "assistant-message");
 		const head = element("header", "assistant-head");
 		const status = element("span", "status");
@@ -1007,36 +1029,55 @@ window.agentUI = (() => {
 		copy.title = "复制回复原文";
 		copy.setAttribute("aria-label", copy.title);
 		copy.append(icon("copy"));
+		const revise = button("", () => actions.revise(id, revise), "quiet tier3-revise-turn");
+		revise.title = "修订此轮消息";
+		revise.setAttribute("aria-label", revise.title);
+		revise.setAttribute("aria-haspopup", "menu");
+		revise.append(icon("more"));
 		// 未完成请求的回复正文不进入模型上下文（只保留工具回执），可以原样重试，或放回输入框修改后再发。
 		const retry = button("重试", () => actions.retry(id), "quiet retry-task");
 		const edit = button("编辑", () => actions.edit(id), "quiet retry-task");
-		head.append(mark("small"), element("h2", "", "Flower"), status, cancel, retry, edit, copy);
+		head.append(mark("small"), element("h2", "", "Flower"), status, cancel, retry, edit, revise, copy);
 		// 推理只是运行中的瞬时提示，单独成行避免挤压状态与操作按钮。
 		const thought = element("p", "reasoning-preview");
 		thought.setAttribute("aria-live", "polite");
 		const text = element("div", "message-text markdown-reply");
 		const markdown = window.flowerMarkdown.view(text, actions.openLink, actions.paths);
+		const firstReply = element("div", "tier3-share-piece");
+		const selectReply = shareCheckbox("reply", 0, "选择助手回复");
+		firstReply.append(text, selectReply);
 		// 每条插话后接一段回复正文，按送达时的正文位置切分。
 		const segments = [];
-		function showSteers(steers, full) {
-			const cuts = steers.map(({ textOffset }) => Math.min(Math.max(0, textOffset ?? full.length), full.length));
-			markdown.update(full.slice(0, cuts[0] ?? full.length));
+		function showSteers(steers, full, canSelect) {
+			let lastCut = 0;
+			const cuts = steers.map(({ textOffset }) => {
+				lastCut = Math.min(Math.max(lastCut, Number.isSafeInteger(textOffset) ? textOffset : full.length), full.length);
+				return lastCut;
+			});
+			const first = full.slice(0, cuts[0] ?? full.length);
+			markdown.update(first);
+			selectReply.hidden = !canSelect || !first;
 			while (segments.length < steers.length) {
-				const bubble = element("div", "steer-message");
+				const index = segments.length;
+				const bubble = element("div", "steer-message tier3-share-piece");
 				const words = element("p", "steer-text");
 				const files = element("div", "message-file file-chips");
 				const showFiles = window.flowerAttachments.view(files, undefined, id, actions.previewAttachment);
-				bubble.append(element("span", "steer-label", "插话"), words, files);
+				const chooseSteer = shareCheckbox("steer", index, `选择第 ${index + 1} 条插话`);
+				bubble.append(element("span", "steer-label", "插话"), words, files, chooseSteer);
 				const body = element("div", "message-text markdown-reply");
 				const view = window.flowerMarkdown.view(body, actions.openLink, actions.paths);
-				(segments.at(-1)?.body ?? text).after(bubble, body);
-				segments.push({ bubble, words, showFiles, body, view });
+				const response = element("div", "tier3-share-piece");
+				const chooseReply = shareCheckbox("reply", index + 1, `选择第 ${index + 1} 条插话后的回复`);
+				response.append(body, chooseReply);
+				(segments.at(-1)?.response ?? firstReply).after(bubble, response);
+				segments.push({ bubble, words, showFiles, response, view, chooseSteer, chooseReply });
 			}
 			while (segments.length > steers.length) {
 				const last = segments.pop();
 				last.showFiles.dispose();
 				last.bubble.remove();
-				last.body.remove();
+				last.response.remove();
 			}
 			for (const [index, steer] of steers.entries()) {
 				const segment = segments[index];
@@ -1044,7 +1085,9 @@ window.agentUI = (() => {
 				segment.showFiles(steer.attachments ?? []);
 				const part = full.slice(cuts[index], cuts[index + 1] ?? full.length);
 				segment.view.update(part);
-				segment.body.hidden = !part;
+				segment.response.hidden = !part;
+				segment.chooseSteer.hidden = !canSelect || !steer.input;
+				segment.chooseReply.hidden = !canSelect || !part;
 			}
 		}
 		const failure = element("p", "message-text message-error");
@@ -1055,7 +1098,9 @@ window.agentUI = (() => {
 			actions.paths?.menu,
 			actions.artifactInfo,
 		);
-		reply.append(head, thought, steps.node, text, failure, deliveries.node);
+		reply.append(head, thought, steps.node, firstReply, failure, deliveries.node);
+		const changes = actions.turnChanges && window.flowerTurnChanges.card(actions.turnChanges);
+		if (changes) reply.append(changes.node);
 		// 最近一次压缩落在本轮之前或之后时显示分隔，注明自动还是手动；早期检查点不区分。
 		const [compactedBefore, compactedAfter] = [0, 1].map(() => {
 			const divider = element("p", "compaction-divider");
@@ -1085,27 +1130,37 @@ window.agentUI = (() => {
 				showFiles(record.attachments ?? (record.file ? [{ id: `file:${record.file}`, name: record.file }] : []));
 				const state = states[record.status] ?? record.status;
 				// 首个正文或工具步骤到达前给出等待提示，避免用户以为没有响应。
-				const waiting = record.status === "running" && !record.text && !record.steps?.length;
-				const label = waiting ? "正在思考" : state;
+				const awaitingAnswer = record.status === "running" && record.awaitingAnswer;
+				const waiting = record.status === "running" && !awaitingAnswer && !record.text && !record.steps?.length;
+				const label = awaitingAnswer ? "待回答" : waiting ? "正在思考" : state;
 				if (status.textContent !== label) status.textContent = label;
-				status.dataset.state = record.status;
+				status.dataset.state = awaitingAnswer ? "awaiting-answer" : record.status;
 				status.toggleAttribute("data-thinking", waiting);
-				const reasoning = record.status === "running" && !record.text ? (record.reasoning ?? "") : "";
+				const reasoning = record.status === "running" && !awaitingAnswer && !record.text ? (record.reasoning ?? "") : "";
 				if (thought.textContent !== reasoning) thought.textContent = reasoning;
 				thought.hidden = !reasoning;
-				cancel.hidden = !["queued", "running"].includes(record.status);
+				cancel.hidden = awaitingAnswer || !["queued", "running"].includes(record.status);
 				const unfinished =
 					["failed", "cancelled", "interrupted", "denied"].includes(record.status) && Boolean(record.input);
 				retry.hidden = edit.hidden = !unfinished;
 				const retryText = record.status === "interrupted" ? "继续任务" : "重试";
 				if (retry.textContent !== retryText) retry.textContent = retryText;
 				copyInput.hidden = !record.input;
-				copy.hidden = !record.text || !record.status || ["queued", "running", "cancelling"].includes(record.status);
-				showSteers(record.steers ?? [], record.text ?? "");
+				const finished = Boolean(record.status) && !["queued", "running", "cancelling"].includes(record.status);
+				copy.hidden = !record.text || !finished;
+				revise.hidden = !actions.revise || record.status !== "succeeded" || !record.input;
+				const canSelect = Boolean(actions.revise) && finished;
+				selectInput.hidden = !canSelect || !record.input;
+				showSteers(record.steers ?? [], record.text ?? "", canSelect);
 				failure.hidden = !record.failure;
 				if (failure.textContent !== (record.failure ?? "")) failure.textContent = record.failure ?? "";
-				steps.update(record.steps ?? [], record);
+				// 等待时只保留标题状态和可操作的问题。工具历史在真正收到结果后再显示。
+				steps.update(
+					(record.steps ?? []).filter(({ toolName, endedAt }) => toolName !== "ask_user_question" || endedAt),
+					record,
+				);
 				deliveries.update(record.artifacts ?? []);
+				changes?.update(record);
 			},
 		};
 	}

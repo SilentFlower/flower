@@ -57,7 +57,7 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	const terminal = (requestId) => desktop.event((event) => event.requestId === requestId && event.type === "terminal");
 
 	// 主会话尚无完成的回答时不能打开侧边追问。
-	await assert.rejects(api.openSideChat(id), /请先等待主会话完成一次回答/);
+	await assert.rejects(api.openSideChat(id), /没有找到对应的本机会话/);
 
 	// 空闲时直接提交；运行中再发的消息进入队列，不出现在运行时请求中。
 	const first = await api.submit(id, "慢：第一问");

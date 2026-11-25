@@ -19,6 +19,7 @@ export function createRuntimeHost({
 	onExit,
 	gateway,
 	authorizeWrite,
+	requestQuestion,
 }) {
 	const env = Object.fromEntries(
 		Object.entries(process.env).filter(([key]) => /^(systemroot|windir|temp|tmp)$/i.test(key)),
@@ -31,6 +32,7 @@ export function createRuntimeHost({
 	const pending = new Map();
 	const streams = new Map();
 	const writes = new Map();
+	const questions = new Map();
 	let closed = false;
 
 	function send(frame) {
@@ -49,6 +51,8 @@ export function createRuntimeHost({
 		streams.clear();
 		for (const controller of writes.values()) controller.abort();
 		writes.clear();
+		for (const controller of questions.values()) controller.abort();
+		questions.clear();
 		for (const { reject, timeout } of pending.values()) {
 			clearTimeout(timeout);
 			reject(new Error("当前工作进程已关闭"));
@@ -71,6 +75,21 @@ export function createRuntimeHost({
 			writes.delete(frame.id);
 		}
 		if (!controller.signal.aborted) send({ type: "write-decision", id: frame.id, decision });
+	}
+
+	async function questionRequest(frame) {
+		if (questions.has(frame.id)) return;
+		const controller = new AbortController();
+		questions.set(frame.id, controller);
+		let selection;
+		try {
+			selection = await requestQuestion?.(frame, controller.signal);
+		} catch {
+			// 无法核验的提问视为已失效，工具不会收到虚构的用户选择。
+		} finally {
+			questions.delete(frame.id);
+		}
+		if (!controller.signal.aborted) send({ type: "question-decision", id: frame.id, selection });
 	}
 
 	/**
@@ -155,6 +174,12 @@ export function createRuntimeHost({
 				break;
 			case "cancel-write":
 				writes.get(frame.id)?.abort();
+				break;
+			case "question":
+				if (typeof frame.id === "string") void questionRequest(frame);
+				break;
+			case "cancel-question":
+				questions.get(frame.id)?.abort();
 				break;
 		}
 	});

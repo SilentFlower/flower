@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
+import { startMockModel } from "./mock-model.mjs";
 
 const [binary, evidence, tooling, unc] = process.argv.slice(2);
 assert(process.platform === "win32" && unc, "用法：<EXE> <新验证目录> <Playwright> <WSL测试目录UNC>");
@@ -11,6 +12,7 @@ await mkdir(evidence);
 const profile = join(evidence, "profile");
 const launch = () =>
 	electron.launch({ executablePath: binary, args: [`--user-data-dir=${profile}`], chromiumSandbox: true });
+const fixture = await startMockModel({ attachmentReply: () => ({ text: "工作区已验证。" }) });
 let app = await launch();
 try {
 	const page = await app.firstWindow();
@@ -26,16 +28,25 @@ try {
 		globalThis.pickerPath = path;
 	}, unc);
 	await page.locator("#workspace").click();
-	await page.waitForFunction(() => document.querySelectorAll("#sessions .session-row").length === 1);
+	await page.waitForFunction(() => window.flower.state().then(({ draft }) => Boolean(draft)));
 	const state = await page.evaluate(() => window.flower.state());
 	const selected = state.selected;
-	const entry = state.sessions.find(({ id }) => id === selected);
-	assert.equal(entry.path.toLowerCase(), unc.toLowerCase());
+	assert.equal(state.sessions.length, 0);
+	assert.equal(state.draft.path.toLowerCase(), unc.toLowerCase());
 	const report = await page.evaluate((id) => window.flower.previewWorkspaceFile(id, "项目说明.md"), selected);
 	assert.equal(report.text, "# WSL 工作区\n");
 	await page.locator("#workspace").click();
 	await page.waitForFunction(() => document.getElementById("workspace-label").textContent.length > 0);
 	assert.equal((await app.evaluate(() => globalThis.pickerRoot)).toLowerCase(), unc.toLowerCase());
+	await page.evaluate(
+		(baseUrl) => window.flower.saveModel({ serviceId: "", baseUrl, modelId: "local-test", apiKey: "" }),
+		fixture.baseUrl,
+	);
+	await page.locator("#prompt").fill("继续使用 WSL 工作区");
+	await page.locator("#send").click();
+	await page.locator('.task[data-status="succeeded"]').waitFor();
+	assert.equal((await page.evaluate(() => window.flower.state())).selected, selected);
+	assert.equal((await page.evaluate((id) => window.flower.history(id), selected)).length, 1);
 	await app.close();
 	app = await launch();
 	const restored = await app.firstWindow();
@@ -55,4 +66,5 @@ try {
 	);
 } finally {
 	await app.close();
+	await fixture.close();
 }

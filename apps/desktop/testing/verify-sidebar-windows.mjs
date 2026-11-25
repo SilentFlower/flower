@@ -69,13 +69,14 @@ const groupAt = (path) => groups().filter({ has: page.getByTitle(path, { exact: 
 const draft = () => page.locator("#prompt");
 const nativePicks = () => app.evaluate(() => [globalThis.sidebarQA.directories, globalThis.sidebarQA.files]);
 
-async function chooseWorkspace(directory, count) {
+async function chooseWorkspace(directory, label) {
 	await app.evaluate((_electron, path) => {
 		globalThis.sidebarQA.folder = path;
 	}, directory);
 	const id = await page.evaluate(() => window.flower.chooseWorkspace());
 	assert(id);
-	await page.waitForFunction((count) => document.querySelectorAll("#sessions .session-row").length === count, count);
+	assert.equal((await state()).draft.id, id);
+	await keepDraft(id, label);
 	return id;
 }
 
@@ -96,6 +97,12 @@ async function submitted(text) {
 	const request = page.locator(".task").filter({ hasText: text });
 	await request.waitFor();
 	return request;
+}
+
+async function keepDraft(id, title) {
+	const task = await submitted(`权限验收读取目录：${title}`);
+	await task.and(page.locator('[data-status="succeeded"]')).waitFor();
+	await page.evaluate(({ id, title }) => window.flower.manageSidebar("session", id, "rename", title), { id, title });
 }
 
 async function assertSidebarFits() {
@@ -127,13 +134,20 @@ try {
 	await view().press("Enter");
 	results.push("首启平铺，空视图可用键盘切换，零目录对话框、零会话与导航变化");
 
-	const a = await chooseWorkspace(roots[0], 1);
+	await page.evaluate(({ baseUrl, modelId }) => window.flower.saveModel({ baseUrl, modelId }), {
+		baseUrl: fixture.baseUrl,
+		modelId: fixture.modelId,
+	});
+	const a = await chooseWorkspace(roots[0], "甲组验收");
 	await setMode("ask");
 	await page.locator("#new-session").click();
+	await page.waitForFunction(() => window.flower.state().then(({ draft }) => Boolean(draft)));
+	const a2 = (await state()).draft.id;
+	assert.equal(await rows().count(), 1);
+	await keepDraft(a2, "资料 · 新会话");
 	await page.waitForFunction(() => document.querySelectorAll("#sessions .session-row").length === 2);
-	const a2 = (await state()).selected;
-	const a3 = await chooseWorkspace(roots[0], 3);
-	const b = await chooseWorkspace(roots[1], 4);
+	const a3 = await chooseWorkspace(roots[0], "甲组复验");
+	const b = await chooseWorkspace(roots[1], "乙组验收");
 	await setMode("read");
 	const sessions = (await state()).sessions;
 	const idFor = (id) => sessions.find((entry) => entry.id === id).workspaceId;
@@ -143,7 +157,7 @@ try {
 	assert.notEqual(idFor(a), idFor(b));
 	assert.equal(await rows().count(), 4);
 	assert.equal(await groups().count(), 0);
-	assert(await page.locator("#empty .home-avatar").isVisible());
+	assert((await state()).draft === undefined);
 	await page.screenshot({ path: join(evidence, "会话平铺.png") });
 	await view().click();
 	assert.equal(await groups().count(), 2);
@@ -202,17 +216,16 @@ try {
 
 	await openSession(a);
 	assert.equal((await state()).writeMode, "ask");
-	await page.evaluate(({ baseUrl, modelId }) => window.flower.saveModel({ baseUrl, modelId }), {
-		baseUrl: fixture.baseUrl,
-		modelId: fixture.modelId,
-	});
 	await page.locator("#composer-add").click();
 	await page.locator("#file").click();
 	await page.waitForFunction(() => document.querySelector("#attachment")?.textContent === "orders.xlsx");
 	const waiting = await submitted("权限验收侧栏切换");
 	await page.locator("#write-approval").waitFor();
-	const queued = await submitted("权限验收读取文本排队");
-	assert.equal(await queued.getAttribute("data-status"), "queued");
+	const queuedText = "权限验收读取文本排队";
+	await draft().fill(queuedText);
+	await page.locator("#send").click();
+	const queued = page.locator("#queue .queue-item").filter({ hasText: queuedText });
+	await queued.waitFor();
 	await draft().fill("切换期间一直保留的草稿");
 	const before = await state();
 	assert(before.writeApproval?.id && before.modelBusy && before.writeModeBusy);
@@ -228,14 +241,14 @@ try {
 		assert.deepEqual(await state(), before);
 		assert.equal(await draft().inputValue(), "切换期间一直保留的草稿");
 		assert.equal(await waiting.getAttribute("data-status"), "running");
-		assert.equal(await queued.getAttribute("data-status"), "queued");
+		assert(await queued.isVisible());
 		assert(await page.locator("#write-approval").isVisible());
 		assert.deepEqual(await nav(), navigation);
 		assert.equal(await readFile(stateFile, "utf8"), persisted);
 	}
 	assert.deepEqual(await nativePicks(), [3, 1]);
 	await page.locator("#write-deny").click();
-	await queued.and(page.locator('[data-status="succeeded"]')).waitFor();
+	await page.locator('.task[data-status="succeeded"]').filter({ hasText: queuedText }).waitFor();
 	assert(!(await readdir(roots[0])).some((entry) => entry.startsWith("Flower-分析-")));
 	results.push("待审批运行及排队期间双向切换，草稿、权限、审批 ID、运行、队列、导航和工作台文件内容全程一致");
 

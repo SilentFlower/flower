@@ -15,7 +15,9 @@ export function createRequestHistory(directory) {
 	function display(sessionId, record) {
 		const message = saved.get(sessionId)?.messages[record.requestId];
 		// 旧版记录没有附件来源字段。原样显示才能保留用户亲自输入的同形文字。
-		return typeof message?.input === "string" ? { ...record, input: message.input, file: message.file } : record;
+		return typeof message?.input === "string"
+			? { ...record, input: message.input, file: message.file, ...(message.skill?.id && { skill: message.skill.id }) }
+			: record;
 	}
 
 	return {
@@ -64,6 +66,15 @@ export function createRequestHistory(directory) {
 			}
 		},
 		display,
+		/**
+		 * 获取此次请求入队时保存的技能选择，仅供工作进程复核。
+		 * @param {string} sessionId 当前会话
+		 * @param {string} requestId 本次请求
+		 * @returns {{id: string, token: string} | undefined} 技能选择和安装令牌
+		 */
+		selectedSkill(sessionId, requestId) {
+			return saved.get(sessionId)?.messages[requestId]?.skill;
+		},
 	};
 }
 

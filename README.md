@@ -8,7 +8,7 @@ Flower 基于 [pi-mono](https://github.com/earendil-works/pi-mono) 构建。仓�
 | --- | --- | --- |
 | [GitLab 代码评审](apps/code-reviewer/README.md) | 根据 MR 变更选择评审清单并读取相关代码，通过 GitLab 工具提交行内和整体评论。已接入只读约束、审计和评审 trace。 | `flower-review`，通常由 GitLab CI 启动，一次评审后退出。 |
 | [钉钉运维机器人](apps/ops-bot/README.md) | 接收钉钉 webhook，按会话管理历史并流式回复。配置 `REDIS_URL` 后使用 Redis 保存会话。 | `flower-ops-bot`，默认监听 `3000`，健康检查为 `/healthz`。 |
-| [Flower Desktop](apps/desktop/README.Windows.txt) | 本地工作区、Agent 会话与文件交付。可配置模型、主题和首页内容。 | 在 Windows 解压后双击 `Flower Desktop.exe`。 |
+| [Flower Desktop](apps/desktop/README.Windows.txt) | 本地工作区、Agent 会话与文件交付。可配置模型、主题和首页内容。 | Windows 便携包和 macOS 磁盘映像通过 [GitHub Releases](https://github.com/SilentFlower/flower/releases) 分发，详见[桌面发行说明](apps/desktop/RELEASE.md)。 |
 | [Observer](apps/observer/README.md) | 接收遥测与审计事件，经 SQLite 幂等入库，提供 trace 列表、回放和指标页面。 | Node 常驻服务，默认监听 `4810`。访问 `/traces`、`/metrics` 和 `/healthz`。 |
 
 评审 CLI 通过 `pi-coding-agent` 的 print 模式运行。钉钉机器人直接使用 `pi-agent-core` 的 `Agent`，根据用户提供的信息和会话历史给出运维排查建议。评审 trace 可写入 JSONL，配置 HTTP sink 后可发送给 Observer。更早的设计和源码样例见 [架构手册](docs/intro.html)。
@@ -32,7 +32,7 @@ flower/
 └── .trellis/
 ```
 
-npm 工作区包含八个公开包（原三个应用与五个共享包）和私有的 Flower Desktop。现有应用保留 `@flower-ai/flower-*` 包名，共享核心使用 `@flower-ai/agent-runtime`。Flower Desktop 通过 Windows 解压版交付，聚合用的根包 `flower` 保持 `private`。三个 Dockerfile 均以仓库根目录作为构建上下文。
+npm 工作区包含八个公开包（原三个应用与五个共享包）和私有的 Flower Desktop。现有应用保留 `@flower-ai/flower-*` 包名，共享核心使用 `@flower-ai/agent-runtime`。Flower Desktop 通过 Windows 便携版和 macOS 磁盘映像交付，聚合用的根包 `flower` 保持 `private`。三个 Dockerfile 均以仓库根目录作为构建上下文。
 
 开源分支 `v2` 的桌面直接进入本地工作台。企业桌面的员工身份及公司网关在 `v2-company` 维护。
 

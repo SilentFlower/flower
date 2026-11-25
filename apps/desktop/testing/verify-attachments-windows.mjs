@@ -7,7 +7,7 @@ import { startMockModel } from "./mock-model.mjs";
 const [exe, evidence, tooling, workspace] = process.argv.slice(2);
 assert(
 	process.platform === "win32" && workspace,
-	"用法：<EXE> <新证据目录> <Playwright> <含预算.xlsx和说明.docx的测试目录>",
+	"在独立 Window Station 中运行：<EXE> <新证据目录> <Playwright> <含预算.xlsx和说明.docx的测试目录>",
 );
 const profile = join(resolve(evidence), "profile");
 const store = join(profile, "local-workbench");
@@ -120,23 +120,17 @@ try {
 	});
 	await writeFile(source, Buffer.from(pdf, "base64"));
 	await by("workspace").click();
-	// 替代系统剪贴板来源，验证只有点击菜单项才会读取及导入图片。
-	await app.evaluate(({ clipboard, nativeImage }) => {
-		globalThis.clipboardPicks = 0;
-		clipboard.readImage = () =>
-			++globalThis.clipboardPicks === 1
-				? nativeImage.createEmpty()
-				: nativeImage.createFromBuffer(
-						Buffer.from(
-							"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4//8/AAX+Av4zEpUUAAAAAElFTkSuQmCC",
-							"base64",
-						),
-					);
-	});
+	// 在独立 Window Station 覆盖空剪贴板，以及系统中实际可读的 PNG。
+	await app.evaluate(({ clipboard }) => clipboard.clear());
 	await by("composer-add").press("ArrowDown");
-	assert.equal(await app.evaluate(() => globalThis.clipboardPicks), 0);
+	assert.equal(await chip("截图 1.png").count(), 0);
 	await by("paste-clipboard-image").click();
-	await by("feedback").getByText("剪贴板中没有图片。").waitFor();
+	await page.getByText("剪贴板中没有图片。", { exact: true }).waitFor();
+	await app.evaluate(
+		({ clipboard, ClipboardItem }, png) =>
+			clipboard.write([new ClipboardItem({ "image/png": new Blob([Buffer.from(png, "base64")], { type: "image/png" }) })]),
+		(await readFile(join(inbox, tiny))).toString("base64"),
+	);
 	await by("composer-add").click();
 	await by("paste-clipboard-image").click();
 	await chip("截图 1.png").waitFor();

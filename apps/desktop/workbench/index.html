@@ -3,7 +3,7 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'self'; font-src 'self' blob: data:; style-src 'self'; img-src 'self' blob:; base-uri 'none'; form-action 'none'">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'self'; font-src 'self' blob: data:; style-src 'self'; img-src 'self' blob:; frame-src 'self'; base-uri 'none'; form-action 'none'">
 	<title>Flower Desktop</title>
 	<script src="./ui/theme-preload.js"></script>
 	<link rel="stylesheet" href="./ui/tokens.css">
@@ -12,18 +12,32 @@
 	<link rel="stylesheet" href="./ui/theme.css">
 	<link rel="stylesheet" href="./ui/model-editor.css">
 	<link rel="stylesheet" href="./ui/workspace-panel.css">
+	<link rel="stylesheet" href="./ui/background-tasks.css">
+	<link rel="stylesheet" href="./ui/workbench-automation.css">
+	<link rel="stylesheet" href="./ui/native-panels.css">
+	<link rel="stylesheet" href="./ui/turn-changes.css">
+	<link rel="stylesheet" href="./ui/conversation-actions.css">
+	<link rel="stylesheet" href="./ui/ask-user.css">
+	<link rel="stylesheet" href="./ui/management.css">
 	<script src="./ui/foundation.js" defer></script>
 	<script src="./ui/toast.js" defer></script>
 	<script src="../node_modules/marked/lib/marked.umd.js" defer></script>
 	<script src="./ui/markdown.js" defer></script>
+	<script src="./ui/management.js" defer></script>
 	<script src="./ui/theme-settings.js" defer></script>
 	<script src="./ui/pdf-preview.js" defer></script>
+	<script src="./ui/native-panels.js" defer></script>
+	<script src="./ui/background-tasks.js" defer></script>
+	<script src="./ui/workbench-automation.js" defer></script>
 	<script src="./ui/workspace-panel.js" defer></script>
 	<script src="./ui/image-viewer.js" defer></script>
 	<script src="./ui/attachments.js" defer></script>
 	<script src="./ui/agent.js" defer></script>
 	<script src="./ui/side-chat.js" defer></script>
 	<script src="./ui/select.js" defer></script>
+	<script src="./ui/ask-user.js" defer></script>
+	<script src="./ui/turn-changes.js" defer></script>
+	<script src="./ui/conversation-actions.js" defer></script>
 	<script src="./renderer.js" defer></script>
 </head>
 <body>
@@ -31,11 +45,15 @@
 		<symbol id="icon-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r=".8"/><circle cx="15" cy="6" r=".8"/><circle cx="9" cy="12" r=".8"/><circle cx="15" cy="12" r=".8"/><circle cx="9" cy="18" r=".8"/><circle cx="15" cy="18" r=".8"/></symbol>
 		<symbol id="icon-quote" viewBox="0 0 24 24"><path d="M5 7h5v5c0 3-1.5 4.5-4 5M14 7h5v5c0 3-1.5 4.5-4 5"/></symbol>
 		<symbol id="icon-side-chat" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M14 4v16M6.5 9h4.5m-4.5 4h3"/></symbol>
+		<symbol id="icon-question-choice" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 1-8 8H4l1.7-3.5A8 8 0 1 1 20 11Z"/><path d="M10 9a2 2 0 1 1 3 1.7c-.7.4-1 .8-1 1.3m0 3h.01"/></symbol>
 		<symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
 		<symbol id="icon-pin" viewBox="0 0 24 24"><path d="m15 3 6 6-3 1-3 5 .5 2.5-9-9L9 9l5-3zM10 14l-6 6"/></symbol>
 		<symbol id="icon-trash" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></symbol>
 		<symbol id="icon-git" viewBox="0 0 24 24"><circle cx="7" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="7" r="2"/><path d="M7 7v10m0-2c7 0 10-2 10-6"/></symbol>
 		<symbol id="icon-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-14-2 18"/></symbol>
+		<symbol id="icon-terminal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></symbol>
+		<symbol id="icon-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><ellipse cx="12" cy="12" rx="3.4" ry="8"/><path d="M4 12h16"/></symbol>
+		<symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3.5 2"/></symbol>
 		<symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
 		<symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></symbol>
 		<symbol id="icon-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
@@ -75,6 +93,7 @@
 		<symbol id="icon-session-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h1m-1 6h1m-1 6h1"/></symbol>
 		<symbol id="icon-checklist" viewBox="0 0 24 24"><path d="m4 7 2 2 3-4m-5 9 2 2 3-4m3-5h8m-8 7h8m-8 5h8"/></symbol>
 		<symbol id="icon-table" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16m-16 5h16m-10-10v14"/></symbol>
+		<symbol id="icon-tool" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M3 12h18m-11 0v2h4v-2"/></symbol>
 		<symbol id="icon-report" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></symbol>
 	</svg>
 	<main id="workbench" class="workbench" data-home="true">
@@ -108,6 +127,13 @@
 							<button class="button icon-button" id="session-filter-open" type="button" aria-label="搜索条件" title="搜索条件" aria-haspopup="dialog" popovertarget="session-filter"><svg class="icon" aria-hidden="true"><use href="#icon-filter"/></svg></button>
 						</div>
 					</div>
+					<nav class="sidebar-workflows" aria-label="工作台工具">
+						<button class="button" type="button" id="sidebar-tools" aria-label="工具" title="工具" aria-expanded="false" aria-controls="sidebar-tool-links"><svg class="icon" aria-hidden="true"><use href="#icon-tool"/></svg><span>工具</span><svg class="icon workflow-chevron" aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+						<div id="sidebar-tool-links" hidden>
+							<button class="button" type="button" id="sidebar-automation" aria-label="自动化" title="自动化" aria-controls="automation-settings"><svg class="icon" aria-hidden="true"><use href="#icon-clock"/></svg><span>自动化</span></button>
+							<button class="button" type="button" id="sidebar-extensions" aria-label="技能与扩展" title="技能与扩展" aria-controls="extension-settings"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"/></svg><span>技能与扩展</span></button>
+						</div>
+					</nav>
 					<section class="sidebar-assistant" aria-labelledby="assistant-heading">
 						<h2 class="sidebar-heading" id="assistant-heading">助手</h2>
 						<button class="button assistant-home" id="assistant-home" type="button" disabled>
@@ -115,6 +141,7 @@
 							<span><strong>Flower</strong><small>首页</small></span>
 						</button>
 					</section>
+
 					<nav class="session-list" aria-labelledby="sessions-title">
 						<div class="session-list-head">
 							<h2 id="sessions-title">会话</h2>
@@ -129,9 +156,9 @@
 				</div>
 			</div>
 			<div class="sidebar-footer">
-				<button class="button quiet" id="theme-open" type="button" aria-label="本机工作台，应用设置" title="应用设置">
+				<button class="button quiet" id="theme-open" type="button" aria-controls="management-page" aria-label="本机工作台，应用设置" title="应用设置">
 					<img src="./ui/flower-avatar.webp" class="settings-avatar" width="26" height="26" alt="">
-					<span class="settings-capsule-copy"><strong>本机工作台</strong><small id="desktop-version"></small></span>
+					<span class="settings-capsule-copy"><strong>设置</strong><small id="desktop-version"></small></span>
 					<svg class="icon" aria-hidden="true"><use href="#icon-settings"/></svg>
 				</button>
 			</div>
@@ -139,11 +166,18 @@
 		<header class="desktop-chrome">
 			<div class="chrome-content">
 				<h1 class="wordmark" id="title" hidden>Flower Desktop</h1>
+				<button type="button" class="button quiet" id="desktop-update-ready" aria-controls="desktop-update" hidden><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg>更新就绪</button>
+				<button type="button" class="button quiet icon-button" id="conversation-actions-open" aria-label="导出和分享会话" title="导出和分享会话" aria-haspopup="menu" aria-controls="conversation-actions" hidden><svg class="icon" aria-hidden="true"><use href="#icon-more"/></svg></button>
 			</div>
 		</header>
 		<section class="conversation" aria-label="当前会话">
 			<button type="button" class="button icon-button" id="workspace-panel-toggle" aria-label="打开文件浏览器" title="打开文件浏览器" aria-controls="workspace-panel" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#icon-panel-right"/></svg></button>
 			<p class="gateway-notice" id="gateway-notice" role="status" hidden></p>
+			<div id="conversation-selection" class="conversation-selection" hidden>
+				<span id="conversation-selection-count" aria-live="polite">已选 0 条</span>
+				<button type="button" class="button quiet" id="conversation-selection-cancel">取消</button>
+				<button type="button" class="button primary" id="conversation-selection-copy" disabled>复制为图片</button>
+			</div>
 			<div class="conversation-body" id="conversation-body">
 				<div id="thread-scroll" class="thread-scroll" hidden>
 					<p class="history-status" id="history-status" role="status" hidden>正在读取会话…</p>
@@ -180,10 +214,27 @@
 						</footer>
 					</section>
 					<p class="sr-only" id="write-approval-live" role="status"></p>
+					<section class="ask-user" hidden id="ask-user" aria-labelledby="ask-user-title">
+						<header class="ask-user-header">
+							<svg class="icon" aria-hidden="true"><use href="#icon-question-choice"/></svg>
+							<h2 id="ask-user-title">选择答案</h2>
+						</header>
+						<form>
+							<div class="ask-user-body"></div>
+							<p class="feedback" id="ask-user-error" role="status"></p>
+							<footer class="ask-user-actions">
+								<button class="button quiet" id="stop-question" type="button">取消任务</button>
+								<button class="button secondary" id="skip-question" type="button">跳过</button>
+								<button class="button primary" id="answer-question" type="submit" disabled>提交回答</button>
+							</footer>
+						</form>
+					</section>
+					<p class="sr-only" id="ask-user-live" role="status"></p>
 					<section id="queue" class="composer-queue" aria-label="排队消息" hidden></section>
 					<div id="composer" class="composer">
 						<div id="mention-list" class="mention-list" role="listbox" aria-label="工作区文件" hidden></div>
 						<div id="attachment" class="file-chips" role="group" aria-label="本次消息的附件" hidden></div>
+						<div id="composer-skill" class="composer-skill" hidden><span id="composer-skill-name"></span><button type="button" id="composer-skill-remove" class="button quiet" aria-label="移除本次技能">×</button></div>
 						<label class="sr-only" for="prompt">任务</label>
 						<textarea id="prompt" data-theme-prompt rows="1" maxlength="16000" placeholder="描述你想完成的工作…" aria-describedby="input-hint"></textarea>
 						<div class="composer-toolbar">
@@ -227,7 +278,9 @@
 					<button type="button" class="button" id="panel-files" aria-pressed="true"><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg>文件</button>
 					<button type="button" class="button" id="panel-git" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#icon-git"/></svg>Git 变更</button>
 					<button type="button" class="button" id="panel-side" aria-pressed="false" hidden><svg class="icon" aria-hidden="true"><use href="#icon-side-chat"/></svg>侧边追问</button>
+					<button type="button" class="button" id="panel-current-tool" aria-pressed="true" hidden></button>
 				</div>
+				<button type="button" id="panel-more-tools" class="button icon-button" aria-label="添加右栏面板" title="添加右栏面板" aria-haspopup="menu" aria-controls="panel-tool-menu" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg></button>
 				<button type="button" id="workspace-panel-dock" class="button icon-button" aria-label="移到聊天区左侧" title="移到聊天区左侧"><svg class="icon" aria-hidden="true"><use href="#icon-dock"/></svg></button>
 				<button type="button" id="workspace-panel-expand" class="button icon-button" aria-label="放大文件面板" title="放大文件面板" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#icon-panel-expand"/></svg></button>
 				<button type="button" id="workspace-panel-close" class="button icon-button" aria-label="收起右侧栏" title="收起右侧栏"><svg class="icon" aria-hidden="true"><use href="#icon-panel-close"/></svg></button>
@@ -265,14 +318,267 @@
 					</div>
 				</div>
 			</section>
+			<section id="native-panel-view" aria-label="工作台工具" tabindex="-1" hidden></section>
+			<section id="background-tasks" aria-label="后台任务" tabindex="-1" hidden></section>
 		</aside>
+		<div id="management-page" class="management-page" hidden>
+			<div class="management-inner">
+				<div class="management-top"><button class="button quiet management-back" id="settings-close-dialog" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-back"/></svg>返回工作台</button></div>
+				<div id="settings-page" class="settings-page" hidden>
+					<nav class="settings-categories" aria-label="设置栏目">
+						<h2>设置</h2>
+						<button type="button" class="button" data-setting="models" aria-controls="model-dialog"><svg class="icon" aria-hidden="true"><use href="#icon-sparkle"/></svg>模型与服务商</button>
+						<button type="button" class="button" data-setting="appearance" id="settings-appearance" aria-controls="appearance-page"><svg class="icon" aria-hidden="true"><use href="#icon-settings"/></svg>外观</button>
+						<button type="button" class="button" data-setting="instructions" id="settings-instructions" aria-controls="instructions-dialog"><svg class="icon" aria-hidden="true"><use href="#icon-checklist"/></svg>全局指令</button>
+						<button type="button" class="button" data-setting="update" id="settings-update" aria-controls="desktop-update"><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg>应用更新</button>
+					</nav>
+					<div class="settings-content">
+						<section class="management-pane" id="model-dialog" hidden aria-labelledby="model-title">
+							<div id="model-settings-shell">
+								<header class="settings-heading">
+									<div class="model-heading-copy">
+										<h2 id="model-title" tabindex="-1">模型设置</h2>
+										<div class="model-editor-identity" id="model-editor-identity" hidden></div>
+									</div>
+								</header>
+								<section id="model-overview" class="settings-scroll" aria-label="服务商与模型" hidden>
+									<div class="model-overview-toolbar management-surface">
+										<div class="settings-field">
+											<span>当前服务商</span>
+											<div class="model-provider-control">
+												<div class="theme-select" id="settings-service-select"></div>
+												<button class="button quiet" id="settings-edit-service" type="button" aria-label="编辑服务" title="编辑服务"><svg class="icon" aria-hidden="true"><use href="#icon-pencil"/></svg></button>
+											</div>
+										</div>
+										<button class="button secondary" id="settings-add-model" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg>添加模型</button>
+									</div>
+									<div class="model-catalog management-surface">
+										<div class="model-overview-heading">
+											<h3>模型</h3>
+											<span id="settings-provider-meta"></span>
+										</div>
+										<ul id="settings-model-cards" aria-label="已保存模型"></ul>
+										<p class="model-help" id="settings-model-empty" hidden>暂无模型。添加模型后即可发起任务。</p>
+										<p class="feedback" id="settings-overview-feedback" role="status"></p>
+									</div>
+								</section>
+								<form id="model-form" hidden>
+									<div class="settings-scroll">
+										<section id="service-editor" class="settings-editor management-surface" aria-label="服务连接">
+											<h3>服务连接</h3>
+											<label class="settings-field" for="service-name">服务名称
+												<input id="service-name" type="text" maxlength="64" placeholder="例如：本机模型">
+											</label>
+											<label class="settings-field" for="base-url">Base URL
+												<input id="base-url" name="baseUrl" type="url" placeholder="http://127.0.0.1:11434/v1" maxlength="2048">
+											</label>
+											<label class="settings-field" for="api-key">API Key（可选）
+												<input id="api-key" name="apiKey" type="password" autocomplete="new-password" maxlength="8192" aria-describedby="key-hint">
+											</label>
+											<p id="key-hint" class="model-help"></p>
+											<label id="clear-key-row" class="clear-key" hidden><input id="clear-key" type="checkbox"> 清除已保存的 Key</label>
+										</section>
+										<section id="model-editor" class="settings-editor management-surface" aria-label="模型配置">
+											<h3>模型配置</h3>
+											<div class="service-fields" id="model-entry">
+												<label class="settings-field" for="model-id">模型名
+													<input id="model-id" name="modelId" type="text" maxlength="200" placeholder="可以稍后从服务选择">
+												</label>
+												<button class="button secondary" id="settings-discover" type="button">读取模型列表</button>
+											</div>
+											<p id="settings-discovery" class="feedback" role="status"></p>
+											<ul id="settings-models" aria-label="服务模型"></ul>
+											<label class="settings-field" for="context-window">上下文窗口（tokens）
+												<input id="context-window" name="contextWindow" type="number" min="1024" max="10000000" step="1" placeholder="留空自动识别">
+											</label>
+											<section class="model-effort-settings" aria-labelledby="model-policy-title">
+												<h3 id="model-policy-title">推理档位</h3>
+												<div class="settings-segmented model-policy" id="model-capability" role="radiogroup" aria-labelledby="model-policy-title">
+													<label><input type="radio" name="model-policy" value="auto" checked><span>推荐</span></label>
+													<label><input type="radio" name="model-policy" value="standard"><span>手动</span></label>
+													<label><input type="radio" name="model-policy" value="none"><span>服务默认</span></label>
+												</div>
+												<p class="model-recommendation" id="model-recommendation" aria-live="polite">
+													<span id="model-recommendation-levels"></span>
+													<span id="model-recommendation-source"></span>
+												</p>
+												<div id="model-levels" role="group" aria-label="服务支持的推理档位" hidden></div>
+												<p id="model-default-effort" class="model-help" hidden>任务采用服务默认的推理档位。</p>
+											</section>
+										</section>
+										<p id="settings-feedback" class="feedback" role="status"></p>
+									</div>
+									<footer class="settings-actions">
+										<button class="button secondary" id="close-settings" type="button">取消</button>
+										<button class="button primary" id="save-settings" type="submit">保存</button>
+									</footer>
+								</form>
+							</div>
+						</section>
+
+						<section id="appearance-page" class="management-pane theme-settings" aria-labelledby="theme-title" hidden></section>
+						<section class="management-pane" id="instructions-dialog" hidden aria-labelledby="instructions-title">
+							<form id="instructions-form">
+								<header class="settings-heading"><h2 id="instructions-title" tabindex="-1">全局指令</h2></header>
+								<div class="settings-scroll">
+									<label class="settings-field" for="instructions-text">个人全局指令
+										<textarea id="instructions-text" rows="8" maxlength="4000" placeholder="例如：金额保留两位小数；部门名称用全称；结论先写在开头。" aria-describedby="instructions-count instructions-help"></textarea>
+									</label>
+									<p class="model-help" id="instructions-count"></p>
+									<p class="model-help" id="instructions-help">保存后从下一轮起对本机所有会话生效。工作区根目录下的 FLOWER.md 也会作为口径读取（最多 8000 字），同部门共用一个目录即可统一口径。</p>
+									<p class="feedback" id="instructions-feedback" role="status"></p>
+								</div>
+								<footer class="settings-actions"><button class="button secondary" id="instructions-cancel" type="button">取消</button><button class="button primary" type="submit">保存</button></footer>
+							</form>
+						</section>
+						<section class="management-pane" id="desktop-update" hidden aria-labelledby="desktop-update-title">
+							<div>
+								<header class="tier3-heading"><h2 id="desktop-update-title" tabindex="-1">应用更新</h2><p id="desktop-update-version"></p></header>
+								<div class="tier3-scroll" id="desktop-update-scroll">
+									<p class="feedback" id="desktop-update-feedback" role="status"></p>
+									<div id="desktop-update-transfer" hidden><progress id="desktop-update-progress" max="100" aria-label="更新下载进度"></progress><span id="desktop-update-transfer-label" aria-hidden="true"></span></div>
+									<div id="desktop-update-candidate" class="update-candidate" hidden><strong id="desktop-update-release"></strong><p id="desktop-update-notes" hidden></p></div>
+									<p class="tier3-summary" id="desktop-update-schedule-note" hidden></p>
+								</div>
+								<footer class="settings-actions">
+									<button type="button" class="button secondary" id="desktop-update-check">检查更新</button>
+									<button type="button" class="button secondary" id="desktop-update-schedule" hidden>退出时更新</button>
+									<button type="button" class="button primary" id="desktop-update-restart" hidden>立即重启更新</button>
+								</footer>
+							</div>
+						</section>
+					</div>
+				</div>
+				<section id="automation-settings" hidden class="management-pane" aria-labelledby="automation-heading">
+					<header class="management-heading">
+						<div><h2 id="automation-heading" tabindex="-1">自动化</h2><p id="automation-clock-note">按本机时间在 Flower 运行时执行。关闭或休眠期间错过的最近一次会留记录。</p></div>
+						<div class="automation-toolbar" id="automation-toolbar">
+							<button type="button" id="automation-tasks" class="button quiet">后台任务</button>
+							<button type="button" id="automation-new" class="button primary"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg>新建计划</button>
+						</div>
+					</header>
+					<div class="tier3-scroll automation-scroll" id="automation-scroll">
+						<div id="automation-overview">
+							<p id="automation-status" class="feedback" role="status"></p>
+							<section id="automation-plans" class="automation-list" aria-label="计划"></section>
+							<section id="automation-history" aria-label="执行记录"></section>
+						</div>
+						<form id="automation-form" class="automation-form" hidden>
+							<label class="settings-field" for="automation-name">计划名称<input id="automation-name" maxlength="120" required></label>
+							<div class="automation-line">
+								<label class="settings-field" for="automation-workspace">工作区<select id="automation-workspace" required></select></label>
+								<button type="button" id="automation-choose-workspace" class="button secondary">选择目录</button>
+							</div>
+							<label class="settings-field" for="automation-prompt">任务<textarea id="automation-prompt" rows="3" maxlength="16000" required></textarea></label>
+							<label class="settings-field" for="automation-skill">技能<select id="automation-skill"><option value="">不选择</option></select></label>
+							<div class="automation-line automation-schedule">
+								<label class="settings-field" for="automation-frequency">频率<select id="automation-frequency"><option value="daily">每天</option><option value="weekly">每周</option></select></label>
+								<label class="settings-field" for="automation-weekday" hidden>星期<select id="automation-weekday"><option value="1">周一</option><option value="2">周二</option><option value="3">周三</option><option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="0">周日</option></select></label>
+								<label class="settings-field" for="automation-time">本机时间<input id="automation-time" type="text" placeholder="09:00" pattern="[0-9]{2}:[0-9]{2}" maxlength="5" required></label>
+								<label class="settings-field" for="automation-permission">权限<select id="automation-permission"><option value="read">只读</option><option value="ask">请求批准</option><option value="auto">帮我批准</option></select></label>
+							</div>
+							<p id="automation-edit-status" class="feedback" role="status"></p>
+							<div class="automation-actions">
+								<button type="button" id="automation-cancel-edit" class="button secondary">取消</button>
+								<button type="submit" class="button primary">保存计划</button>
+							</div>
+						</form>
+					</div>
+				</section>
+				<section id="extension-settings" hidden class="management-pane" aria-labelledby="extension-heading">
+					<header class="management-heading">
+						<div><h2 id="extension-heading" tabindex="-1">技能与扩展</h2><p id="extension-workspace"></p></div>
+						<div class="automation-toolbar" id="extension-toolbar">
+							<button type="button" id="extension-choose-workspace" class="button quiet">选择工作区</button>
+							<button type="button" id="extension-install" class="button primary"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg>导入</button>
+						</div>
+					</header>
+					<div class="tier3-scroll automation-scroll" id="extension-scroll">
+						<p id="extension-status" class="feedback" role="status"></p>
+						<div id="extension-catalog" class="management-surface">
+							<div id="extension-filters" role="group" aria-label="按类型筛选">
+								<button type="button" class="button" data-package-filter="all" aria-pressed="true">全部</button>
+								<button type="button" class="button" data-package-filter="skill" aria-pressed="false">技能</button>
+								<button type="button" class="button" data-package-filter="extension" aria-pressed="false">扩展</button>
+							</div>
+							<div id="extension-list" class="automation-list" aria-label="已安装的技能与扩展"></div>
+						</div>
+						<details id="extension-format">
+							<summary>格式与示例</summary>
+							<div><p>选择本地 Markdown 技能文件，可使用任意文件名。技能说明会供工作区中的模型任务参考。</p>
+							<pre>---
+name: weekly-report
+description: 汇总本周进展与下周计划
+---
+# 撰写周报
+
+读取工作区里本周的记录。按「已完成」「风险」「下周计划」汇总，保留来源。</pre></div>
+							<div><p>扩展工具也支持 JSON 文件。以下示例会提取包含 TODO 的文本行。</p>
+							<pre>{
+  "schemaVersion": 1,
+  "id": "review-lines",
+  "name": "核对项",
+  "description": "提取待核对的事项",
+  "action": "find-lines",
+  "contains": "TODO",
+  "caseSensitive": false,
+  "maxMatches": 20
+}</pre></div>
+						</details>
+						<section id="extension-detail" class="management-surface" hidden>
+							<div class="package-detail-actions">
+								<button type="button" class="button quiet management-back" id="extension-detail-back"><svg class="icon" aria-hidden="true"><use href="#icon-back"/></svg>返回列表</button>
+								<div class="automation-actions" id="extension-detail-actions"></div>
+							</div>
+							<div id="extension-detail-body">
+								<div id="extension-identity"></div>
+								<p id="extension-description"></p>
+								<article id="extension-skill-text" class="markdown-reply" hidden></article>
+							</div>
+							<form id="extension-run-form" class="automation-form" hidden>
+								<label class="settings-field" for="extension-path">工作区相对路径<input id="extension-path" required maxlength="1024" placeholder="例如 资料/核对清单.md"></label>
+								<div class="automation-actions"><button type="submit" class="button primary">运行扩展</button></div>
+								<p id="extension-run-status" class="feedback" role="status"></p>
+								<section id="extension-result-panel" aria-label="试运行结果" hidden>
+									<h3>试运行结果</h3>
+									<p id="extension-result-summary" role="status"></p>
+									<pre id="extension-result" hidden></pre>
+								</section>
+							</form>
+						</section>
+					</div>
+				</section>
+			</div>
+		</div>
 	</main>
+	<div id="panel-tool-menu" class="tier3-menu" popover="auto" role="menu" aria-label="右栏面板">
+		<button type="button" class="button quiet" role="menuitemradio" aria-checked="true" data-panel-mode="files"><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg><span>文件</span></button>
+		<button type="button" class="button quiet" role="menuitemradio" aria-checked="false" data-panel-mode="git"><svg class="icon" aria-hidden="true"><use href="#icon-git"/></svg><span>Git 变更</span></button>
+		<button type="button" class="button quiet" role="menuitemradio" aria-checked="false" data-panel-mode="terminal"><svg class="icon" aria-hidden="true"><use href="#icon-terminal"/></svg><span>终端</span></button>
+		<button type="button" class="button quiet" role="menuitemradio" aria-checked="false" data-panel-mode="browser"><svg class="icon" aria-hidden="true"><use href="#icon-globe"/></svg><span>浏览器</span></button>
+		<button type="button" class="button quiet" role="menuitemradio" aria-checked="false" data-panel-mode="tasks"><svg class="icon" aria-hidden="true"><use href="#icon-checklist"/></svg><span>后台任务</span></button>
+		<button type="button" class="button quiet" role="menuitemradio" aria-checked="false" data-panel-mode="side" hidden><svg class="icon" aria-hidden="true"><use href="#icon-side-chat"/></svg><span>侧边追问</span></button>
+	</div>
+	<dialog id="git-commit-dialog" class="flower-settings tier3-dialog" aria-labelledby="git-commit-title">
+		<form id="git-commit-form">
+			<header class="tier3-heading"><h2 id="git-commit-title">提交暂存的变更</h2><p id="git-commit-branch"></p></header>
+			<div class="tier3-scroll">
+				<label class="settings-field" for="git-commit-message">提交说明<textarea id="git-commit-message" rows="3" maxlength="1000" required></textarea></label>
+				<p class="feedback" id="git-commit-status" role="status"></p>
+			</div>
+			<footer class="settings-actions">
+				<button type="button" id="git-commit-cancel" class="button secondary">取消</button>
+				<button type="submit" class="button primary">核对并提交</button>
+			</footer>
+		</form>
+	</dialog>
 	<section id="toasts" class="toasts" aria-label="提示" aria-live="polite"></section>
 	<div id="selection-actions" class="selection-actions" role="toolbar" aria-label="选中文字操作" hidden>
 		<button class="button" type="button" data-selection="quote"><svg class="icon" aria-hidden="true"><use href="#icon-quote"/></svg>引用</button>
 		<button class="button" type="button" data-selection="side"><svg class="icon" aria-hidden="true"><use href="#icon-side-chat"/></svg>侧边追问</button>
 	</div>
 	<div id="sidebar-options" role="menu" popover="auto" aria-label="侧栏操作"></div>
+	<div id="automation-plan-menu" class="tier3-menu" role="menu" popover="auto" aria-label="计划操作"></div>
 	<div id="queue-options" role="menu" popover="auto" aria-label="排队消息操作"></div>
 	<div id="session-filter" role="dialog" popover="auto" aria-labelledby="session-filter-title">
 		<h2 id="session-filter-title">搜索条件</h2>
@@ -298,6 +604,7 @@
 		<button class="button" id="file" type="button" role="menuitem" autofocus><svg class="icon" aria-hidden="true"><use href="#icon-clip"/></svg>添加本地文件…</button>
 		<button class="button" id="reference-workspace" type="button" role="menuitem"><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg>从工作区引用…</button>
 		<button class="button" id="paste-clipboard-image" type="button" role="menuitem"><svg class="icon" aria-hidden="true"><use href="#icon-image"/></svg>粘贴剪贴板图片</button>
+		<button class="button" id="composer-local-extensions" type="button" role="menuitem"><svg class="icon" aria-hidden="true"><use href="#icon-document"/></svg>使用技能…</button>
 		<hr>
 		<button class="button" id="composer-workspace" type="button" role="menuitem"><svg class="icon" aria-hidden="true"><use href="#icon-forward"/></svg><span>选择工作区…</span></button>
 	</div>
@@ -357,20 +664,6 @@
 		</div>
 		<p id="model-choice-feedback" class="feedback" role="status"></p>
 	</section>
-	<dialog class="flower-settings instructions-dialog" id="instructions-dialog" aria-labelledby="instructions-title">
-		<form id="instructions-form">
-			<header class="settings-heading"><h2 id="instructions-title">全局指令</h2><button class="button quiet settings-close" id="instructions-close" type="button" aria-label="关闭全局指令">×</button></header>
-			<div class="settings-scroll">
-				<label class="settings-field" for="instructions-text">个人全局指令
-					<textarea id="instructions-text" rows="8" maxlength="4000" placeholder="例如：金额保留两位小数；部门名称用全称；结论先写在开头。" aria-describedby="instructions-count instructions-help"></textarea>
-				</label>
-				<p class="model-help" id="instructions-count"></p>
-				<p class="model-help" id="instructions-help">保存后从下一轮起对本机所有会话生效。工作区根目录下的 FLOWER.md 也会作为口径读取（最多 8000 字），同部门共用一个目录即可统一口径。</p>
-				<p class="feedback" id="instructions-feedback" role="status"></p>
-			</div>
-			<footer class="settings-actions"><button class="button secondary" id="instructions-cancel" type="button">取消</button><button class="button primary" type="submit">保存</button></footer>
-		</form>
-	</dialog>
 	<dialog id="image-viewer" aria-labelledby="image-title">
 		<header class="image-viewer-bar">
 			<h2 id="image-title"></h2><span id="image-size"></span>
@@ -379,86 +672,31 @@
 		</header>
 		<div id="image-stage"><img id="image-full" alt="" hidden><p id="image-status" role="status"></p></div>
 	</dialog>
-	<dialog class="flower-settings" id="model-dialog" aria-labelledby="model-title">
-		<div id="model-settings-shell">
-			<header class="settings-heading">
-				<div class="model-heading-copy">
-					<h2 id="model-title" tabindex="-1">模型设置</h2>
-					<div class="model-editor-identity" id="model-editor-identity" hidden></div>
-				</div>
-				<button class="button quiet" id="settings-instructions" type="button">全局指令</button>
-				<button class="button quiet" id="settings-appearance" type="button">外观</button>
-				<button class="button quiet" id="settings-close-dialog" type="button" aria-label="关闭模型设置">×</button>
-			</header>
-			<section id="model-overview" class="settings-scroll" aria-label="服务商与模型" hidden>
-				<div class="model-overview-toolbar">
-					<div class="settings-field">
-						<span>当前服务商</span>
-						<div class="model-provider-control">
-							<div class="theme-select" id="settings-service-select"></div>
-							<button class="button quiet" id="settings-edit-service" type="button" aria-label="编辑服务" title="编辑服务"><svg class="icon" aria-hidden="true"><use href="#icon-pencil"/></svg></button>
-						</div>
-					</div>
-					<button class="button secondary" id="settings-add-model" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg>添加模型</button>
-				</div>
-				<div class="model-overview-heading">
-					<h3>模型</h3>
-					<span id="settings-provider-meta"></span>
-				</div>
-				<ul id="settings-model-cards" aria-label="已保存模型"></ul>
-				<p class="model-help" id="settings-model-empty" hidden>暂无模型。添加模型后即可发起任务。</p>
-				<p class="feedback" id="settings-overview-feedback" role="status"></p>
-			</section>
-			<form id="model-form" hidden>
-				<div class="settings-scroll">
-					<section id="service-editor" class="settings-editor" aria-label="服务连接">
-						<label class="settings-field" for="service-name">服务名称
-							<input id="service-name" type="text" maxlength="64" placeholder="例如：本机模型">
-						</label>
-						<label class="settings-field" for="base-url">Base URL
-							<input id="base-url" name="baseUrl" type="url" placeholder="http://127.0.0.1:11434/v1" maxlength="2048">
-						</label>
-						<label class="settings-field" for="api-key">API Key（可选）
-							<input id="api-key" name="apiKey" type="password" autocomplete="new-password" maxlength="8192" aria-describedby="key-hint">
-						</label>
-						<p id="key-hint" class="model-help"></p>
-						<label id="clear-key-row" class="clear-key" hidden><input id="clear-key" type="checkbox"> 清除已保存的 Key</label>
-					</section>
-					<section id="model-editor" class="settings-editor" aria-label="模型配置">
-						<div class="service-fields" id="model-entry">
-							<label class="settings-field" for="model-id">模型名
-								<input id="model-id" name="modelId" type="text" maxlength="200" placeholder="可以稍后从服务选择">
-							</label>
-							<button class="button secondary" id="settings-discover" type="button">读取模型列表</button>
-						</div>
-						<p id="settings-discovery" class="feedback" role="status"></p>
-						<ul id="settings-models" aria-label="服务模型"></ul>
-						<label class="settings-field" for="context-window">上下文窗口（tokens）
-							<input id="context-window" name="contextWindow" type="number" min="1024" max="10000000" step="1" placeholder="留空自动识别">
-						</label>
-						<section class="model-effort-settings" aria-labelledby="model-policy-title">
-							<h3 id="model-policy-title">推理档位</h3>
-							<div class="settings-segmented model-policy" id="model-capability" role="radiogroup" aria-labelledby="model-policy-title">
-								<label><input type="radio" name="model-policy" value="auto" checked><span>推荐</span></label>
-								<label><input type="radio" name="model-policy" value="standard"><span>手动</span></label>
-								<label><input type="radio" name="model-policy" value="none"><span>服务默认</span></label>
-							</div>
-							<p class="model-recommendation" id="model-recommendation" aria-live="polite">
-								<span id="model-recommendation-levels"></span>
-								<span id="model-recommendation-source"></span>
-							</p>
-							<div id="model-levels" role="group" aria-label="服务支持的推理档位" hidden></div>
-							<p id="model-default-effort" class="model-help" hidden>任务采用服务默认的推理档位。</p>
-						</section>
-					</section>
-					<p id="settings-feedback" class="feedback" role="status"></p>
-				</div>
-				<footer class="settings-actions">
-					<button class="button secondary" id="close-settings" type="button">取消</button>
-					<button class="button primary" id="save-settings" type="submit">保存</button>
-				</footer>
-			</form>
-		</div>
+	<div class="tier3-menu" id="conversation-actions" popover role="menu" aria-label="导出和分享会话">
+		<button type="button" class="button quiet" role="menuitem" data-share="html">导出 HTML…</button>
+		<button type="button" class="button quiet" role="menuitem" data-share="markdown">复制为 Markdown</button>
+		<button type="button" class="button quiet" role="menuitem" data-share="image">选择消息复制为图片…</button>
+	</div>
+	<div class="tier3-menu" id="turn-revision-menu" popover role="menu" aria-label="消息修订">
+		<button type="button" class="button quiet" role="menuitem" data-revision="edit">编辑重发…</button>
+		<button type="button" class="button quiet" role="menuitem" data-revision="rewind">回到此处…</button>
+		<button type="button" class="button quiet" role="menuitem" data-revision="fork">从此处分叉…</button>
+	</div>
+	<dialog class="flower-settings tier3-dialog" id="turn-revision" aria-labelledby="turn-revision-title">
+		<form id="turn-revision-form">
+			<header class="tier3-heading"><h2 id="turn-revision-title" tabindex="-1"></h2><p id="turn-revision-session"></p></header>
+			<div class="tier3-scroll" id="turn-revision-scroll">
+				<label id="turn-revision-edit" class="settings-field" for="turn-revision-input" hidden>修改后的任务<textarea id="turn-revision-input" rows="4" maxlength="16000"></textarea></label>
+				<p class="tier3-summary" id="turn-revision-impact" role="status"></p>
+				<ul class="tier3-files" id="turn-revision-files" aria-label="涉及文件" hidden></ul>
+				<label class="tier3-check" id="turn-revision-undo-row" hidden><input id="turn-revision-undo" type="checkbox">同时撤销后续轮次中仍可撤销的文件</label>
+				<p id="turn-revision-feedback" class="feedback" role="alert"></p>
+			</div>
+			<footer class="settings-actions">
+				<button type="button" class="button secondary" id="turn-revision-cancel">取消</button>
+				<button type="submit" class="button primary" id="turn-revision-apply"></button>
+			</footer>
+		</form>
 	</dialog>
 </body>
 </html>

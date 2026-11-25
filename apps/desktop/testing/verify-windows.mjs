@@ -55,14 +55,36 @@ async function boot(exe, profile) {
 		args: [`--user-data-dir=${profile}`, "--force-device-scale-factor=1"],
 	});
 	const page = await current.firstWindow();
-	await current.evaluate(({ app }, directory) => {
+	await current.evaluate(({ app, dialog }, directory) => {
 		if (app.getPath("userData").toLowerCase() !== directory.toLowerCase()) throw new Error("测试资料目录不匹配");
+		const showMessageBox = dialog.showMessageBox.bind(dialog);
+		dialog.showMessageBox = (...args) => {
+			const options = args.at(-1);
+			// 只应答此验收进程的关窗确认。写入审批等其他对话框沿用原处理。
+			if (/^还有 \d+ 个任务未完成$/.test(options?.message) && options.buttons?.[0] === "仍然关闭") {
+				return Promise.resolve({ response: 0, checkboxChecked: false });
+			}
+			return showMessageBox(...args);
+		};
 	}, profile);
 	return page;
 }
 async function close() {
-	await current?.close();
+	const owned = current;
 	current = undefined;
+	if (!owned) return;
+	try {
+		await Promise.race([
+			owned.close(),
+			setTimeout(5000, undefined, { ref: false }).then(() => {
+				throw new Error("等待验收应用关闭超时");
+			}),
+		]);
+	} catch (error) {
+		const child = owned.process();
+		if (child.exitCode === null && child.signalCode === null) child.kill();
+		throw error;
+	}
 }
 async function prepareDialogs() {
 	await current.evaluate(
@@ -347,7 +369,7 @@ try {
 				dialog.querySelector(".settings-actions").getBoundingClientRect().bottom <= dialog.getBoundingClientRect().bottom,
 		};
 	});
-	assert(settingsLayout.width >= 740 && settingsLayout.width <= 760 && settingsLayout.columns === 2);
+	assert(settingsLayout.width > 550 && settingsLayout.columns === 2);
 	assert(!settingsLayout.scrolls && settingsLayout.previewAndFooterFit);
 	assert(settingsLayout.previewTwoRows && settingsLayout.previewStatic);
 	assert.equal(settingsLayout.previewBrand, "FLOWER");
@@ -374,7 +396,7 @@ try {
 	await darkMode.click();
 	await themeDialog.locator('input[name="title"]').fill("不保存的标题");
 	assert.equal(await page.locator("#empty-title").textContent(), "不保存的标题");
-	assert(await page.locator("#empty-title").isVisible());
+	assert(await page.locator("#empty-title").isHidden());
 	assert.deepEqual(
 		await wait(() => current.evaluate(() => globalThis.lastOverlay?.symbolColor === "#eeeeec" && globalThis.lastOverlay)),
 		{
@@ -384,6 +406,7 @@ try {
 		},
 	);
 	await themeDialog.locator(".theme-cancel").click();
+	await page.locator("#settings-close-dialog").click();
 	await page.waitForFunction((scheme) => {
 		return document.activeElement?.id === "theme-open" && document.documentElement.dataset.scheme === scheme;
 	}, initialScheme);
@@ -406,6 +429,7 @@ try {
 	assert.equal(await themeDialog.locator(".theme-preview-prompt").textContent(), promptText);
 	await page.screenshot({ path: join(evidence, "主题设置-深色.png") });
 	await themeDialog.locator(".theme-save").click();
+	await page.locator("#settings-close-dialog").click();
 	await themeDialog.waitFor({ state: "hidden" });
 	assert.equal(await page.locator("#empty-title").textContent(), titleText);
 	assert.equal(await page.locator("#prompt").getAttribute("placeholder"), promptText);
@@ -456,11 +480,12 @@ try {
 	assert.equal(await send.getAttribute("title"), modelLabel);
 	assert.equal(await page.locator("#prompt").inputValue(), task);
 	const session = await page.evaluate(async () => (await window.flower.state()).selected);
+	assert.equal((await page.evaluate(() => window.flower.state())).draft.id, session);
 	assert(await suggestions.isVisible());
 	assert(await page.locator("#empty").isVisible());
 	assert(await page.locator("#title").isVisible());
 	await page.locator("#new-session").click();
-	await page.waitForFunction(() => document.querySelectorAll("#sessions .session-row").length === 2);
+	await page.waitForFunction((id) => window.flower.state().then(({ draft }) => draft?.id && draft.id !== id), session);
 	const otherSession = await page.evaluate(async () => (await window.flower.state()).selected);
 	assert.notEqual(otherSession, session);
 	assert.equal(await page.locator("#prompt").inputValue(), "");
@@ -469,10 +494,10 @@ try {
 		await page.waitForFunction(() => document.activeElement.id === "prompt");
 		const { selected, sessions } = await page.evaluate(() => window.flower.state());
 		assert.equal(selected, otherSession);
-		assert.equal(sessions.length, 2);
+		assert.equal(sessions.length, 0);
 	}
 	assert.equal(await current.evaluate(() => globalThis.flowerQA.directoryPicks), 2);
-	results.push("新建会话保留原草稿，同一个空白会话重复新建只聚焦输入框");
+	results.push("新建暂不出现在侧栏，保留原草稿。重复新建空白草稿只聚焦输入框");
 	assert(await page.locator("#empty").isVisible());
 	await suggestion.press("Enter");
 	assert.equal(await page.locator("#prompt").inputValue(), addition);
@@ -484,7 +509,7 @@ try {
 	const expectVisit = async (id, draft) => {
 		await page.waitForFunction((id) => window.flower.state().then(({ selected }) => selected === id), id);
 		await page.waitForFunction((draft) => document.querySelector("#prompt").value === draft, draft);
-		assert.equal(await page.locator("#sessions .session-row").count(), 2);
+		assert.equal(await page.locator("#sessions .session-row").count(), 0);
 	};
 	assert(await forward.isDisabled());
 	await back.press("Enter");
@@ -504,11 +529,11 @@ try {
 	assert(await forward.isDisabled());
 	await back.press("Enter");
 	await expectVisit(otherSession, "第二条会话草稿");
-	await page.locator("#sessions .session-row").last().click();
+	await back.press("Enter");
 	await expectVisit(session, task);
-	assert(await forward.isDisabled());
 	await page.locator("#assistant-home").click();
 	await expectVisit("", "独立的首页草稿");
+	assert(await forward.isDisabled());
 	results.push("键盘前进和后退恢复真实访问与独立草稿，边界停用，另行访问截断旧的前进记录");
 	await page.locator("#sidebar-toggle").press("Enter");
 	assert.equal(await page.locator("#sidebar-toggle").getAttribute("aria-expanded"), "false");
@@ -527,25 +552,23 @@ try {
 	await search.fill("无匹配的测试字串");
 	await page.locator("#session-search-empty").waitFor();
 	await search.fill("新会话");
-	assert.equal(await page.locator("#sessions .session-row").count(), 1);
-	await page.screenshot({ path: join(evidence, "会话搜索.png") });
-	await search.press("Enter");
-	await page.waitForFunction((id) => window.flower.state().then((value) => value.selected === id), otherSession);
-	await page.waitForFunction(() => document.querySelector("#prompt").value === "第二条会话草稿");
+	assert.equal(await page.locator("#sessions .session-row").count(), 0);
 	await search.press("Escape");
-	await page.locator("#assistant-home").click();
 	await suggestions.waitFor();
 	assert.equal(await page.locator("#prompt").inputValue(), "独立的首页草稿");
-	await page.locator("#sessions .session-row").last().click();
+	await back.press("Enter");
 	await page.waitForFunction((id) => window.flower.state().then((state) => state.selected === id), session);
 	await page.waitForFunction((text) => document.querySelector("#prompt").value === text, task);
-	results.push("建议追加草稿并聚焦，首页和已有会话草稿分开。侧栏折叠保留设置，键盘搜索可打开真实会话");
-	assert.deepEqual(await page.evaluate((id) => window.flower.history(id), session), []);
+	results.push("建议追加草稿并聚焦，首页与已选目录的草稿分开，侧栏搜索不显示未发草稿");
+	await assert.rejects(
+		page.evaluate((id) => window.flower.history(id), session),
+		/没有找到对应的本机会话/,
+	);
 	assert.equal(await current.evaluate(() => globalThis.offlineRequests), 0);
 	for (const path of [legacyCredential, legacyWorkspace]) {
 		assert.equal(await readFile(path, "utf8"), "应保持原样的旧资料");
 	}
-	results.push("全新本机资料离线进入正式工作台，选目录、建会话、读空历史，无出站请求，旧资料原样保留");
+	results.push("全新本机资料离线进入正式工作台，可选目录和编辑临时草稿，无出站请求，旧资料原样保留");
 	assert.equal(fixture.observations.model.length, 0);
 	assert(await page.locator("#model-dialog").isHidden());
 	results.push("发送箭头的键盘焦点可见，空任务停用；取消或确认目录都保留草稿，选择后仍需再次确认");
@@ -584,6 +607,8 @@ try {
 	await input.press("Enter");
 	const firstTask = page.locator('.task[data-status="succeeded"]').filter({ hasText: "行动项：核对库存清单" });
 	await firstTask.waitFor();
+	await page.locator("#sessions .session-row").waitFor();
+	assert.equal((await page.evaluate(() => window.flower.state())).draft, undefined);
 	assert(await suggestions.isHidden());
 	assert(await page.locator("#empty").isHidden());
 	assert((await composer.boundingBox()).height < homeLayout.height - 20);
@@ -591,15 +616,47 @@ try {
 	assert(await firstTask.locator(".message-file").isHidden());
 	await page.locator("#prompt").fill("延续刚才的会话，提醒我第一个行动项");
 	await page.locator("#send").click();
-	await page.locator('.task[data-status="succeeded"]').filter({ hasText: "沿用上一轮：核对库存清单" }).waitFor();
+	const continuedTask = page.locator('.task[data-status="succeeded"]').filter({ hasText: "沿用上一轮：核对库存清单" });
+	await continuedTask.waitFor();
 	await page.locator("#prompt").fill("这个草稿留在原会话");
 	await page.locator("#new-session").click();
-	await page.waitForFunction(() => document.querySelectorAll("#sessions .session-row").length === 3);
+	await page.waitForFunction(() => window.flower.state().then(({ draft }) => Boolean(draft)));
+	const newest = (await page.evaluate(() => window.flower.state())).draft.id;
+	assert.equal(await page.locator("#sessions .session-row").count(), 1);
 	assert.equal(await page.locator("#prompt").inputValue(), "");
 	await page.locator("#sessions .session-row").last().click();
 	await page.waitForFunction(() => document.querySelector("#prompt").value === "这个草稿留在原会话");
 	assert(await firstTask.isVisible());
 	assert(await suggestions.isHidden());
+	// 后续验证同时存在三条真实会话时的前后导航和缓存，所以先通过正常提交保留两条草稿。
+	for (const [id, label] of [
+		[otherSession, "导航验收第二条，读取 notes.txt"],
+		[newest, "导航验收第三条，读取 notes.txt"],
+	]) {
+		const accepted = await page.evaluate(
+			async ({ id, label }) => {
+				await window.flower.selectSession(id);
+				return window.flower.submit(id, label, true);
+			},
+			{ id, label },
+		);
+		await page.locator(`.task[data-request="${accepted.requestId}"][data-status="succeeded"]`).waitFor();
+	}
+	await page.evaluate((id) => window.flower.selectSession(id), session);
+	await page.waitForFunction(() => document.querySelector("#prompt").value === "这个草稿留在原会话");
+	await page.evaluate((id) => window.flower.selectSession(id), newest);
+	await page.waitForFunction((id) => window.flower.state().then(({ selected }) => selected === id), newest);
+	await page.keyboard.press("Control+k");
+	await search.fill("核对库存");
+	// 其他会话也可以命中相同词，等待原会话这条具体的正文结果。
+	const sourceHit = page.locator("#sessions").getByRole("button", { name: /回复中命中：.*沿用上一轮：核对库存清单/u });
+	await sourceHit.waitFor();
+	await page.screenshot({ path: join(evidence, "会话搜索.png") });
+	await sourceHit.press("Enter");
+	await page.waitForFunction((id) => window.flower.state().then(({ selected }) => selected === id), session);
+	await page.waitForFunction(() => document.querySelector("#prompt").value === "这个草稿留在原会话");
+	await continuedTask.waitFor();
+	await search.press("Escape");
 	results.push("有工作区的空会话保留品牌和建议，第一次提交切换到消息流，返回已有会话直接显示历史");
 	await openPicker(page);
 	await picker.getByRole("button", { name: alternate, exact: true }).click();
@@ -647,12 +704,11 @@ try {
 	await themeDialog.waitFor();
 	assert(
 		await themeDialog.evaluate((element) => {
-			const { width, height } = element.getBoundingClientRect();
+			const { width } = element.getBoundingClientRect();
 			const layout = element.querySelector(".theme-layout");
 			const footer = element.querySelector(".settings-actions");
 			return (
 				width < innerWidth &&
-				height < innerHeight &&
 				element.clientWidth === element.scrollWidth &&
 				getComputedStyle(layout).gridTemplateColumns.split(" ").length === 1 &&
 				footer.getBoundingClientRect().bottom <= element.getBoundingClientRect().bottom
@@ -661,7 +717,7 @@ try {
 	);
 	await themeDialog.locator(".theme-preview").scrollIntoViewIfNeeded();
 	await page.screenshot({ path: join(evidence, "主题设置-窄窗.png") });
-	await themeDialog.press("Escape");
+	await page.keyboard.press("Escape");
 	await themeDialog.waitFor({ state: "hidden" });
 	await current.evaluate(({ BrowserWindow }, path) => {
 		BrowserWindow.getAllWindows()[0].setSize(1180, 790);
@@ -697,20 +753,23 @@ try {
 	})()`);
 	await page.locator("#prompt").fill("取消用例");
 	await page.locator("#send").click();
-	await page.waitForFunction(() => document.querySelector("#timeline").textContent.includes("准备处理"));
+	const cancellingTask = page.locator('.task[data-status="running"]').filter({ hasText: "准备处理" });
+	await cancellingTask.waitFor();
+	const cancelledId = await cancellingTask.getAttribute("data-request");
+	assert(cancelledId);
 	assert.equal(fixture.observations.model.at(-1).model, alternate);
 	await page.locator("#prompt").fill("运行期间留在会话内的草稿");
-	await page.locator("#sessions .session-row").nth(1).click();
+	await page.evaluate((id) => window.flower.selectSession(id), otherSession);
 	await page.waitForFunction(() => document.querySelector("#prompt").value === "第二条会话草稿");
 	assert(!(await page.locator("#timeline").textContent()).includes("准备处理"));
 	await back.press("Enter");
 	await page.waitForFunction(() => document.querySelector("#prompt").value === "运行期间留在会话内的草稿");
-	assert(await page.locator('.task[data-status="running"]').filter({ hasText: "准备处理" }).isVisible());
+	assert(await cancellingTask.isVisible());
 	await page.screenshot({ path: join(evidence, "返回运行中的会话.png") });
 	results.push("切到其他会话再后退时，恢复运行状态、已流出的消息和原草稿");
 	await input.fill("排队取消验证");
 	await send.click();
-	const queued = page.locator(".task").filter({ hasText: "排队取消验证" });
+	const queued = page.locator("#queue .queue-item").filter({ hasText: "排队取消验证" });
 	await queued.waitFor();
 	await openPicker(page);
 	await picker.getByText("运行和排队任务结束后可切换模型。").waitFor();
@@ -724,13 +783,14 @@ try {
 		/运行和排队/,
 	);
 	await page.keyboard.press("Escape");
-	await queued.getByRole("button", { name: "取消任务", exact: true }).click();
+	await queued.getByRole("button", { name: "删除", exact: true }).click();
+	await queued.waitFor({ state: "detached" });
 	await page
 		.locator(".task")
 		.filter({ hasText: "取消用例" })
 		.getByRole("button", { name: "取消任务", exact: true })
 		.click();
-	await page.waitForFunction(() => document.querySelectorAll('.task[data-status="cancelled"]').length === 2);
+	await page.waitForFunction(() => document.querySelectorAll('.task[data-status="cancelled"]').length === 1);
 	await wait(() => fixture.observations.interrupted > 0);
 	results.push("无 Key 的服务仅在主动打开时列出实际模型，切换保留草稿并驱动后续 SSE，运行和排队阻止切换");
 
@@ -740,7 +800,6 @@ try {
 		await page.evaluate((id) => window.flower.selectSession(id), id);
 		await page.waitForFunction((id) => window.flower.state().then(({ selected }) => selected === id), id);
 	};
-	const newest = await page.evaluate(() => window.flower.state().then(({ sessions }) => sessions[0].id));
 	const backgroundPrompt = "取消用例后台终态";
 	await input.fill(backgroundPrompt);
 	await send.click();
@@ -789,10 +848,11 @@ try {
 	await page.locator("#send").click();
 	const running = page.locator('.task[data-status="running"]').filter({ hasText: "正在整理汇总结果" });
 	await running.waitFor();
-	const steps = running.locator("summary");
+	const steps = running.locator(".step-list > summary");
 	// 运行中的工具步骤默认展开并显示当前动作。
 	assert(await steps.evaluate((node) => node.parentElement.open));
 	assert.match(await steps.innerText(), /^(正在|已执行)/);
+	await steps.focus();
 	await page.locator("#thread-scroll").evaluate((node) => {
 		node.scrollTop = node.scrollHeight;
 	});
@@ -806,8 +866,9 @@ try {
 	assert(position.overflow >= 65);
 	const completedWorkbook = page.locator('.task[data-status="succeeded"]').filter({ hasText: "合计 500" });
 	await completedWorkbook.waitFor();
-	const finalSteps = completedWorkbook.locator("summary");
-	assert(await finalSteps.evaluate((node) => node.parentElement.open && document.activeElement === node));
+	const finalSteps = completedWorkbook.locator(".step-list > summary");
+	assert.equal(await finalSteps.evaluate((node) => node.parentElement.open), false, "任务结束后步骤应折叠");
+	assert(await finalSteps.evaluate((node) => document.activeElement === node), "任务结束后步骤摘要应保有焦点");
 	const finalOffset = await page.locator("#thread-scroll").evaluate((node) => node.scrollTop);
 	assert.equal(finalOffset, position.offset, `流式期间阅读位置改变，初始溢出 ${position.overflow}`);
 	await current.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1180, 790));
@@ -890,6 +951,7 @@ try {
 	await page.locator("#settings-appearance").click();
 	await page.locator(".theme-default").click();
 	await page.locator(".theme-save").click();
+	await page.locator("#settings-close-dialog").click();
 	assert.equal(await page.locator("#empty-title").textContent(), "你想完成什么？");
 	assert.equal(await page.locator("#prompt").getAttribute("placeholder"), "描述你想完成的工作…");
 	assert.equal(await page.evaluate(() => window.flowerTheme.saved.mode), "system");
@@ -902,7 +964,11 @@ try {
 	assert.match(await page.locator("#timeline").textContent(), /合计 500/);
 	assert.match(await page.locator("#timeline").textContent(), /沿用上一轮：核对库存清单/);
 	await page.getByRole("button", { name: "打开分析报告" }).waitFor();
-	assert.equal(await page.locator('.task[data-status="cancelled"]').count(), 3);
+	const cancelled = await page
+		.locator('.task[data-status="cancelled"]')
+		.evaluateAll((rows) => rows.map((row) => row.dataset.request));
+	assert.deepEqual(cancelled, [cancelledId, backgroundId]);
+	assert.equal(await page.locator(".task").filter({ hasText: "排队取消验证" }).count(), 0);
 	await page.evaluate((id) => window.flower.selectSession(id), separate);
 	const restoredFirst = page.locator('.task[data-status="succeeded"]').filter({ hasText: "行动项：核对库存清单" });
 	await page.waitForFunction(
@@ -942,8 +1008,16 @@ try {
 	};
 	await writeFile(join(evidence, "result.json"), JSON.stringify(proof, null, 2));
 	console.log(JSON.stringify(proof));
+} catch (error) {
+	console.error("工作台回归失败", error);
+	process.exitCode = 1;
 } finally {
-	await close();
-	await fixture.close();
-	await protectedFixture.close();
+	const reportCleanup = (error) => {
+		console.error("工作台回归收尾失败", error);
+		process.exitCode = 1;
+	};
+	await close().catch(reportCleanup);
+	await Promise.allSettled([fixture.close(), protectedFixture.close()]).then((outcomes) => {
+		for (const result of outcomes) if (result.status === "rejected") reportCleanup(result.reason);
+	});
 }

@@ -1,14 +1,11 @@
 (() => {
 	const theme = window.flowerTheme;
-	const trigger = document.getElementById("settings-appearance");
-	if (!trigger) return;
-	const dialog = document.createElement("dialog");
-	dialog.className = "flower-settings theme-settings";
-	dialog.setAttribute("aria-labelledby", "theme-title");
+	const panel = document.getElementById("appearance-page");
+	if (!panel) return;
 	// 固定模板只包含控件结构，用户填写的文案始终通过 value 或 textContent 渲染。
-	dialog.innerHTML = `
+	panel.innerHTML = `
 		<form>
-			<header class="settings-heading"><h2 id="theme-title">主题设置</h2><button class="button quiet settings-close" type="button" aria-label="关闭主题设置">×</button></header>
+			<header class="settings-heading"><h2 id="theme-title" tabindex="-1">外观</h2></header>
 			<div class="settings-scroll theme-layout">
 				<div class="theme-controls">
 					<fieldset class="theme-group"><legend>外观模式</legend><div class="settings-segmented"></div></fieldset>
@@ -56,16 +53,15 @@
 				</section>
 			</div>
 			<footer class="settings-actions"><button class="button quiet theme-default" type="button">恢复默认</button><button class="button secondary theme-cancel" type="button">取消</button><button class="button primary theme-save" type="submit">保存</button></footer>
+			<p class="feedback theme-feedback" role="status"></p>
 			<p class="theme-error" role="alert" hidden></p>
 		</form>`;
-	document.body.append(dialog);
-	const one = (selector) => dialog.querySelector(selector);
+	const one = (selector) => panel.querySelector(selector);
 	const form = one("form");
 	const picker = one("#theme-picker");
 	const title = form.elements.namedItem("title");
 	const prompt = form.elements.namedItem("prompt");
 	let draft;
-	let committed = false;
 
 	function paint() {
 		theme.apply(draft);
@@ -73,8 +69,8 @@
 		form.elements.namedItem("success").value = draft.success;
 		form.elements.namedItem("danger").value = draft.danger;
 		one("#theme-hex").textContent = draft.accent.toUpperCase();
-		for (const node of dialog.querySelectorAll("[data-mode]")) node.checked = node.value === draft.mode;
-		for (const node of dialog.querySelectorAll("[data-swatch]"))
+		for (const node of panel.querySelectorAll("[data-mode]")) node.checked = node.value === draft.mode;
+		for (const node of panel.querySelectorAll("[data-swatch]"))
 			node.setAttribute("aria-pressed", String(node.dataset.swatch === draft.accent));
 		const title = draft.title.trim() || theme.defaults.title;
 		const previewHeading = one(".theme-preview-heading");
@@ -84,6 +80,7 @@
 	}
 
 	function fill(value) {
+		window.flowerUI.feedback(one(".theme-feedback"), "");
 		draft = { ...value };
 		title.value = value.title;
 		prompt.value = value.prompt;
@@ -142,28 +139,21 @@
 			draft[field.name] = field.value;
 			paint();
 		});
-	trigger.addEventListener("click", () => {
-		if (dialog.open) return;
-		document.getElementById("model-dialog").close();
-		committed = false;
+	panel.addEventListener("managemententer", () => {
 		one(".theme-error").hidden = true;
 		fill(theme.saved);
-		dialog.showModal();
+	});
+	panel.addEventListener("managementleave", () => {
+		theme.apply(theme.saved);
 	});
 	one(".theme-default").addEventListener("click", () => fill(theme.defaults));
-	one(".settings-close").addEventListener("click", () => dialog.close());
-	one(".theme-cancel").addEventListener("click", () => dialog.close());
-	dialog.addEventListener("close", () => {
-		if (!committed) theme.apply(theme.saved);
-		const focused = document.activeElement;
-		if (focused === document.body || dialog.contains(focused)) document.getElementById("theme-open").focus();
-	});
+	one(".theme-cancel").addEventListener("click", () => fill(theme.saved));
 	form.addEventListener("submit", (event) => {
 		event.preventDefault();
 		try {
 			theme.save(draft);
-			committed = true;
-			dialog.close();
+			one(".theme-error").hidden = true;
+			window.flowerUI.feedback(one(".theme-feedback"), "已保存外观。");
 		} catch {
 			const error = one(".theme-error");
 			error.textContent = "本机外观设置保存失败，请检查当前用户的存储空间后重试。";

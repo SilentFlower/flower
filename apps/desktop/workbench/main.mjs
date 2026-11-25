@@ -1,22 +1,25 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { lstat, rm, stat } from "node:fs/promises";
+import { lstat, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	app,
 	BrowserWindow,
+	ClipboardItem,
 	clipboard,
 	dialog,
 	ipcMain,
 	Menu,
 	Notification,
+	nativeImage,
 	nativeTheme,
 	safeStorage,
 	screen,
 	shell,
 	utilityProcess,
 } from "electron";
+import { createQuestionBroker } from "./ask-user.mjs";
 import {
 	importAttachmentFile,
 	importAttachmentImage,
@@ -28,8 +31,15 @@ import {
 import { draftAttachments, fileReference, mergeAttachments } from "./attachment-drafts.mjs";
 import { historyReference, sentImage } from "./attachment-history.mjs";
 import { createAttention } from "./attention.mjs";
+import { createAutomation } from "./automation.mjs";
+import { mergeBackground, recentBackground, summarizeBackground } from "./background-tasks.mjs";
 import { contextMenuItems, replyMenuItems, revealLabel } from "./context-menu.mjs";
+import { conversationHtml, conversationMarkdown, exportSelectedSegments, exportTurns } from "./conversation-export.mjs";
+import { bundledUpdateChannel, createDesktopUpdater, electronReleaseFetch } from "./desktop-update.mjs";
+import { bundledMacUpdateChannel, createMacDesktopUpdater } from "./desktop-update-macos.mjs";
+import { acceptedFirst, finishFirstIntent, recoverFirstSessions, saveFirstIntent } from "./first-session.mjs";
 import { listAvailableModels, openModelStream } from "./gateway.mjs";
+import { createLocalExtensions, readLocalExtensionPackage } from "./local-extensions.mjs";
 import {
 	describeEffortPreset,
 	findService,
@@ -42,11 +52,14 @@ import {
 	updateService,
 	writeModelLibrary,
 } from "./model-library.mjs";
+import { createNativePanelHost } from "./native-panels.mjs";
 import { createRuntimeHost } from "./runtime-host.mjs";
 import { createSessionQueue, storedQueue } from "./session-queue.mjs";
+import { copySessionPrefix, planSessionRevision, revisionPaths } from "./session-revision.mjs";
 import { interruptedTurns, searchableTurns, searchSnippets } from "./session-search.mjs";
 import { conversationContext, firstMessageContext, generateTitle, placeholderTitle } from "./session-title.mjs";
 import { readJson, writeJson } from "./storage.mjs";
+import { listTurnChanges, turnArtifacts, undoTurnChanges } from "./turn-changes.mjs";
 import { containsBounds, expandedBounds, restoredBounds, roundingCorrection } from "./window-fit.mjs";
 import { readWindowState, restorableBounds, savedBounds, writeWindowState } from "./window-state.mjs";
 import {
@@ -55,6 +68,7 @@ import {
 	approveWorkspace,
 	artifactSummary,
 	canAttachWorkspaceFile,
+	checkRoot,
 	isWorkspacePath,
 	listWorkspaceEntries,
 	previewWorkspaceFile,
@@ -65,7 +79,14 @@ import {
 	workspaceEntryPath,
 	workspaceFiles,
 } from "./workspace.mjs";
-import { gitChanges, gitDifference, trackedFiles } from "./workspace-git.mjs";
+import {
+	commitGitChanges,
+	gitChanges,
+	gitCommitPreview,
+	gitDifference,
+	trackedFiles,
+	updateGitStage,
+} from "./workspace-git.mjs";
 
 const page = new URL("./index.html", import.meta.url);
 const uid = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/;
@@ -90,14 +111,19 @@ function titlebarOverlay(palette) {
 	return { height: 45, color: "#00000000", symbolColor: palette.symbolColor };
 }
 // 窗口外观和侧栏扩展只改变当前窗口，不依赖本机资料加载完成。
-const immediateHandlers = new Set(["state", "titlebar-theme", "panel-expansion"]);
+const immediateHandlers = new Set(["state", "titlebar-theme", "panel-expansion", "desktop-update-state"]);
 
 /** 启动使用独立本机资料目录的桌面工作台。
  * @returns 无返回值
  */
 export function launchWorkbench() {
+	const macOS = process.platform === "darwin";
+	const updateChannel = macOS ? bundledMacUpdateChannel(process.arch) : bundledUpdateChannel();
 	if (!app.commandLine.hasSwitch("user-data-dir")) {
-		const profile = join(app.getPath("appData"), "Flower Desktop Open");
+		const profile = join(
+			app.getPath("appData"),
+			updateChannel?.id === "qa" ? "Flower Desktop Update QA" : "Flower Desktop Open",
+		);
 		mkdirSync(profile, { recursive: true });
 		app.setPath("userData", profile);
 	}
@@ -114,6 +140,12 @@ export function launchWorkbench() {
 	let windowSave;
 	const workbenchPath = join(directory, "workbench.json");
 	const settingsPath = join(directory, "model.json");
+	let desktopUpdater;
+	let startupUpdate;
+	let periodicUpdate;
+	let updateRestarting = false;
+	let handingOffUpdate = false;
+	let macRestartHandoff = false;
 	let window;
 	let host;
 	let ready;
@@ -126,6 +158,10 @@ export function launchWorkbench() {
 		draftWriteMode: "auto",
 		instructions: "",
 	};
+	let persistedSelection = "";
+	const drafts = new Map();
+	const draftAssetIntents = new Set();
+	const firstSends = new Map();
 	let workspaceSelection = new AbortController();
 	let settings;
 	let model;
@@ -140,17 +176,42 @@ export function launchWorkbench() {
 	let writes = Promise.resolve();
 	let taskChanges = Promise.resolve();
 	const activeRequests = new Map();
+	let automationTimer;
+	let exiting = false;
+	const automation = createAutomation({
+		path: join(directory, "automation.json"),
+		workspace: automationWorkspace,
+		available: () => initialized && Boolean(model) && !exiting && !updateRestarting,
+		launch: launchAutomation,
+		abort: abortAutomation,
+		recover: recoverAutomation,
+		changed: () => send({ kind: "automation-changed" }),
+	});
+	const extensions = createLocalExtensions(directory);
+	const nativePanels = createNativePanelHost({
+		window: () => window,
+		current: (session) => session === workbench.selected,
+		associate: (session) => readSelectedWorkspace(session, (workspace) => workspace),
+		send,
+	});
 	// 正在手动压缩的会话：视为忙碌，新消息排队，结束后派发。
 	const compacting = new Set();
 	const attention = createAttention();
 	// 系统通知在被点击前需要保持引用，否则可能被回收而丢失点击回调。
 	const notices = new Set();
 	let closeConfirmed = false;
+	let askingToClose = false;
 	const sessionsDirectory = join(directory, "sessions");
 	let lastAttachmentDirectory;
 	// 侧栏扩展前后的窗口外框。open 为 false 表示最大化期间已收起，退出最大化后再还原。
 	let panelExpansion;
 	const approvals = new Map();
+	const questions = createQuestionBroker({
+		selected: () => workbench.selected,
+		isCurrent: isCurrentRun,
+		changed: announce,
+		notify: (session) => remind(session, "有问题待回答"),
+	});
 	// 已关闭但仍有运行收尾的侧边追问，终态写盘后再清理一次记录文件。
 	const retiredSideChats = new Set();
 	// 正文索引：会话 ID → 记录文件的修改时间、大小与可搜索轮次。搜索与启动时的中断识别共用，文件未变时复用。
@@ -189,13 +250,50 @@ export function launchWorkbench() {
 	function send(message) {
 		if (window && !window.isDestroyed()) window.webContents.send("flower:update", message);
 	}
+	function updateState() {
+		return (
+			desktopUpdater?.state() ?? {
+				phase: "unavailable",
+				currentVersion: app.getVersion(),
+				channel: updateChannel?.id ?? "stable",
+				...(macOS && { installPolicy: "on-exit" }),
+				scheduled: false,
+				canRestart: false,
+			}
+		);
+	}
+	function updateBusy() {
+		return !initialized || pendingWork() > 0;
+	}
+	function pendingWork() {
+		return (
+			activeRequests.size +
+			compacting.size +
+			firstSends.size +
+			workbench.sessions.reduce((count, session) => count + (session.queuePaused ? 0 : storedQueue(session).length), 0)
+		);
+	}
+	function sessionView(owner) {
+		return {
+			id: owner.id,
+			title: owner.title,
+			workspaceId: owner.workspace.id,
+			workspace:
+				workbench.workspaces.find((item) => item.workspace.id === owner.workspace.id)?.title ?? owner.workspace.name,
+			path: owner.workspace.root,
+			attachments: draftAttachments(owner),
+		};
+	}
 
 	function state() {
 		const waiting = [...approvals.values()].map(({ prompt }) => prompt);
 		const waitingSessions = new Set(waiting.map(({ session }) => session));
+		const questionSessions = questions.sessions();
+		const draft = drafts.get(workbench.selected);
 		return {
 			ready: initialized,
 			version: app.getVersion(),
+			desktopUpdate: updateState(),
 			model: model?.id ?? "",
 			modelRevision,
 			runtimeRevision,
@@ -203,9 +301,10 @@ export function launchWorkbench() {
 			writeMode: selectedWriteMode(),
 			writeModeBusy: sessionBusy(workbench.selected),
 			writeApproval: waiting.find(({ session }) => session === workbench.selected),
+			question: questions.current(),
 			modelSettings: publicService(settings, catalogFor(settings)),
 			modelServices: library.services.map((service) => publicService(service, catalogFor(service))),
-			queue: workbench.selected ? queue.view(workbench.selected) : undefined,
+			queue: workbench.selected && !draft ? queue.view(workbench.selected) : undefined,
 			compacting: compacting.has(workbench.selected),
 			instructions: workbench.instructions ?? "",
 			interrupted: interruptedDismissed
@@ -222,19 +321,16 @@ export function launchWorkbench() {
 				pinned,
 			})),
 			sessions: workbench.sessions.map((owner) => ({
-				id: owner.id,
-				title: owner.title,
-				workspaceId: owner.workspace.id,
-				workspace:
-					workbench.workspaces.find((item) => item.workspace.id === owner.workspace.id)?.title ?? owner.workspace.name,
+				...sessionView(owner),
 				pinned: owner.pinned === true,
-				path: owner.workspace.root,
-				attachments: draftAttachments(owner),
 				awaitingWrite: waitingSessions.has(owner.id),
+				awaitingAnswer: questionSessions.has(owner.id),
 				busy: sessionBusy(owner.id),
 				indicator: attention.indicator(owner.id, waitingSessions.has(owner.id), sessionBusy(owner.id)),
 			})),
 			selected: workbench.selected,
+			draft: draft && sessionView(draft),
+			draftIds: [...drafts.keys()],
 		};
 	}
 
@@ -297,6 +393,7 @@ export function launchWorkbench() {
 				draftWriteMode: storedWriteMode(stored?.draftWriteMode),
 				instructions: typeof stored?.instructions === "string" ? stored.instructions.slice(0, 4000) : "",
 			};
+			persistedSelection = workbench.selected;
 		} catch {
 			workbenchError = "无法读取本机会话。请检查应用资料目录。";
 		}
@@ -308,7 +405,25 @@ export function launchWorkbench() {
 			gatewayError = "无法读取本机模型设置，请重新配置。";
 		}
 		if (workbench.deletions.length) await cleanDeleted().catch(() => {});
+		if (!workbenchError) {
+			const known = new Set([
+				...workbench.sessions.map(({ id }) => id),
+				...workbench.sideChats.map(({ id }) => id),
+				...workbench.deletions,
+			]);
+			const recovered = await recoverFirstSessions(sessionsDirectory, known).catch(() => []);
+			if (recovered.length) {
+				for (const owner of recovered) addAcceptedSession(owner);
+				if (!workbench.selected) workbench.selected = recovered[0].id;
+				await record().then(
+					() => Promise.all(recovered.map(({ id }) => finishFirstIntent(sessionsDirectory, id).catch(() => {}))),
+					() => {},
+				);
+			}
+		}
 		initialized = true;
+		void automation.load().catch(() => {});
+		automationTimer = setInterval(() => void automation.tick().catch(() => {}), 10_000).unref();
 		announce();
 		// 工作台就绪后在后台扫描记录文件；处理器等待的初始化不包含这一步，不拖慢首次交互。
 		void (async () => {
@@ -322,23 +437,112 @@ export function launchWorkbench() {
 	 * @param {string} id 会话 ID
 	 * @returns {Promise<ReturnType<typeof searchableTurns>>} 轮次，文件不存在或无法读取时为空
 	 */
-	async function indexedTurns(id) {
+	async function indexedSession(id) {
 		const file = join(sessionsDirectory, `${id}.json`);
 		const info = await stat(file).catch(() => undefined);
 		if (!info) {
 			bodyIndex.delete(id);
-			return [];
+			return { turns: [], tasks: [] };
 		}
 		const cached = bodyIndex.get(id);
-		if (cached?.mtimeMs === info.mtimeMs && cached.size === info.size) return cached.turns;
-		const turns = searchableTurns(await readJson(file).catch(() => undefined));
-		bodyIndex.set(id, { mtimeMs: info.mtimeMs, size: info.size, turns });
-		return turns;
+		if (cached?.mtimeMs === info.mtimeMs && cached.size === info.size) return cached;
+		const snapshot = await readJson(file).catch(() => undefined);
+		const entry = {
+			mtimeMs: info.mtimeMs,
+			size: info.size,
+			turns: searchableTurns(snapshot),
+			tasks: summarizeBackground(snapshot),
+		};
+		bodyIndex.set(id, entry);
+		return entry;
+	}
+
+	async function indexedTurns(id) {
+		return (await indexedSession(id)).turns;
+	}
+
+	async function backgroundRows() {
+		const activeSessions = new Set([...activeRequests.values()].map(({ session }) => session));
+		const owners = workbench.sessions.filter(
+			(owner, index) => index < 60 || activeSessions.has(owner.id) || storedQueue(owner).length,
+		);
+		const awaiting = new Set([...approvals.values()].map(({ prompt }) => prompt.requestId));
+		const questionSessions = questions.sessions();
+		const rows = [];
+		for (let offset = 0; offset < owners.length; offset += 8) {
+			// 批量限制读盘并发，同时保留最近会话之外正在执行的请求。
+			const batch = await Promise.all(
+				owners.slice(offset, offset + 8).map(async (owner) => ({
+					id: owner.id,
+					tasks: (await indexedSession(owner.id)).tasks,
+				})),
+			);
+			for (const { id, tasks } of batch) {
+				const owner = workbench.sessions.find((entry) => entry.id === id);
+				if (!owner) continue;
+				const { workspace } = owner;
+				const display = sessionView(owner);
+				const active = new Set(
+					[...activeRequests].filter(([, request]) => request.session === id).map(([request]) => request),
+				);
+				const merged = mergeBackground(tasks, storedQueue(owner), {
+					workspaceId: workspace.id,
+					active,
+					approvals: awaiting,
+					questions: questionSessions.has(id),
+					paused: owner.queuePaused,
+				});
+				for (const task of merged)
+					rows.push({
+						...task,
+						session: id,
+						title: display.title,
+						workspace: display.workspace,
+						path: display.path,
+						cancellable: active.has(task.id),
+					});
+			}
+		}
+		const saved = await automation.view().catch(() => ({ runs: [] }));
+		const automatic = new Map(saved.runs.map((run) => [run.id, run]));
+		const manual = rows.filter((row) => !automatic.has(row.session));
+		for (const run of automatic.values()) {
+			const owner = workbench.sessions.find(({ id }) => id === run.id);
+			const space = workbench.workspaces.find(({ workspace }) => workspace.id === run.workspaceId);
+			const result = rows.find((row) => row.session === run.id && (!run.request || row.id === run.request));
+			manual.push({
+				id: run.id,
+				session: owner?.id,
+				title: run.title,
+				workspace: space?.title ?? "工作区已移除",
+				path: space?.workspace.root,
+				input: run.prompt.slice(0, 240),
+				result: run.result || result?.result || "",
+				progress: result?.progress,
+				status:
+					["running", "starting"].includes(run.status) && result
+						? result.status
+						: run.status === "queued" && !model
+							? "waiting-model"
+							: run.status,
+				at: run.at,
+				automation: true,
+				cancellable: ["running", "starting", "queued"].includes(run.status),
+			});
+		}
+		return recentBackground(manual);
 	}
 
 	async function record() {
 		const snapshot = structuredClone(workbench);
-		const write = writes.then(() => writeJson(workbenchPath, snapshot));
+		const temporary = drafts.has(snapshot.selected);
+		const write = writes.then(async () => {
+			if (temporary) {
+				snapshot.selected = snapshot.sessions.some(({ id }) => id === persistedSelection) ? persistedSelection : "";
+			}
+			await writeJson(workbenchPath, snapshot);
+			persistedSelection = snapshot.selected;
+		});
 		writes = write.catch(() => {});
 		await write;
 		announce();
@@ -351,18 +555,61 @@ export function launchWorkbench() {
 		return session;
 	}
 
+	function automationWorkspace(workspaceId) {
+		const found = workbench.workspaces.find(({ workspace }) => workspace.id === workspaceId);
+		if (!found) throw new Error("这项自动化的工作区已移除，请重新选择。");
+		return found;
+	}
+
+	function launchAutomation(run, signal) {
+		return serializeTaskChange(async () => {
+			requireWritableWorkbench();
+			signal.throwIfAborted();
+			const { workspace } = automationWorkspace(run.workspaceId);
+			const verified = await approveWorkspace(workspace.root);
+			signal.throwIfAborted();
+			if (verified.id !== workspace.id) throw new Error("工作区位置已变化，请重新选择目录。");
+			const previous = structuredClone(workbench);
+			addAcceptedSession({ id: run.id, title: run.title, workspace, writeMode: run.writeMode, automation: true });
+			await persistChange(previous);
+			signal.throwIfAborted();
+			const accepted = await submitRequest(run.id, { input: run.prompt, skill: run.skill });
+			if (signal.aborted) await abortAutomation({ id: run.id, request: accepted.requestId });
+			return accepted;
+		});
+	}
+
+	async function abortAutomation(run) {
+		const request = run.request ?? [...activeRequests].find(([, value]) => value.session === run.id)?.[0];
+		const active = activeRequests.get(request);
+		if (!host || !active || active.session !== run.id) return false;
+		if (active.runId) return cancelRun(run.id, request, active.runId);
+		return host.call("cancel-queued", { session: run.id, requestId: request });
+	}
+
+	async function recoverAutomation(run) {
+		const owner = workbench.sessions.find(({ id }) => id === run.id);
+		if (!owner || owner.workspace.id !== run.workspaceId) return undefined;
+		const { tasks } = await indexedSession(run.id);
+		const record = tasks.find(
+			(task) => task.workspaceId === run.workspaceId && (!run.request || task.id === run.request),
+		);
+		return record && { status: record.status, result: record.result, request: record.id };
+	}
+
 	function selectWorkspaceSession(id) {
 		if (workbench.selected === id) return;
 		// 行内编辑只发生在当前会话，切走后不再暂缓其队列。
 		if (workbench.selected) queue.release(workbench.selected);
+		nativePanels.close();
 		workspaceSelection.abort(new Error("会话已切换，请重新读取工作区。"));
 		workspaceSelection = new AbortController();
 		workbench.selected = id;
 	}
 
 	async function readSelectedWorkspace(id, read) {
-		const { workspace } = findSession(id);
 		if (id !== workbench.selected) throw new Error("只能读取当前会话的工作区。");
+		const { workspace } = drafts.get(id) ?? findSession(id);
 		// 捕获本次选择的信号，切走再切回时也会丢弃旧结果。
 		const { signal } = workspaceSelection;
 		try {
@@ -374,6 +621,7 @@ export function launchWorkbench() {
 
 	function requireWritableWorkbench() {
 		if (workbenchError) throw new Error(workbenchError);
+		if (updateRestarting) throw new Error("应用正在为更新重启。");
 	}
 
 	function serializeTaskChange(action) {
@@ -384,7 +632,11 @@ export function launchWorkbench() {
 	}
 
 	function selectedWriteMode() {
-		return workbench.sessions.find(({ id }) => id === workbench.selected)?.writeMode ?? workbench.draftWriteMode;
+		return (
+			drafts.get(workbench.selected)?.writeMode ??
+			workbench.sessions.find(({ id }) => id === workbench.selected)?.writeMode ??
+			workbench.draftWriteMode
+		);
 	}
 
 	function sessionBusy(id) {
@@ -406,7 +658,9 @@ export function launchWorkbench() {
 		const active = activeRequests.get(requestId);
 		if (active?.session === session && active.runId === runId) active.running = false;
 		const cancellation = host.call("cancel-running", { session, runId });
-		dismissApprovals((prompt) => prompt.session === session && prompt.runId === runId);
+		const matches = (prompt) => prompt.session === session && prompt.runId === runId;
+		dismissApprovals(matches);
+		questions.dismiss(matches);
 		return cancellation;
 	}
 
@@ -509,6 +763,10 @@ export function launchWorkbench() {
 			onEvent(event) {
 				if (host !== instance) return;
 				const { type, sessionId: session, requestId, runId } = event;
+				if (type === "queued" && drafts.has(session)) {
+					const first = firstSends.get(session);
+					if (first) promoteDraft(first.owner, first.input);
+				}
 				const added = type === "queued" && !activeRequests.has(requestId);
 				if (added || type === "started") activeRequests.set(requestId, { session, runId, running: type === "started" });
 				if (type === "cancelling") {
@@ -520,13 +778,30 @@ export function launchWorkbench() {
 					workbench.deletions.push(session);
 					void cleanDeleted().catch(() => {});
 				}
-				if (type === "terminal" || type === "cancelling") dismissApprovals((prompt) => prompt.requestId === requestId);
+				if (type === "terminal" || type === "cancelling") {
+					const matches = (prompt) => prompt.requestId === requestId;
+					dismissApprovals(matches);
+					questions.dismiss(matches);
+				}
 				// 插话送达时附上原文，界面无须等待历史重读即可显示；终态后派发下一条排队消息。
 				const steered = queue.receive(event);
 				const visible = event.type === "tool_result" ? { ...event, text: [] } : steered ? { ...event, ...steered } : event;
 				send({ kind: "event", event: visible });
 				// 侧边追问在右栏中进行，不单独提醒。
 				if (type === "terminal" && workbench.sessions.some(({ id }) => id === session)) noticeTerminal(session, event);
+				if (type === "terminal" && workbench.sessions.some(({ id, automation }) => id === session && automation)) {
+					bodyIndex.delete(session);
+					void indexedSession(session)
+						.then(({ tasks }) =>
+							automation.finish(
+								session,
+								event.status,
+								tasks.find(({ id }) => id === requestId)?.result || event.failure?.message,
+								requestId,
+							),
+						)
+						.catch(() => {});
+				}
 				if (added || type === "started" || type === "terminal") announce();
 			},
 			onReasoning(frame) {
@@ -537,7 +812,10 @@ export function launchWorkbench() {
 				if (host !== instance) return;
 				host = undefined;
 				ready = undefined;
+				for (const { session } of activeRequests.values())
+					void automation.finish(session, "interrupted", "工作进程已关闭。").catch(() => {});
 				activeRequests.clear();
+				questions.dismiss();
 				queue.pauseAll();
 				runtimeRevision++;
 				gatewayError = "工作进程已关闭，请重新发起任务。";
@@ -554,6 +832,7 @@ export function launchWorkbench() {
 				});
 			},
 			authorizeWrite,
+			requestQuestion: (frame, signal) => (window && !window.isDestroyed() ? questions.request(frame, signal) : undefined),
 		});
 		host = instance;
 		ready = instance.ready
@@ -803,6 +1082,12 @@ export function launchWorkbench() {
 			requireWritableWorkbench();
 			if (session !== workbench.selected || !writeModes.has(mode)) throw new Error("无效的会话权限选择。");
 			if (sessionBusy(session)) throw new Error("等待本会话的运行和排队任务结束后可更改权限。");
+			const draft = drafts.get(session);
+			if (draft) {
+				draft.writeMode = mode;
+				announce();
+				return;
+			}
 			const owner = session ? findSession(session) : workbench;
 			const field = session ? "writeMode" : "draftWriteMode";
 			const previous = owner[field];
@@ -827,9 +1112,12 @@ export function launchWorkbench() {
 		entry.finish(allowed === true ? "allow" : "deny");
 		return true;
 	});
+	handle("answer-question", (id, selection) => questions.answer(id, selection));
 	handle("choose-workspace", async () => {
 		requireWritableWorkbench();
-		const current = workbench.sessions.find(({ id }) => id === workbench.selected) ?? workbench.sessions[0];
+		const { signal } = workspaceSelection;
+		const draft = drafts.get(workbench.selected);
+		const current = draft ?? workbench.sessions.find(({ id }) => id === workbench.selected) ?? workbench.sessions[0];
 		const selection = await dialog.showOpenDialog(window, {
 			title: "选择 Flower 工作区",
 			defaultPath: current?.workspace.root,
@@ -845,11 +1133,10 @@ export function launchWorkbench() {
 				throw new Error("没有访问这个目录的权限。请检查目录对当前用户的权限。");
 			throw error;
 		}
-		return serializeTaskChange(async () => {
-			const previous = structuredClone(workbench);
-			if (!workbench.workspaces.some((item) => item.workspace.id === workspace.id))
-				workbench.workspaces.unshift({ workspace, title: workspace.name });
-			return createSession(workspace, workspace.name || "新会话", selectedWriteMode(), previous);
+		return serializeTaskChange(() => {
+			signal.throwIfAborted();
+			if (drafts.get(workbench.selected)?.workspace.id === workspace.id) return workbench.selected;
+			return enterDraft(workspace, selectedWriteMode());
 		});
 	});
 
@@ -865,28 +1152,47 @@ export function launchWorkbench() {
 		}
 	}
 
-	async function createSession(workspace, title, writeMode, previous = structuredClone(workbench)) {
+	function enterDraft(workspace, writeMode) {
 		const id = randomUUID();
-		// 新会话在首条消息时自动命名；升级前已有的会话没有此标记，不自动改名。
-		workbench.sessions.unshift({ id, title, workspace, writeMode, titlePending: true });
+		drafts.set(id, { id, title: "新会话", workspace, writeMode });
 		selectWorkspaceSession(id);
-		await persistChange(previous);
+		announce();
 		return id;
+	}
+
+	function addAcceptedSession(owner) {
+		if (!workbench.workspaces.some((item) => item.workspace.id === owner.workspace.id)) {
+			const { workspace } = owner;
+			workbench.workspaces.unshift({ workspace, title: workspace.name });
+		}
+		workbench.sessions.unshift(owner);
+	}
+
+	function promoteDraft(owner, input) {
+		if (!drafts.delete(owner.id)) return;
+		draftAssetIntents.delete(owner.id);
+		owner.title = placeholderTitle(input) || owner.title;
+		delete owner.attachments;
+		addAcceptedSession(owner);
 	}
 
 	handle("new-session", (current) =>
 		serializeTaskChange(() => {
 			requireWritableWorkbench();
-			const previous = findSession(current);
-			const title =
-				workbench.workspaces.find((entry) => entry.workspace.id === previous.workspace.id)?.title ??
-				previous.workspace.name;
-			return createSession(previous.workspace, `${title} · 新会话`, previous.writeMode);
+			if (current !== workbench.selected) throw new Error("会话已切换，请重新新建。");
+			if (!current) return;
+			const previous = drafts.get(current) ?? findSession(current);
+			return enterDraft(previous.workspace, previous.writeMode);
 		}),
 	);
 	handle("select-session", (id) =>
 		serializeTaskChange(async () => {
 			requireWritableWorkbench();
+			if (drafts.has(id)) {
+				selectWorkspaceSession(id);
+				announce();
+				return;
+			}
 			if (id !== "") findSession(id);
 			const previous = structuredClone(workbench);
 			selectWorkspaceSession(id);
@@ -906,9 +1212,15 @@ export function launchWorkbench() {
 			if (error.code !== "ENOENT") throw error;
 		});
 		if (info && (!info.isDirectory() || info.isSymbolicLink())) throw new Error("本机附件目录位置已变化。");
+		const changes = join(sessionsDirectory, "turn-changes");
+		const ledger = await lstat(changes).catch((error) => {
+			if (error.code !== "ENOENT") throw error;
+		});
+		if (ledger && (!ledger.isDirectory() || ledger.isSymbolicLink())) throw new Error("本机文件变更目录位置已变化。");
 		for (const id of workbench.deletions) {
 			await rm(join(sessionsDirectory, `${id}.json`), { force: true });
 			if (info) await rm(join(assets, id), { recursive: true, force: true, maxRetries: 2 });
+			if (ledger) await rm(join(changes, id), { recursive: true, force: true, maxRetries: 2 });
 		}
 		workbench.deletions = [];
 		await record();
@@ -922,9 +1234,11 @@ export function launchWorkbench() {
 			const item = space ? workbench.workspaces.find((entry) => entry.workspace.id === id) : findSession(id);
 			if (!item) throw new Error("工作区已移除。");
 			const members = space ? workbench.sessions.filter((entry) => entry.workspace.id === id) : [item];
-			if (operation === "create" && space)
-				return createSession(item.workspace, `${item.title} · 新会话`, members[0]?.writeMode ?? workbench.draftWriteMode);
+			if (operation === "create" && space) {
+				return enterDraft(item.workspace, members[0]?.writeMode ?? workbench.draftWriteMode);
+			}
 			const previous = structuredClone(workbench);
+			const removedDrafts = [];
 			if (operation === "pin" && typeof value === "boolean") item.pinned = value;
 			else if (operation === "rename" && typeof value === "string" && value.trim() && value.trim().length <= 120) {
 				item.title = value.trim();
@@ -940,8 +1254,11 @@ export function launchWorkbench() {
 					bodyIndex.delete(key);
 					interrupted.delete(key);
 				}
-				if (space) workbench.workspaces = workbench.workspaces.filter((entry) => entry !== item);
-				if (deleted.has(workbench.selected))
+				if (space) {
+					workbench.workspaces = workbench.workspaces.filter((entry) => entry !== item);
+					for (const draft of drafts.values()) if (draft.workspace.id === id) removedDrafts.push(draft.id);
+				}
+				if (deleted.has(workbench.selected) || removedDrafts.includes(workbench.selected))
 					selectWorkspaceSession(
 						workbench.sessions.find((entry) => entry.workspace.id === item.workspace.id)?.id ??
 							workbench.sessions[0]?.id ??
@@ -950,6 +1267,14 @@ export function launchWorkbench() {
 				workbench.deletions.push(...deleted);
 			} else throw new Error("无效的侧栏操作或名称。");
 			await persistChange(previous);
+			if (removedDrafts.length) {
+				for (const key of removedDrafts) {
+					drafts.delete(key);
+					draftAssetIntents.delete(key);
+					await finishFirstIntent(sessionsDirectory, key, true).catch(() => {});
+				}
+				announce();
+			}
 			if (operation === "delete" && workbench.deletions.length)
 				await cleanDeleted().catch(() => {
 					throw new Error("已从侧栏移除。部分本机记录将在下次启动时清理。");
@@ -1033,13 +1358,13 @@ export function launchWorkbench() {
 	 * @param {string} text 消息原文
 	 * @returns {Promise<object>} 请求记录
 	 */
-	async function submitSideChat(side, text) {
+	async function submitSideChat(side, text, skill) {
 		if (typeof text !== "string" || !text.trim() || text.length > 16000)
 			throw new Error("请输入有效任务说明，最多 16000 字符");
 		if (!model) throw new Error("请先配置模型。");
 		if (sessionBusy(side.id)) throw new Error("侧边追问正在回答，请稍候或先停止。");
 		const runtime = await getSideRuntime(side);
-		return runtime.call("submit", { session: side.id, input: text });
+		return runtime.call("submit", { session: side.id, input: text, ...(skill && { skill }) });
 	}
 	handle("submit-side-chat", (parent, text) => serializeTaskChange(() => submitSideChat(sideChatOf(parent), text)));
 	handle("queue-to-side-chat", (parent, itemId) =>
@@ -1050,7 +1375,7 @@ export function launchWorkbench() {
 			const item = await queue.take(parent, itemId);
 			let record;
 			try {
-				record = await submitSideChat(side, item.input);
+				record = await submitSideChat(side, item.input, item.skill);
 			} catch (error) {
 				await queue.restore(parent, item);
 				throw error;
@@ -1082,6 +1407,177 @@ export function launchWorkbench() {
 	handle("git-difference", (id, path, group) =>
 		readSelectedWorkspace(id, (workspace, signal) => gitDifference(workspace, path, group, signal)),
 	);
+	handle("git-stage", (id, path, action) =>
+		serializeTaskChange(() => {
+			requireWritableWorkbench();
+			return readSelectedWorkspace(id, (workspace, signal) => updateGitStage(workspace, path, action, signal));
+		}),
+	);
+	handle("git-commit", async (id, message) => {
+		requireWritableWorkbench();
+		if (typeof message !== "string" || !message.trim() || message.length > 1000)
+			throw new Error("请输入有效的提交说明。");
+		const { signal } = workspaceSelection;
+		const preview = await readSelectedWorkspace(id, gitCommitPreview);
+		const paths = preview.paths.slice(0, 8);
+		const { response } = await dialog.showMessageBox(window, {
+			type: "question",
+			buttons: ["提交", "取消"],
+			defaultId: 1,
+			cancelId: 1,
+			noLink: true,
+			message: `将 ${preview.total} 项暂存变更提交到 ${preview.branch}`,
+			detail: [
+				...paths,
+				...(paths.length < preview.total ? [`还有 ${preview.total - paths.length} 项`] : []),
+				"",
+				message.trim(),
+			].join("\n"),
+		});
+		if (response !== 0) return undefined;
+		return serializeTaskChange(() => {
+			requireWritableWorkbench();
+			signal.throwIfAborted();
+			return readSelectedWorkspace(id, (workspace, current) =>
+				commitGitChanges(workspace, message.trim(), preview, current),
+			);
+		});
+	});
+	for (const [channel, method] of [
+		["terminal-open", "terminalOpen"],
+		["terminal-input", "terminalInput"],
+		["terminal-resize", "terminalResize"],
+		["terminal-close", "terminalClose"],
+		["browser-navigate", "browserNavigate"],
+		["browser-action", "browserAction"],
+		["browser-bounds", "browserBounds"],
+	])
+		handle(channel, (...args) => nativePanels[method](...args));
+	handle("background-tasks", backgroundRows);
+	handle("cancel-background-task", (session, requestId) => {
+		requireWritableWorkbench();
+		findSession(session);
+		if (typeof requestId !== "string" || !uid.test(requestId)) throw new Error("无效任务。");
+		const active = activeRequests.get(requestId);
+		if (!host || active?.session !== session) throw new Error("任务已经结束，请刷新。");
+		if (active.runId) return cancelRun(session, requestId, active.runId);
+		return host.call("cancel-queued", { session, requestId });
+	});
+	handle("automation-state", () => automation.view());
+	handle("automation-skills", async (workspaceId) => {
+		const draft = drafts.get(workbench.selected);
+		const { workspace } = draft?.workspace.id === workspaceId ? draft : automationWorkspace(workspaceId);
+		await checkRoot(workspace);
+		return (await extensions.list(workspace.id))
+			.filter(({ kind, enabled }) => kind === "skill" && enabled)
+			.map(({ id, name }) => ({ id, name }));
+	});
+	handle("save-automation", (id, input) => {
+		requireWritableWorkbench();
+		return serializeTaskChange(async () => {
+			const draft = drafts.get(workbench.selected);
+			if (
+				draft?.workspace.id === input?.workspaceId &&
+				!workbench.workspaces.some(({ workspace }) => workspace.id === input.workspaceId)
+			) {
+				const workspace = await approveWorkspace(draft.workspace.root);
+				if (workspace.id !== draft.workspace.id) throw new Error("工作区位置已变化，请重新选择目录。");
+				const previous = structuredClone(workbench);
+				workbench.workspaces.unshift({ workspace, title: workspace.name });
+				await persistChange(previous);
+			}
+			if (input?.skill) await extensions.selectedSkill(automationWorkspace(input.workspaceId).workspace, input.skill);
+			return automation.savePlan(id, input);
+		});
+	});
+	handle("enable-automation", (id, enabled) => {
+		requireWritableWorkbench();
+		return automation.enable(id, enabled);
+	});
+	handle("remove-automation", (id) => {
+		requireWritableWorkbench();
+		return automation.remove(id);
+	});
+	handle("run-automation", (id) => {
+		requireWritableWorkbench();
+		return automation.runNow(id);
+	});
+	handle("cancel-automation", (id) => automation.cancel(id));
+	handle("list-local-extensions", (id) =>
+		readSelectedWorkspace(id, async (workspace) => {
+			await checkRoot(workspace);
+			return extensions.list(workspace.id);
+		}),
+	);
+	handle("install-local-extension", (id, kind) =>
+		readSelectedWorkspace(id, async (workspace, signal) => {
+			requireWritableWorkbench();
+			if (kind !== undefined && kind !== "skill" && kind !== "extension") throw new Error("未知的本地包类型。");
+			const fileType =
+				kind === "skill"
+					? { name: "Markdown 技能", extensions: ["md"] }
+					: kind === "extension"
+						? { name: "JSON 扩展", extensions: ["json"] }
+						: { name: "技能和本地扩展包", extensions: ["md", "json"] };
+			await checkRoot(workspace);
+			const { canceled, filePaths } = await dialog.showOpenDialog(window, {
+				title: `选择${fileType.name}`,
+				properties: ["openFile"],
+				filters: [fileType],
+			});
+			if (canceled || !filePaths[0]) return undefined;
+			signal.throwIfAborted();
+			const manifest = await readLocalExtensionPackage(filePaths[0]);
+			const actualKind = manifest.kind === "skill" ? "skill" : "extension";
+			if (kind && actualKind !== kind) throw new Error(`请选择${fileType.name}文件。`);
+			const { response } = await dialog.showMessageBox(window, {
+				type: "question",
+				buttons: ["安装", "取消"],
+				defaultId: 1,
+				cancelId: 1,
+				noLink: true,
+				message: `安装「${manifest.name}」`,
+				detail: [
+					manifest.description,
+					manifest.kind === "skill"
+						? `将技能说明供「${workspace.name}」中的模型任务读取。`
+						: `在「${workspace.name}」${manifest.action === "count-lines" ? "统计" : "提取"}含「${manifest.contains}」的文本行。`,
+				]
+					.filter(Boolean)
+					.join("\n\n"),
+			});
+			if (response !== 0) return undefined;
+			return serializeTaskChange(async () => {
+				requireWritableWorkbench();
+				signal.throwIfAborted();
+				await checkRoot(workspace);
+				return extensions.install(workspace.id, manifest);
+			});
+		}),
+	);
+	handle("enable-local-extension", (id, extension, enabled) =>
+		readSelectedWorkspace(id, (workspace, signal) =>
+			serializeTaskChange(async () => {
+				requireWritableWorkbench();
+				signal.throwIfAborted();
+				await checkRoot(workspace);
+				return extensions.setEnabled(workspace.id, extension, enabled);
+			}),
+		),
+	);
+	handle("uninstall-local-extension", (id, extension) =>
+		readSelectedWorkspace(id, (workspace, signal) =>
+			serializeTaskChange(async () => {
+				requireWritableWorkbench();
+				signal.throwIfAborted();
+				await checkRoot(workspace);
+				return extensions.uninstall(workspace.id, extension);
+			}),
+		),
+	);
+	handle("run-local-extension", (id, extension, path) =>
+		readSelectedWorkspace(id, (workspace, signal) => extensions.run(workspace, extension, path, signal)),
+	);
 	handle("list-workspace-entries", (id, directory, offset) =>
 		readSelectedWorkspace(id, async (workspace, signal) => {
 			const page = await listWorkspaceEntries(workspace, directory, offset, signal);
@@ -1102,7 +1598,16 @@ export function launchWorkbench() {
 				const items = [
 					...(preview === true ? [{ label: "预览", click: () => resolve("preview") }, { type: "separator" }] : []),
 					{ label: revealLabel, click: () => shell.showItemInFolder(actual) },
-					{ label: "复制路径", click: () => clipboard.writeText(actual) },
+					{
+						label: "复制路径",
+						click: async () => {
+							try {
+								await clipboard.writeText(actual);
+							} catch {
+								send({ kind: "notice", session: id, tone: "error", text: "无法将路径复制到剪贴板。" });
+							}
+						},
+					},
 				];
 				Menu.buildFromTemplate(items).popup({ window, callback: () => resolve("") });
 			});
@@ -1139,13 +1644,17 @@ export function launchWorkbench() {
 	function draftOwner(id) {
 		requireWritableWorkbench();
 		if (workbench.selected !== id) throw new Error("会话已切换，请在当前会话添加附件。");
-		return findSession(id);
+		return drafts.get(id) ?? findSession(id);
 	}
 	async function writeDraft(owner, refs) {
 		const old = owner.attachments;
 		const legacy = owner.file;
 		owner.attachments = refs;
 		delete owner.file;
+		if (drafts.has(owner.id)) {
+			announce();
+			return;
+		}
 		try {
 			await record();
 		} catch (error) {
@@ -1153,6 +1662,11 @@ export function launchWorkbench() {
 			owner.file = legacy;
 			throw error;
 		}
+	}
+	async function trackDraftAssets(owner) {
+		if (!drafts.has(owner.id) || draftAssetIntents.has(owner.id)) return;
+		await saveFirstIntent(sessionsDirectory, owner);
+		draftAssetIntents.add(owner.id);
 	}
 	// 历史请求、插话与排队消息仍然引用的副本要保留，草稿取消和部分导入失败则可以回收。
 	async function discardUnused(owner, refs) {
@@ -1184,6 +1698,7 @@ export function launchWorkbench() {
 						const relative = await approveFile(owner.workspace, fromPanel ? resolve(owner.workspace.root, path) : path);
 						refs.push(fileReference(relative));
 					} else {
+						await trackDraftAssets(owner);
 						refs.push(await importAttachmentFile(sessionsDirectory, id, path));
 					}
 				}
@@ -1215,7 +1730,9 @@ export function launchWorkbench() {
 			const names = new Set(draftAttachments(owner).map(({ name }) => name));
 			let number = 1;
 			while (names.has(`截图 ${number}.png`)) number++;
-			const ref = await importAttachmentImage(sessionsDirectory, id, readBytes(), `截图 ${number}.png`);
+			const bytes = await readBytes();
+			await trackDraftAssets(owner);
+			const ref = await importAttachmentImage(sessionsDirectory, id, bytes, `截图 ${number}.png`);
 			try {
 				draftOwner(id);
 				await writeDraft(owner, mergeAttachments(owner, [ref]));
@@ -1237,6 +1754,7 @@ export function launchWorkbench() {
 			const names = new Set(drafted.map(({ name }) => name));
 			let name = `粘贴的文本（${lines} 行）.txt`;
 			for (let number = 2; names.has(name); number++) name = `粘贴的文本 ${number}（${lines} 行）.txt`;
+			await trackDraftAssets(owner);
 			const ref = await importAttachmentText(sessionsDirectory, id, text, name);
 			try {
 				draftOwner(id);
@@ -1248,9 +1766,14 @@ export function launchWorkbench() {
 		}),
 	);
 	handle("paste-clipboard-image", (id) =>
-		addImage(id, () => {
+		addImage(id, async () => {
 			// 只在用户选择粘贴后读取系统图片，页面通过会话附件接口获取预览。
-			const image = clipboard.readImage();
+			const items = await clipboard.read();
+			const png = items.find(({ types }) => types.includes("image/png"));
+			const jpeg = !png && items.find(({ types }) => types.includes("image/jpeg"));
+			const blob = png ? await png.getType("image/png") : await jpeg?.getType("image/jpeg");
+			if (!blob?.size) throw new Error("剪贴板中没有图片。");
+			const image = nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer()));
 			if (image.isEmpty()) throw new Error("剪贴板中没有图片。");
 			const bytes = image.toPNG();
 			if (bytes.length <= 4 * 1024 * 1024) return bytes;
@@ -1292,9 +1815,10 @@ export function launchWorkbench() {
 			let record;
 			let snapshot;
 			if (requestId == null) {
-				ref = draftAttachments(findSession(id)).find((item) => item.id === key);
+				ref = draftAttachments(drafts.get(id) ?? findSession(id)).find((item) => item.id === key);
 			} else {
 				if (!uid.test(requestId)) throw new Error("无效的消息。");
+				findSession(id);
 				snapshot = await imageSnapshot(id);
 				({ ref, record } = historyReference(snapshot, requestId, key));
 			}
@@ -1355,9 +1879,282 @@ export function launchWorkbench() {
 		const history = await runtime.call("history", { session: id });
 		const record = history.find((entry) => entry.requestId === requestId);
 		if (!record?.text) throw new Error("回复原文暂不可用。");
-		clipboard.writeText(record.text);
+		return clipboard.writeText(record.text);
 	});
 	handle("open-reply-link", (value) => shell.openExternal(replyLink(value).href));
+
+	async function selectedSnapshot(id) {
+		const owner = findSession(id);
+		if (workbench.selected !== id) throw new Error("会话已切换，请在当前会话操作。");
+		const { signal } = workspaceSelection;
+		const snapshot = await readJson(join(sessionsDirectory, `${id}.json`));
+		signal.throwIfAborted();
+		if (
+			snapshot &&
+			((snapshot.workspaceId ?? snapshot.requests[0]?.workspaceId) !== owner.workspace.id ||
+				snapshot.requests.some(({ workspaceId }) => workspaceId !== owner.workspace.id))
+		)
+			throw new Error("会话与工作区归属不一致。");
+		return { owner, snapshot, signal };
+	}
+
+	async function ownedTurn(id, requestId) {
+		if (!uid.test(requestId)) throw new Error("无效的消息。");
+		const view = await selectedSnapshot(id);
+		const record = view.snapshot?.requests.find((row) => row.requestId === requestId);
+		if (!record || record.workspaceId !== view.owner.workspace.id) throw new Error("消息不属于当前工作区。");
+		return { ...view, record };
+	}
+
+	function workspaceHasRunning(workspace) {
+		return [...workbench.sessions, ...workbench.sideChats].some(
+			({ id, workspace: space }) => space.id === workspace && sessionBusy(id),
+		);
+	}
+
+	handle("turn-changes", async (id, requestId) => {
+		const { owner, record, signal } = await ownedTurn(id, requestId);
+		const files = await listTurnChanges(sessionsDirectory, owner.workspace, id, requestId, turnArtifacts(record));
+		signal.throwIfAborted();
+		return { files, canUndo: owner.writeMode !== "read" && !workspaceHasRunning(owner.workspace.id) };
+	});
+	handle("undo-turn-changes", (id, requestId) =>
+		serializeTaskChange(async () => {
+			requireWritableWorkbench();
+			const { owner, record, signal } = await ownedTurn(id, requestId);
+			if (owner.writeMode === "read") throw new Error("只读会话不能撤销工作区文件。");
+			if (workspaceHasRunning(owner.workspace.id)) throw new Error("请等待此工作区中的任务结束。");
+			const artifacts = turnArtifacts(record);
+			const files = await listTurnChanges(sessionsDirectory, owner.workspace, id, requestId, artifacts);
+			const ready = files.filter(({ status }) => status === "ready").map(({ path }) => path);
+			if (!ready.length) return { files, undone: 0 };
+			const { response } = await dialog.showMessageBox(window, {
+				type: "warning",
+				buttons: ["取消", "撤销变更"],
+				defaultId: 0,
+				cancelId: 0,
+				message: "撤销本轮文件变更？",
+				detail: `工作区：${owner.workspace.root}\n${ready.slice(0, 10).join("\n")}${ready.length > 10 ? `\n另有 ${ready.length - 10} 个文件` : ""}\n已修改的文件会保留。可撤销的文件将移至此工作区的恢复目录。`,
+			});
+			if (response !== 1) return;
+			signal.throwIfAborted();
+			return undoTurnChanges(sessionsDirectory, owner.workspace, id, requestId, artifacts, ready);
+		}),
+	);
+
+	async function revisionPlan(id, requestId, mode) {
+		const view = await selectedSnapshot(id);
+		if (sessionBusy(id) || storedQueue(view.owner).length) throw new Error("请先完成当前会话的运行和排队任务。");
+		return { ...view, plan: planSessionRevision(view.snapshot, requestId, mode) };
+	}
+
+	handle("session-revision-preview", async (id, requestId, mode) => {
+		const { owner, plan, snapshot, signal } = await revisionPlan(id, requestId, mode);
+		const files = [];
+		for (const record of plan.excluded) {
+			const affected = await listTurnChanges(
+				sessionsDirectory,
+				owner.workspace,
+				id,
+				record.requestId,
+				turnArtifacts(record),
+			);
+			files.push(...affected);
+			signal.throwIfAborted();
+		}
+		return {
+			input: plan.input,
+			retained: plan.count,
+			excluded: plan.excluded.length,
+			title: owner.title,
+			revision: snapshot.lastSequence,
+			files: files.slice(0, 60),
+			fileCount: files.length,
+			canUndo:
+				mode === "rewind" &&
+				owner.writeMode !== "read" &&
+				!workspaceHasRunning(owner.workspace.id) &&
+				files.some(({ status }) => status === "ready"),
+		};
+	});
+	handle("apply-session-revision", (id, requestId, mode, revision, input, undoPaths) =>
+		serializeTaskChange(async () => {
+			requireWritableWorkbench();
+			const { owner, plan, snapshot, signal } = await revisionPlan(id, requestId, mode);
+			if (snapshot.lastSequence !== revision) throw new Error("会话内容已变化，请重新预览。");
+			if (mode === "edit" && (typeof input !== "string" || !input.trim() || input.length > 16000 || !model))
+				throw new Error("请配置模型并输入有效任务说明，最多 16000 字符。");
+			if (
+				!Array.isArray(undoPaths) ||
+				undoPaths.length > 60 ||
+				undoPaths.some((path) => typeof path !== "string" || path.length > 1024)
+			)
+				throw new Error("撤销文件范围无效，请重新预览。");
+			if (undoPaths.length && (mode !== "rewind" || owner.writeMode === "read" || workspaceHasRunning(owner.workspace.id)))
+				throw new Error("当前权限或工作区状态不允许撤销文件。");
+			const nextId = randomUUID();
+			const [recordPath, assetsPath] = revisionPaths(sessionsDirectory, nextId);
+			const firstEdit = mode === "edit" && !plan.count && !plan.end;
+			const scratch = firstEdit && { id: nextId, title: "新会话", workspace: owner.workspace, writeMode: owner.writeMode };
+			let copies;
+			try {
+				if (scratch) await saveFirstIntent(sessionsDirectory, scratch);
+				copies = await copySessionPrefix(sessionsDirectory, id, nextId, snapshot, plan, mode);
+				if (mode === "edit") requireImageSupport(copies.attachments);
+				signal.throwIfAborted();
+				if (scratch) {
+					scratch.attachments = copies.attachments;
+					drafts.set(nextId, scratch);
+					draftAssetIntents.add(nextId);
+					selectWorkspaceSession(nextId);
+					announce();
+					firstSends.set(nextId, { owner: scratch, input });
+					try {
+						await submitFirst(scratch, input, copies.attachments);
+						return { id: nextId };
+					} catch {
+						return { id: nextId, draft: input };
+					} finally {
+						firstSends.delete(nextId);
+					}
+				}
+				await writeJson(recordPath, copies.snapshot);
+				const previous = structuredClone(workbench);
+				const title = owner.title;
+				if (mode === "rewind") owner.title = `${Array.from(title).slice(0, 48).join("")} · 回退前`;
+				const suffix = mode === "edit" ? " · 编辑重发" : " · 分叉";
+				workbench.sessions.unshift({
+					id: nextId,
+					workspace: owner.workspace,
+					writeMode: owner.writeMode,
+					title: mode === "rewind" ? title : `${Array.from(title).slice(0, 48).join("")}${suffix}`,
+				});
+				selectWorkspaceSession(nextId);
+				await persistChange(previous);
+			} catch (error) {
+				await Promise.allSettled([rm(recordPath, { force: true }), rm(assetsPath, { recursive: true, force: true })]);
+				if (scratch) await finishFirstIntent(sessionsDirectory, nextId).catch(() => {});
+				throw error;
+			}
+			if (mode === "edit") {
+				try {
+					await submitRequest(nextId, { input, attachments: copies.attachments });
+				} catch {
+					const accepted = await readJson(recordPath).catch(() => undefined);
+					if (accepted?.requests.slice(copies.snapshot.requests.length).some((row) => row.input === input.trim()))
+						return { id: nextId };
+					await writeDraft(findSession(nextId), copies.attachments);
+					return { id: nextId, draft: input };
+				}
+			}
+			let undone = 0;
+			let unresolved = 0;
+			if (undoPaths.length) {
+				for (const record of [...plan.excluded].reverse()) {
+					try {
+						const outcome = await undoTurnChanges(
+							sessionsDirectory,
+							owner.workspace,
+							id,
+							record.requestId,
+							turnArtifacts(record),
+							undoPaths,
+						);
+						undone += outcome.undone;
+						unresolved += outcome.files.filter(
+							({ path, status }) => undoPaths.includes(path) && status !== "undone" && status !== "missing",
+						).length;
+					} catch {
+						unresolved++;
+					}
+				}
+			}
+			return { id: nextId, undone, unresolved };
+		}),
+	);
+
+	handle("copy-session-markdown", async (id) => {
+		const { owner, snapshot } = await selectedSnapshot(id);
+		return clipboard.writeText(conversationMarkdown(owner.title, exportTurns(snapshot)));
+	});
+	handle("export-session-html", async (id) => {
+		const { owner, snapshot, signal } = await selectedSnapshot(id);
+		const html = conversationHtml(owner.title, exportTurns(snapshot));
+		const safe = owner.title
+			.replace(/[<>:"/\\|?*\p{Cc}]/gu, " ")
+			.trim()
+			.slice(0, 56);
+		const { canceled, filePath } = await dialog.showSaveDialog(window, {
+			title: "导出会话 HTML",
+			defaultPath: `Flower - ${safe || "会话"}.html`,
+			filters: [{ name: "HTML 文档", extensions: ["html"] }],
+		});
+		if (canceled || !filePath) return false;
+		signal.throwIfAborted();
+		await writeFile(filePath, html, { encoding: "utf8", flag: "wx" }).catch((error) => {
+			if (error.code === "EEXIST") throw new Error("目标文件已存在，请选择另一个文件名。");
+			throw error;
+		});
+		return true;
+	});
+	handle("session-image-content", async (id, selection) => {
+		if (
+			!Array.isArray(selection) ||
+			!selection.length ||
+			selection.length > 30 ||
+			selection.some(
+				(entry) =>
+					typeof entry?.requestId !== "string" ||
+					!uid.test(entry.requestId) ||
+					!["user", "reply", "steer"].includes(entry.kind) ||
+					!Number.isSafeInteger(entry.index) ||
+					entry.index < 0,
+			)
+		)
+			throw new Error("请选择 1 到 30 条已结束的消息。");
+		const { snapshot } = await selectedSnapshot(id);
+		return { title: "对话摘选", segments: exportSelectedSegments(snapshot, selection) };
+	});
+	handle("copy-session-image", (id, bytes) => {
+		findSession(id);
+		if (workbench.selected !== id) throw new Error("会话已切换，请重新选择消息。");
+		if (!(bytes instanceof Uint8Array) || bytes.byteLength < 33 || bytes.byteLength > 20 * 1024 * 1024)
+			throw new Error("消息图片过大。请选择较少的消息。");
+		const png = Buffer.from(bytes);
+		if (
+			!png.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")) ||
+			png.toString("ascii", 12, 16) !== "IHDR" ||
+			png.readUInt32BE(16) !== 960 ||
+			png.readUInt32BE(20) > 12000
+		)
+			throw new Error("无法复制这张消息图片。");
+		const image = nativeImage.createFromBuffer(png);
+		if (image.isEmpty()) throw new Error("无法复制这张消息图片。");
+		return clipboard.write([new ClipboardItem({ "image/png": new Blob([png], { type: "image/png" }) })]);
+	});
+
+	handle("desktop-update-state", updateState);
+	handle("check-desktop-update", () => {
+		void desktopUpdater?.check();
+		return updateState();
+	});
+	handle("schedule-desktop-update", (enabled) =>
+		serializeTaskChange(() => desktopUpdater?.schedule(enabled) ?? updateState()),
+	);
+	handle("restart-desktop-update", () =>
+		serializeTaskChange(() => {
+			if (!desktopUpdater) return updateState();
+			const result = desktopUpdater.restart();
+			updateRestarting = true;
+			if (macOS) {
+				// 等待已有资料写入结束，再让 Electron 原生更新器关闭窗口和重新启动。
+				setImmediate(() => {
+					void writes.then(() => desktopUpdater.onQuit());
+				});
+			} else setImmediate(() => app.quit());
+			return result;
+		}),
+	);
 	/** 当前模型只支持文本时拒绝图片附件。@param {readonly {id: string, name: string}[]} refs 附件引用 @returns {void} */
 	function requireImageSupport(refs) {
 		if (
@@ -1419,6 +2216,10 @@ export function launchWorkbench() {
 			// 标题保存失败不影响已提交的消息。
 			return;
 		}
+		suggestFirstTitle(owner, text, placeholder);
+	}
+
+	function suggestFirstTitle(owner, text, placeholder) {
 		if (!placeholder) return;
 		void generateTitle(openTitleStream, firstMessageContext(text), AbortSignal.timeout(15000))
 			.then((title) =>
@@ -1437,39 +2238,82 @@ export function launchWorkbench() {
 	/**
 	 * 把一条消息直接提交给运行时。
 	 * @param {string} id 会话 ID
-	 * @param {{input: string, attachments?: object[]}} item 消息原文与附件
+	 * @param {{input: string, attachments?: object[], skill?: string}} item 消息原文、附件与可选技能
 	 * @returns {Promise<object>} 运行时请求记录
 	 */
-	async function submitRequest(id, { input, attachments = [] }) {
+	async function submitRequest(id, { input, attachments = [], skill }) {
+		requireWritableWorkbench();
 		if (!model) throw new Error("请先配置模型。");
 		requireImageSupport(attachments);
 		const runtime = await getSessionRuntime(id);
-		return runtime.call("submit", { session: id, input, ...(attachments.length && { attachments }) });
+		return runtime.call("submit", {
+			session: id,
+			input,
+			...(attachments.length && { attachments }),
+			...(skill && { skill }),
+		});
 	}
 
-	handle("submit", (id, text) =>
-		serializeTaskChange(async () => {
+	async function submitFirst(owner, input, attachments, skill) {
+		const { id, workspace } = owner;
+		const current = await approveWorkspace(workspace.root).catch(() => undefined);
+		if (current?.id !== workspace.id) throw new Error("工作区位置已变化，请重新选择目录。");
+		await saveFirstIntent(sessionsDirectory, owner);
+		const runtime = await prepare();
+		await runtime.call("register", { session: id, workspace });
+		let first;
+		try {
+			first = await runtime.call("submit", { session: id, input, attachments, first: true, ...(skill && { skill }) });
+		} catch (error) {
+			// IPC 可能在原子落盘后中断。以本机快照为准，避免把已接收的任务再次发送。
+			first = await acceptedFirst(sessionsDirectory, owner);
+			if (!first) throw error;
+			if (!host && ["queued", "running", "cancelling"].includes(first.status)) {
+				first.status = "interrupted";
+				interrupted.add(id);
+			}
+		}
+		promoteDraft(owner, first.input);
+		try {
+			await record();
+			await finishFirstIntent(sessionsDirectory, id).catch(() => {});
+		} catch {
+			// 运行时请求已经接受。保留意图比移除会话安全，启动时可补齐侧栏记录。
+			announce();
+			send({ kind: "notice", session: id, tone: "error", text: "消息已发送。会话列表暂未保存，重开时可恢复。" });
+		}
+		suggestFirstTitle(owner, first.input, placeholderTitle(first.input));
+		return first;
+	}
+
+	handle("submit", (id, text, firstOnly = false, skill) => {
+		const draft = drafts.get(id);
+		if (firstSends.has(id) || (firstOnly === true && !draft)) throw new Error("草稿首条消息已经在发送或已发送。");
+		if (draft) firstSends.set(id, { owner: draft, input: text });
+		return serializeTaskChange(async () => {
 			if (typeof text !== "string" || !text.trim() || text.length > 16000) {
 				throw new Error("请输入有效任务说明，最多 16000 字符");
 			}
 			if (!model) throw new Error("请先配置模型。");
 			const owner = draftOwner(id);
+			if (skill !== undefined) await extensions.selectedSkill(owner.workspace, skill, workspaceSelection.signal);
 			const refs = draftAttachments(owner);
 			requireImageSupport(refs);
+			if (draft) return submitFirst(owner, text, refs, skill);
 			// 附件随消息离开草稿；提交或入队失败时放回。
 			if (refs.length) await writeDraft(owner, []);
 			let record;
 			try {
 				interrupted.delete(id);
-				record = await queue.accept(owner, text, refs);
+				record = await queue.accept(owner, text, refs, skill);
 			} catch (error) {
 				if (refs.length) await writeDraft(owner, refs);
 				throw error;
 			}
 			if (owner.titlePending) await startAutoTitle(owner, text);
 			return record;
-		}),
-	);
+		}).finally(() => firstSends.delete(id));
+	});
 	handle("rename-session-ai", (id) =>
 		serializeTaskChange(async () => {
 			requireWritableWorkbench();
@@ -1507,7 +2351,7 @@ export function launchWorkbench() {
 			requireImageSupport(refs);
 			// 以原输入和原附件新建一轮，原记录保留在历史中，当前草稿不受影响；会话忙时排队。
 			interrupted.delete(id);
-			return queue.accept(findSession(id), record.input, refs);
+			return queue.accept(findSession(id), record.input, refs, record.skill);
 		}),
 	);
 	handle("search-sessions", async (query) => {
@@ -1541,10 +2385,11 @@ export function launchWorkbench() {
 							id: randomUUID(),
 							input: record.input,
 							...(refs.length && { attachments: refs }),
+							...(record.skill && { skill: record.skill }),
 							createdAt: Date.now(),
 						});
 						await queue.resume(id);
-					} else await queue.accept(owner, record.input, refs);
+					} else await queue.accept(owner, record.input, refs, record.skill);
 					interrupted.delete(id);
 				} catch {
 					failed.push(workbench.sessions.find((entry) => entry.id === id)?.title ?? id);
@@ -1610,7 +2455,7 @@ export function launchWorkbench() {
 	);
 	handle("copy-text", (text) => {
 		if (typeof text !== "string" || !text || text.length > 200_000) throw new Error("无法复制这段内容。");
-		clipboard.writeText(text);
+		return clipboard.writeText(text);
 	});
 	handle("cancel", async (id, requestId, runId) => {
 		if (
@@ -1649,12 +2494,14 @@ export function launchWorkbench() {
 			throw new Error("产物不属于当前会话");
 		const file = await resolveArtifact(findSession(id).workspace, path);
 		const error = await shell.openPath(file);
-		if (error) throw new Error(`Windows 无法打开 ${basename(file)}`);
+		if (error) throw new Error(`系统无法打开 ${basename(file)}`);
 	});
 
 	app.commandLine.appendSwitch("disable-background-networking");
-	app.once("ready", () => {
-		Menu.setApplicationMenu(null);
+	app.once("ready", async () => {
+		Menu.setApplicationMenu(
+			macOS ? Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }]) : null,
+		);
 		const palette = titlebarPalettes[nativeTheme.shouldUseDarkColors ? "dark" : "light"];
 		const savedWindow = readWindowState(windowStatePath);
 		const restored = restorableBounds(
@@ -1682,20 +2529,33 @@ export function launchWorkbench() {
 			},
 		});
 		window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-		window.webContents.on("render-process-gone", () => dismissApprovals());
-		window.on("closed", () => dismissApprovals());
+		window.webContents.on("render-process-gone", () => {
+			nativePanels.close();
+			dismissApprovals();
+			const pending = questions.sessions();
+			for (const [requestId, { session, runId, running }] of activeRequests) {
+				if (host && running && pending.has(session)) void cancelRun(session, requestId, runId).catch(() => {});
+			}
+			questions.dismiss();
+		});
+		window.on("closed", () => {
+			nativePanels.close();
+			dismissApprovals();
+		});
 		window.on("focus", () => {
 			window.flashFrame(false);
 			if (attention.clear(workbench.selected)) announce();
 		});
 		window.on("close", (event) => {
-			// 运行、排队和待批准的任务都在 activeRequests 中，关闭会中断它们，先请用户确认。
-			const pending = activeRequests.size;
+			// 已提交和接下来会自动派发的任务都要通过关闭确认。
+			const pending = pendingWork();
 			if (closeConfirmed || !pending) {
 				saveWindowState();
 				return;
 			}
 			event.preventDefault();
+			if (askingToClose) return;
+			askingToClose = true;
 			void dialog
 				.showMessageBox(window, {
 					type: "warning",
@@ -1706,8 +2566,14 @@ export function launchWorkbench() {
 					message: `还有 ${pending} 个任务未完成`,
 					detail: "关闭后这些任务会被中断，下次打开时显示为已中断。",
 				})
+				.catch(() => ({ response: 1 }))
 				.then(({ response }) => {
-					if (response !== 0 || !window || window.isDestroyed()) return;
+					askingToClose = false;
+					if (response !== 0 || !window || window.isDestroyed()) {
+						updateRestarting = false;
+						desktopUpdater?.cancelRestart();
+						return;
+					}
 					closeConfirmed = true;
 					window.close();
 				});
@@ -1736,13 +2602,81 @@ export function launchWorkbench() {
 		});
 		window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
 		void window.loadFile(fileURLToPath(page));
+		if (updateChannel && app.isPackaged && process.platform === "win32" && process.arch === "x64") {
+			desktopUpdater = createDesktopUpdater({
+				config: updateChannel,
+				version: app.getVersion(),
+				executable: process.execPath,
+				userData: app.getPath("userData"),
+				directory,
+				available: true,
+				notify: announce,
+				busy: updateBusy,
+				storage: safeStorage,
+				fetcher:
+					updateChannel.id === "stable"
+						? async (url, options) => {
+								const { net } = await import("electron");
+								return electronReleaseFetch((request) => net.request(request))(url, options);
+							}
+						: undefined,
+			});
+		} else if (macOS && app.isPackaged && updateChannel) {
+			const { autoUpdater } = await import("electron");
+			if (exiting) return;
+			desktopUpdater = createMacDesktopUpdater({
+				native: autoUpdater,
+				config: updateChannel,
+				version: app.getVersion(),
+				notify: announce,
+				busy: updateBusy,
+				beforeRestart: () => {
+					macRestartHandoff = true;
+				},
+				restartFailed: () => {
+					macRestartHandoff = updateRestarting = false;
+					if (!window || window.isDestroyed()) app.quit();
+				},
+			});
+			announce();
+		}
+		if (desktopUpdater) {
+			const check = () => void desktopUpdater.check();
+			startupUpdate = setTimeout(check, 1500).unref();
+			periodicUpdate = setInterval(check, 4 * 60 * 60 * 1000).unref();
+		}
 	});
 	app.on("second-instance", () => {
 		if (window?.isMinimized()) window.restore();
 		window?.focus();
 	});
-	app.on("window-all-closed", () => app.quit());
-	app.on("before-quit", () => {
+	app.on("window-all-closed", () => {
+		// 原生更新器关闭最后一个窗口后仍需安排重新启动。
+		if (!macRestartHandoff) app.quit();
+	});
+	app.on("will-quit", (event) => {
+		exiting = true;
+		clearInterval(automationTimer);
+		automation.close();
+		clearTimeout(startupUpdate);
+		clearInterval(periodicUpdate);
 		host?.close();
+		questions.dismiss();
+		if (handingOffUpdate) {
+			event.preventDefault();
+			return;
+		}
+		if (!desktopUpdater?.wantsInstall()) {
+			desktopUpdater?.stop();
+			return;
+		}
+		// 只有关闭确认通过、全部窗口关闭后才允许启动更新器。
+		event.preventDefault();
+		handingOffUpdate = true;
+		void writes
+			.catch(() => {})
+			.then(() => desktopUpdater.onQuit())
+			.catch(() => {})
+			.finally(() => app.exit(0));
 	});
 }

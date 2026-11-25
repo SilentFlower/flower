@@ -195,7 +195,10 @@ try {
 	assert.match(await by("settings-service").textContent(), /newapi/);
 	assert.equal(await by("model-title").evaluate((title) => getComputedStyle(title).outlineStyle), "none");
 	const overview = await by("model-dialog").boundingBox();
-	assert(overview.height < 310 && overview.width >= 700, JSON.stringify(overview));
+	assert(
+		overview.width > 550 && overview.x + overview.width <= (await page.evaluate(() => innerWidth)),
+		JSON.stringify(overview),
+	);
 	await screenshot("浅色-模型总览");
 
 	const selectClaude = modelButton(claude);
@@ -267,10 +270,10 @@ try {
 	assert(await manual.isChecked());
 	assert(await by("model-recommendation").isHidden());
 	assert(await by("settings-discover").isHidden());
-	assert(await by("settings-appearance").isHidden());
+	assert(await by("settings-appearance").isVisible());
 	assert.deepEqual(await by("model-levels").locator('[aria-pressed="true"]').allTextContents(), ["低", "中", "高"]);
 	const editor = await by("model-dialog").boundingBox();
-	assert(editor.height < 365 && editor.width <= 518, JSON.stringify(editor));
+	assert(editor.width === overview.width, JSON.stringify(editor));
 	await screenshot("浅色-编辑模型-手动");
 	await manual.focus();
 	await page.keyboard.press("ArrowLeft");

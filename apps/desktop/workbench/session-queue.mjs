@@ -16,6 +16,7 @@ export function storedQueue(owner) {
 		(item) =>
 			typeof item?.id === "string" &&
 			typeof item.input === "string" &&
+			(item.skill === undefined || typeof item.skill === "string") &&
 			(item.attachments === undefined || Array.isArray(item.attachments)),
 	);
 }
@@ -100,12 +101,19 @@ export function createSessionQueue({ find, list, persist, submit, steer, running
 		 * @param {object[]} attachments 附件引用
 		 * @returns {Promise<object>} 运行时请求记录，或 {queued: 排队消息 ID}
 		 */
-		async accept(record, input, attachments = []) {
+		async accept(record, input, attachments = [], skill) {
 			validInput(input);
 			const queue = storedQueue(record);
-			if (!busy(record.id) && !queue.length && !record.queuePaused) return submit(record.id, { input, attachments });
+			if (!busy(record.id) && !queue.length && !record.queuePaused)
+				return submit(record.id, { input, attachments, skill });
 			if (queue.length >= queueLimit) throw new Error(`排队消息最多 ${queueLimit} 条，请等待当前任务结束。`);
-			const queued = { id: randomUUID(), input, ...(attachments.length ? { attachments } : {}), createdAt: Date.now() };
+			const queued = {
+				id: randomUUID(),
+				input,
+				...(attachments.length && { attachments }),
+				...(skill && { skill }),
+				createdAt: Date.now(),
+			};
 			await save(record, [...queue, queued], false);
 			if (!busy(record.id)) schedule(record.id);
 			return { queued: queued.id };
@@ -228,6 +236,7 @@ export function createSessionQueue({ find, list, persist, submit, steer, running
 		async steer(id, itemId) {
 			const record = owner(id);
 			const current = item(record, itemId);
+			if (current.skill) throw new Error("选用技能的消息会单独运行，无法作为插话发送。");
 			const run = running(id);
 			if (!run) throw new Error("当前没有运行中的任务，无法插话。");
 			steering.set(itemId, { session: id, runId: run.runId });
@@ -297,10 +306,11 @@ export function createSessionQueue({ find, list, persist, submit, steer, running
 		view(id) {
 			const record = find(id);
 			return {
-				items: storedQueue(record).map(({ id: key, input, attachments }) => ({
+				items: storedQueue(record).map(({ id: key, input, attachments, skill }) => ({
 					id: key,
 					input,
 					attachments: attachments ?? [],
+					...(skill && { skill }),
 					steering: steering.has(key),
 				})),
 				paused: Boolean(record?.queuePaused),

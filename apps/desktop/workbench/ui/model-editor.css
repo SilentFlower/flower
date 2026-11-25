@@ -2,10 +2,6 @@
 	min-width: 0;
 }
 
-#model-dialog[data-editor="model"] {
-	width: min(500px, calc(100vw - 32px));
-}
-
 #model-dialog[data-editor="model"] .settings-heading {
 	padding: 19px 22px 17px;
 }

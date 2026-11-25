@@ -1,0 +1,10 @@
+{
+	"schemaVersion": 1,
+	"id": "review-lines",
+	"name": "提取核对项",
+	"description": "从工作区文本中提取含 TODO 的行，保留原始行号。",
+	"action": "find-lines",
+	"contains": "TODO",
+	"caseSensitive": false,
+	"maxMatches": 20
+}

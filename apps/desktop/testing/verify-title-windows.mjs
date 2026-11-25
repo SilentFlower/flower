@@ -108,6 +108,9 @@ try {
 	await page.locator("#prompt").fill(first);
 	await page.locator("#send").click();
 	await until(async () => (await state()).selected);
+	assert((await state()).draft);
+	assert.equal((await state()).sessions.length, 0);
+	assert.equal(fixture.observations.titles.length, 0);
 	if (await page.locator("#send").isEnabled()) await page.locator("#send").click();
 	await page.locator("#model-dialog").waitFor();
 	await page.locator("#base-url").fill(fixture.baseUrl);
@@ -141,9 +144,11 @@ try {
 
 	step("新会话失败保留临时标题");
 	await page.locator("#new-session").click();
-	await until(async () => (await state()).sessions.length === 2);
+	await until(async () => (await state()).draft);
+	assert.equal((await state()).sessions.length, 1);
 	await send("这条消息没有模型标题");
 	await task("这条消息没有模型标题").locator('.status[data-state="succeeded"]').waitFor({ timeout: 20000 });
+	assert.equal((await state()).sessions.length, 2);
 	await until(() => fixture.observations.titles.some(({ body }) => body.includes("没有模型标题")));
 	await setTimeout(500);
 	assert.equal(await page.locator('.session-row[title="这条消息没有模型标题"]').count(), 1, "模型失败时应保留临时标题");

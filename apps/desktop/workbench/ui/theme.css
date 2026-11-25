@@ -70,10 +70,6 @@
 .settings-actions {
 	justify-content: flex-end;
 }
-.theme-settings {
-	width: 752px;
-	max-width: calc(100vw - 32px);
-}
 .theme-settings form {
 	display: flex;
 	flex-direction: column;

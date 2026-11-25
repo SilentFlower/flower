@@ -1,6 +1,6 @@
 # Frontend Development Guidelines
 
-> `@flower-ai/flower-desktop` Windows 桌面工作台（Electron 45，原生 DOM）开发规范。
+> `@flower-ai/flower-desktop` Windows 与 macOS 桌面工作台（Electron 45，原生 DOM）开发规范。
 
 ---
 
@@ -21,6 +21,7 @@
 
 | Guide | 说明 |
 |-------|------|
+| [开源发版与自动更新](./public-release.md) | GitHub Actions 触发条件、三端制品、签名与公证、稳定频道投放和失败恢复 |
 | [Windows Verification](./windows-verification.md) | Playwright `_electron` 实机验收脚本：私有桌面运行、主进程替身、收尾与超时、前台焦点的限制 |
 | [Workbench Contracts](./workbench-contracts.md) | 回复路径核对 IPC、推理档位「关闭思考」的请求字段映射、本机排队消息与插话、侧边追问会话、@ 补全文件清单、正文搜索与中断恢复、删除会话先确认、全局指令与 FLOWER.md、交付卡片元信息、会话自动标题与用 AI 重命名 |
 

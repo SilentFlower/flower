@@ -1,18 +1,5 @@
-import { randomUUID } from "node:crypto";
-import {
-	lstat,
-	mkdir,
-	mkdtemp,
-	open,
-	opendir,
-	readdir,
-	realpath,
-	rename,
-	rm,
-	rmdir,
-	stat,
-	writeFile,
-} from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, mkdir, open, opendir, readdir, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { attachmentTextLimit, clipAttachmentText, pdfEvidence, workbookEvidence } from "./attachment-reader.mjs";
@@ -29,6 +16,8 @@ const mentionLimit = 64;
 const candidateLimit = 20;
 const walkLimit = 20000;
 const walkDepth = 12;
+const outputDirectory = /^Flower-分析-[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/;
+const recoveryDirectory = /^\.flower-撤销-[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/;
 const outputs = /^Flower-分析-[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}\/(分析报告\.md|汇总\.xlsx|核对报告\.md)$/i;
 /** 分析工具固定生成的文件，供审批与写入共用。 */
 export const analysisFiles = Object.freeze(["分析报告.md", "汇总.xlsx"]);
@@ -649,7 +638,79 @@ async function requireWriteApproval(authorizeWrite, plan, signal) {
 
 const sameIdentity = (left, right) => left?.dev === right.dev && left?.ino === right.ino;
 
-async function writeReport(workspace, { markdown, input = "" }, signal, authorizeWrite, resolveInput) {
+function outputVersion(info) {
+	const { dev, ino, size, mtimeMs, ctimeMs } = info;
+	return { dev, ino, size, mtimeMs, ctimeMs };
+}
+
+function sameOutput(info, saved) {
+	// 相同内容替换文件、改名后移回和新增硬链接也需要保留用户现状。
+	return info.nlink === 1 && Object.entries(outputVersion(info)).every(([key, value]) => saved[key] === value);
+}
+
+function digest(bytes) {
+	return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function writeOutputs(workspace, directory, documents, signal, recordOutputs) {
+	const root = await checkRoot(workspace);
+	const folder = join(root, directory);
+	signal?.throwIfAborted();
+	// 分析与报告共用独占创建，避免 rename 覆盖审批之后出现的同名空目录。
+	await mkdir(folder, { mode: 0o700 });
+	let ownership;
+	const files = [];
+	try {
+		ownership = (await locate(workspace, directory, true)).info;
+		for (const [name, content] of documents) {
+			signal?.throwIfAborted();
+			if (!sameIdentity(ownership, (await locate(workspace, directory, true)).info)) {
+				throw new Error("产物目录位置已变化。");
+			}
+			const path = `${directory}/${name}`;
+			const handle = await open(join(folder, name), "wx", 0o600);
+			const file = { path };
+			files.push(file);
+			try {
+				const opened = await handle.stat();
+				file.identity = outputVersion(opened);
+				if (!sameIdentity(opened, (await locate(workspace, path)).info)) throw new Error("产物文件位置已变化。");
+				await handle.writeFile(content, { signal });
+				await handle.sync();
+			} finally {
+				// 即使取消了写入也能核对刚刚创建的文件，避免清理时跟错对象。
+				try {
+					file.identity = outputVersion(await handle.stat());
+				} finally {
+					await handle.close();
+				}
+			}
+			const current = (await locate(workspace, path)).info;
+			if (!sameOutput(current, file.identity)) throw new Error("产物文件在记录前发生变化。");
+			file.sha256 = digest(content);
+		}
+		if (!sameIdentity(ownership, (await locate(workspace, directory, true)).info)) {
+			throw new Error("产物目录位置已变化。");
+		}
+		// 完整文件已经写盘时，即使模型运行随后取消也应保留真实的写入回执。
+		await recordOutputs?.({ directory, dev: ownership.dev, ino: ownership.ino, files });
+		return files.map(({ path }) => path);
+	} catch (error) {
+		const current = await locate(workspace, directory, true).catch(() => undefined);
+		if (current && sameIdentity(ownership, current.info)) {
+			for (const { path, identity } of files) {
+				const ownFile = await locate(workspace, path).catch(() => undefined);
+				if (ownFile && identity && sameOutput(ownFile.info, identity)) {
+					await rm(ownFile.actual, { force: true }).catch(() => {});
+				}
+			}
+			await rmdir(current.actual).catch(() => {});
+		}
+		throw error;
+	}
+}
+
+async function writeReport(workspace, { markdown, input = "" }, signal, authorizeWrite, resolveInput, recordOutputs) {
 	signal?.throwIfAborted();
 	if (typeof markdown !== "string" || !markdown.trim() || Buffer.byteLength(markdown) > textLimit) {
 		throw new Error("请提供非空的 Markdown 报告正文，最多 64 KiB。");
@@ -663,43 +724,8 @@ async function writeReport(workspace, { markdown, input = "" }, signal, authoriz
 	if (source && !sameIdentity(source.info, (await locate(origin.workspace, origin.path)).info)) {
 		throw new Error("报告来源文件位置已变化。");
 	}
-	const root = await checkRoot(workspace);
-	signal?.throwIfAborted();
-	const folder = join(root, directory);
-	const artifact = `${directory}/${reportFiles[0]}`;
-	// 独占创建目录和文件，保留审批期间出现的同名路径。
-	await mkdir(folder, { mode: 0o700 });
-	let directoryInfo;
-	let fileInfo;
-	try {
-		directoryInfo = (await locate(workspace, directory, true)).info;
-		signal?.throwIfAborted();
-		const handle = await open(join(folder, reportFiles[0]), "wx", 0o600);
-		try {
-			fileInfo = await handle.stat();
-			const current = await locate(workspace, artifact);
-			if (!sameIdentity(fileInfo, current.info)) throw new Error("报告文件位置已变化。");
-			signal?.throwIfAborted();
-			await handle.writeFile(markdown, { signal });
-		} finally {
-			await handle.close();
-		}
-		const current = await locate(workspace, artifact);
-		if (!sameIdentity(fileInfo, current.info)) throw new Error("报告文件位置已变化。");
-		signal?.throwIfAborted();
-		return { artifacts: [artifact] };
-	} catch (error) {
-		// 仅回收本次创建且文件系统身份仍匹配的条目。
-		const owned = await locate(workspace, directory, true).catch(() => undefined);
-		if (owned && sameIdentity(directoryInfo, owned.info)) {
-			if (fileInfo) {
-				const current = await locate(workspace, artifact).catch(() => undefined);
-				if (current && sameIdentity(fileInfo, current.info)) await rm(current.actual, { force: true }).catch(() => {});
-			}
-			await rmdir(owned.actual).catch(() => {});
-		}
-		throw error;
-	}
+	const artifacts = await writeOutputs(workspace, directory, [[reportFiles[0], markdown]], signal, recordOutputs);
+	return { artifacts };
 }
 
 async function analyze(
@@ -708,6 +734,7 @@ async function analyze(
 	signal,
 	authorizeWrite,
 	resolveInput,
+	recordOutputs,
 ) {
 	const origin = await resolveInput(path, signal);
 	const book = await workbook(origin.workspace, origin.path, signal);
@@ -762,9 +789,6 @@ async function analyze(
 		["总计", rows, total],
 	]);
 	const bytes = await result.xlsx.writeBuffer();
-	const root = await checkRoot(workspace);
-	signal?.throwIfAborted();
-	const temporary = await mkdtemp(join(root, ".flower-产出-"));
 	const report = [
 		"# 工作簿分析",
 		"",
@@ -777,17 +801,17 @@ async function analyze(
 		...groups.map((item) => `- ${item.group.replace(/[\r\n]+/g, " ")}：${item.total}`),
 		"",
 	].join("\n");
-	try {
-		signal?.throwIfAborted();
-		await writeFile(join(temporary, analysisFiles[0]), report, { flag: "wx", signal });
-		await writeFile(join(temporary, analysisFiles[1]), bytes, { flag: "wx", signal });
-		await checkRoot(workspace);
-		signal?.throwIfAborted();
-		await rename(temporary, join(root, stamp));
-	} finally {
-		await rm(temporary, { force: true, recursive: true });
-	}
-	return { ...summary, artifacts: analysisFiles.map((name) => `${stamp}/${name}`) };
+	const artifacts = await writeOutputs(
+		workspace,
+		stamp,
+		[
+			[analysisFiles[0], report],
+			[analysisFiles[1], bytes],
+		],
+		signal,
+		recordOutputs,
+	);
+	return { ...summary, artifacts };
 }
 
 const pathField = { type: "string", minLength: 1, maxLength: 1024 };
@@ -797,9 +821,15 @@ const schema = (properties, required) => ({ type: "object", properties, required
  * @param workspace Host 批准的工作区
  * @param authorizeWrite 由 Host 裁定当前写入的回调
  * @param resolveInput 将工具输入绑定到用户授权的工作区文件或单个会话附件
+ * @param beginRecord 进入写入工具时绑定该次运行的产物账本，防止取消后归属丢失
  * @returns 受限浏览、读取、Excel 分析和 Markdown 核对报告工具
  */
-export function workspaceTools(workspace, authorizeWrite, resolveInput = (path) => ({ workspace, path, label: path })) {
+export function workspaceTools(
+	workspace,
+	authorizeWrite,
+	resolveInput = (path) => ({ workspace, path, label: path }),
+	beginRecord,
+) {
 	return [
 		{
 			name: "list_workspace",
@@ -863,7 +893,7 @@ export function workspaceTools(workspace, authorizeWrite, resolveInput = (path) 
 				["path", "groupColumn", "valueColumn", "createOutputs"],
 			),
 			async execute(_id, params, signal) {
-				return text(await analyze(workspace, params, signal, authorizeWrite, resolveInput));
+				return text(await analyze(workspace, params, signal, authorizeWrite, resolveInput, beginRecord?.()));
 			},
 		},
 		{
@@ -875,7 +905,7 @@ export function workspaceTools(workspace, authorizeWrite, resolveInput = (path) 
 				"markdown",
 			]),
 			async execute(_id, params, signal) {
-				return text(await writeReport(workspace, params, signal, authorizeWrite, resolveInput));
+				return text(await writeReport(workspace, params, signal, authorizeWrite, resolveInput, beginRecord?.()));
 			},
 		},
 	];
@@ -907,4 +937,134 @@ export async function artifactSummary(workspace, path, signal) {
 export async function resolveArtifact(workspace, path) {
 	if (typeof path !== "string" || !outputs.test(path)) throw new Error("该文件不属于可打开的分析产物");
 	return (await locate(workspace, path)).actual;
+}
+
+/** 判断历史回执是否引用已知输出格式。@param path 相对路径 @returns 是否符合固定产物范围 */
+export function isGeneratedOutput(path) {
+	return typeof path === "string" && outputs.test(path);
+}
+
+/** 验证真实写入工具生成的完整记录。@param receipt 工作区产物账本条目 @returns 是否为可校验的固定产物组 */
+export function validOutputReceipt(receipt) {
+	if (
+		!receipt ||
+		typeof receipt.directory !== "string" ||
+		!outputDirectory.test(receipt.directory) ||
+		!Number.isInteger(receipt.dev) ||
+		!Number.isInteger(receipt.ino) ||
+		!Array.isArray(receipt.files)
+	)
+		return false;
+	return [reportFiles, analysisFiles].some(
+		(names) =>
+			names.length === receipt.files.length &&
+			names.every((name, index) => {
+				const file = receipt.files[index];
+				const info = file?.identity;
+				return (
+					file?.path === `${receipt.directory}/${name}` &&
+					typeof file.sha256 === "string" &&
+					/^[\da-f]{64}$/.test(file.sha256) &&
+					info &&
+					Number.isInteger(info.dev) &&
+					Number.isInteger(info.ino) &&
+					Number.isInteger(info.size) &&
+					info.size >= 0 &&
+					info.size <= xlsxLimit &&
+					Number.isFinite(info.ctimeMs) &&
+					Number.isFinite(info.mtimeMs)
+				);
+			}),
+	);
+}
+
+async function checkOutputAt(workspace, root, receipt, path) {
+	const chosen = join(root, ...relativeParts(path));
+	const exists = await lstat(chosen).then(
+		() => true,
+		(error) => error.code !== "ENOENT" && error.code !== "ENOTDIR",
+	);
+	if (!exists) return { status: "missing" };
+	try {
+		const { actual, info } = await locate(workspace, path, true);
+		if (!sameIdentity(info, receipt)) return { status: "changed" };
+		const names = await readdir(actual);
+		if (names.length !== receipt.files.length) return { status: "changed" };
+		for (const file of receipt.files) {
+			const name = basename(file.path);
+			if (!names.includes(name)) return { status: "changed" };
+			const relativePath = `${path}/${name}`;
+			if (!sameOutput((await locate(workspace, relativePath)).info, file.identity)) return { status: "changed" };
+			const { bytes } = await readBounded(workspace, relativePath, file.identity.size);
+			if (digest(bytes) !== file.sha256 || !sameOutput((await locate(workspace, relativePath)).info, file.identity)) {
+				return { status: "changed" };
+			}
+		}
+		if (!sameIdentity((await locate(workspace, path, true)).info, receipt)) return { status: "changed" };
+		return { status: "ready", actual };
+	} catch {
+		return { status: "changed" };
+	}
+}
+
+/** 检查产物组的原目录与同工作区恢复位置。
+ * @param workspace 已批准工作区
+ * @param receipt 本地真实写入账本
+ * @param recovery 已落盘的恢复目录预留名
+ * @returns 当前可撤销状态
+ */
+export async function inspectGeneratedOutputs(workspace, receipt, recovery) {
+	if (!validOutputReceipt(receipt)) return { status: "changed" };
+	const root = await checkRoot(workspace);
+	if (typeof recovery === "string" && recoveryDirectory.test(recovery)) {
+		const recoveryPath = `${recovery}/文件`;
+		const backup = await checkOutputAt(workspace, root, receipt, recoveryPath);
+		if (backup.status === "ready") return { status: "undone", recoveryPath };
+		if (backup.status === "changed") return { status: "changed", recoveryPath };
+	}
+	const { status } = await checkOutputAt(workspace, root, receipt, receipt.directory);
+	return { status };
+}
+
+/** 撤销完整、未改变的产物组，原内容留在可恢复位置。
+ * @param workspace 已批准工作区
+ * @param receipt 本地真实写入账本
+ * @param backup 为本次操作随机生成且已落盘的恢复目录名
+ * @returns 撤销或阻止后的状态
+ */
+export async function undoGeneratedOutputs(workspace, receipt, backup) {
+	if (!validOutputReceipt(receipt) || typeof backup !== "string" || !recoveryDirectory.test(backup)) {
+		throw new Error("撤销文件变更的位置无效。");
+	}
+	const root = await checkRoot(workspace);
+	const recoveryPath = `${backup}/文件`;
+	const folder = join(root, backup);
+	try {
+		await mkdir(folder, { mode: 0o700 });
+	} catch (error) {
+		if (error.code === "EEXIST") return { status: "changed", moved: false };
+		throw error;
+	}
+	let ownership;
+	try {
+		ownership = (await locate(workspace, backup, true)).info;
+		const source = await checkOutputAt(workspace, root, receipt, receipt.directory);
+		if (source.status !== "ready") return { status: source.status, moved: false };
+		const current = await locate(workspace, backup, true);
+		if (!sameIdentity(current.info, ownership)) return { status: "changed", moved: false };
+		// 整组移动保留原始数据，即使移动时出现外部改动，也不会清理移入的文件。
+		await rename(source.actual, join(current.actual, "文件"));
+		const moved = await checkOutputAt(workspace, root, receipt, recoveryPath);
+		return moved.status === "ready"
+			? { status: "undone", recoveryPath, moved: true }
+			: { status: "changed", recoveryPath, moved: false };
+	} catch (error) {
+		if (["EACCES", "EBUSY", "EEXIST", "ENOENT", "ENOTEMPTY", "EPERM"].includes(error.code)) {
+			return { status: "changed", moved: false };
+		}
+		throw error;
+	} finally {
+		const current = await locate(workspace, backup, true).catch(() => undefined);
+		if (current && sameIdentity(current.info, ownership)) await rmdir(current.actual).catch(() => {});
+	}
 }

@@ -1,0 +1,219 @@
+name: Flower Desktop 发行
+
+on:
+  push:
+    tags: ['flower-desktop-v*']
+  pull_request:
+    branches: [main, v2]
+    paths:
+      - '.github/workflows/desktop-release.yml'
+      - 'apps/desktop/**'
+      - 'packages/agent-runtime/**'
+      - 'package-lock.json'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '构建预演版本号，仅生成 Actions 制品'
+        required: true
+        default: '0.0.1'
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      number: ${{ steps.version.outputs.number }}
+    steps:
+      - name: 解析标签或预演版本
+        id: version
+        shell: bash
+        env:
+          PREVIEW: ${{ inputs.version }}
+        run: |
+          set -eu
+          case "$GITHUB_EVENT_NAME" in
+            push) value="${GITHUB_REF_NAME#flower-desktop-v}" ;;
+            workflow_dispatch) value="$PREVIEW" ;;
+            pull_request) value=0.0.1 ;;
+          esac
+          [[ "$value" =~ ^(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})$ ]]
+          echo "number=$value" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: version
+    runs-on: windows-2022
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.version.outputs.number }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: 构建共享核心并检查更新契约
+        shell: bash
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm exec -- tsc --build packages/agent-runtime
+          node --test apps/desktop/testing/desktop-update.test.mjs apps/desktop/testing/portable-update-install.test.mjs
+      - name: 生成首装包与更新包
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $electron = (Get-Content -Raw apps/desktop/package.json | ConvertFrom-Json).config.electronVersion
+          $zip = "electron-v$electron-win32-x64.zip"
+          $downloads = Join-Path $env:RUNNER_TEMP electron
+          gh release download "v$electron" --repo electron/electron --pattern $zip --pattern SHASUMS256.txt --dir $downloads
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $flat = Join-Path $env:RUNNER_TEMP flat
+          node apps/desktop/scripts/package-windows.mjs (Join-Path $downloads $zip) (Join-Path $downloads SHASUMS256.txt) $flat --version $env:VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/desktop/scripts/release-windows.mjs $flat (Join-Path $env:RUNNER_TEMP windows-release)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 从首装 ZIP 启动实际版本
+        shell: pwsh
+        run: ./apps/desktop/testing/verify-release-windows.ps1 -Version $env:VERSION -Assets (Join-Path $env:RUNNER_TEMP windows-release/updates)
+      - name: 实测 Windows 后台下载、退出安装及重启回读
+        shell: pwsh
+        run: |
+          $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+          $listener.Start()
+          $port = $listener.LocalEndpoint.Port
+          $listener.Stop()
+          $source = "http://127.0.0.1:$port/flower-desktop-update.json"
+          $downloads = Join-Path $env:RUNNER_TEMP electron
+          $electron = (Get-Content -Raw apps/desktop/package.json | ConvertFrom-Json).config.electronVersion
+          foreach ($v in @('0.0.1','0.0.2')) {
+            $flat = Join-Path $env:RUNNER_TEMP "qa-flat-$v"
+            $out = Join-Path $env:RUNNER_TEMP "qa-release-$v"
+            node apps/desktop/scripts/package-windows.mjs (Join-Path $downloads "electron-v$electron-win32-x64.zip") (Join-Path $downloads SHASUMS256.txt) $flat --version $v --qa-source $source
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node apps/desktop/scripts/release-windows.mjs $flat $out
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Remove-Item -LiteralPath $flat -Recurse -Force
+          }
+          node apps/desktop/testing/verify-windows-update.mjs (Join-Path $env:RUNNER_TEMP qa-release-0.0.1/install) (Join-Path $env:RUNNER_TEMP qa-release-0.0.2/updates) $source
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: desktop-windows-x64
+          path: ${{ runner.temp }}/windows-release/updates/
+          if-no-files-found: error
+          compression-level: 0
+
+  macos:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, runner: macos-15 }
+          - { arch: x64, runner: macos-15-intel }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.version.outputs.number }}
+      TARGET_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          architecture: ${{ matrix.arch }}
+          cache: npm
+      - name: 构建共享核心
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm exec -- tsc --build packages/agent-runtime
+      - name: 生成磁盘映像、原生更新 ZIP 与清单
+        env:
+          FLOWER_MAC_REQUIRE_SIGNING: ${{ github.event_name == 'push' && '1' || '0' }}
+          MAC_CERTIFICATE_P12: ${{ github.event_name == 'push' && secrets.MAC_CERTIFICATE_P12 || '' }}
+          MAC_CERTIFICATE_PASSWORD: ${{ github.event_name == 'push' && secrets.MAC_CERTIFICATE_PASSWORD || '' }}
+          APPLE_ID: ${{ github.event_name == 'push' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ github.event_name == 'push' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ github.event_name == 'push' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          node apps/desktop/scripts/release-macos.mjs --version "$VERSION" --arch "$TARGET_ARCH" --output "$RUNNER_TEMP/macos-release"
+      - name: 在对应架构启动并核验应用
+        env:
+          FLOWER_MAC_REQUIRE_SIGNING: ${{ github.event_name == 'push' && '1' || '0' }}
+          APPLE_TEAM_ID: ${{ github.event_name == 'push' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          node apps/desktop/testing/verify-macos-release.mjs --version "$VERSION" --arch "$TARGET_ARCH" --output "$RUNNER_TEMP/macos-release"
+      - name: 用签名测试包实测 Squirrel 跨版本升级
+        if: github.event_name == 'push'
+        env:
+          MAC_CERTIFICATE_P12: ${{ secrets.MAC_CERTIFICATE_P12 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          source="http://127.0.0.1:$port/flower-desktop-mac-${TARGET_ARCH}.json"
+          for v in 0.0.1 0.0.2; do
+            node apps/desktop/scripts/release-macos.mjs --version "$v" --arch "$TARGET_ARCH" --output "$RUNNER_TEMP/mac-qa-$v" --qa-source "$source"
+          done
+          node apps/desktop/testing/verify-macos-update.mjs --from-version 0.0.1 --from-dir "$RUNNER_TEMP/mac-qa-0.0.1" --version 0.0.2 --arch "$TARGET_ARCH" --output "$RUNNER_TEMP/mac-qa-0.0.2" --qa-source "$source"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: desktop-macos-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/macos-release/*.dmg
+            ${{ runner.temp }}/macos-release/*.zip
+            ${{ runner.temp }}/macos-release/*.json
+          if-no-files-found: error
+          compression-level: 0
+
+  verify:
+    needs: [version, windows, macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: desktop-*
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
+      - name: 核对跨平台制品与稳定频道协议
+        env:
+          VERSION: ${{ needs.version.outputs.number }}
+        run: |
+          python3 -m unittest discover -s apps/desktop/testing -p 'test_desktop_release.py'
+          python3 apps/desktop/scripts/publish-desktop.py "$RUNNER_TEMP/release-assets" "$VERSION"
+
+  publish:
+    needs: [version, verify]
+    if: github.event_name == 'push' && github.repository == 'SilentFlower/flower'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: flower-desktop-stable
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: desktop-*
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
+      - name: 发布源码标签对应版本并推进稳定频道
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.number }}
+        run: |
+          python3 apps/desktop/scripts/publish-desktop.py "$RUNNER_TEMP/release-assets" "$VERSION" --publish-commit "$(git rev-parse HEAD)"

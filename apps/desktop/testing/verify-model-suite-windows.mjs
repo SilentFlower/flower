@@ -31,6 +31,16 @@ const b = await startMockModel({ model: modelId, alternatives: ["manual-b", gemi
 const results = [];
 let app;
 let page;
+const watchdog = globalThis.setTimeout(() => {
+	console.error("模型套件验收超时。");
+	app?.process().kill();
+	process.exit(2);
+}, 240_000);
+
+function reportFailure(error) {
+	console.error(error);
+	process.exitCode = 1;
+}
 
 async function boot() {
 	app = await electron.launch({
@@ -40,6 +50,7 @@ async function boot() {
 		args: [`--user-data-dir=${profile}`],
 	});
 	page = await app.firstWindow();
+	page.setDefaultTimeout(12_000);
 	await app.evaluate(
 		({ app, dialog }, expected) => {
 			if (!app.isPackaged || app.getPath("userData").toLowerCase() !== expected.profile.toLowerCase())
@@ -48,6 +59,9 @@ async function boot() {
 				canceled: false,
 				filePaths: [options.properties.includes("openDirectory") ? expected.work : expected.notes],
 			});
+			const showMessageBox = dialog.showMessageBox.bind(dialog);
+			dialog.showMessageBox = async (window, options) =>
+				options?.buttons?.[0] === "仍然关闭" ? { response: 0 } : showMessageBox(window, options);
 		},
 		{ profile, work, notes },
 	);
@@ -55,8 +69,23 @@ async function boot() {
 }
 
 async function close() {
-	await app.close();
-	app = undefined;
+	const owned = app;
+	if (!owned) return;
+	const deadline = new AbortController();
+	try {
+		await Promise.race([
+			owned.close(),
+			setTimeout(5000, undefined, { signal: deadline.signal, ref: false }).then(() => {
+				throw new Error("隔离应用关闭超时。");
+			}),
+		]);
+	} catch (error) {
+		owned.process().kill();
+		throw error;
+	} finally {
+		deadline.abort();
+		app = undefined;
+	}
 }
 
 const state = () => page.evaluate(() => window.flower.state());
@@ -99,9 +128,13 @@ async function openPicker() {
 	await by("model-picker").waitFor();
 }
 
-async function run(prompt) {
+async function send(prompt) {
 	await by("prompt").fill(prompt);
 	await by("send").click();
+}
+
+async function run(prompt) {
+	await send(prompt);
 	const task = page.locator(".task").filter({ hasText: prompt });
 	await task.waitFor();
 	return task;
@@ -356,7 +389,7 @@ try {
 	assert(await by("base-url").isHidden());
 	assert(await by("api-key").isHidden());
 	assert(await by("model-capability").isHidden());
-	assert((await by("model-dialog").boundingBox()).width >= 700);
+	assert((await by("model-dialog").boundingBox()).width > 500);
 	await page.screenshot({ path: join(evidence, "模型设置.png") });
 	await fallback.click();
 	await waitState(({ model }) => model === "manual-b");
@@ -400,11 +433,18 @@ try {
 	assert.equal((await state()).modelSettings.effort, "low");
 	const running = await run("取消用例：模型与强度锁定");
 	await running.getByText("准备处理").waitFor();
-	const queued = await run("延续刚才的会话：等待排队约束验证");
-	assert.equal(await queued.getAttribute("data-status"), "queued");
+	const queueInput = "延续刚才的会话：等待排队约束验证";
+	const requestsBeforeRemoval = a.observations.attempts.length;
+	await send(queueInput);
+	const queued = by("queue").locator(".queue-item").filter({ hasText: queueInput });
+	await queued.waitFor();
+	const itemId = await queued.getAttribute("data-id");
+	assert(itemId);
+	const busy = await waitState(({ modelBusy, queue }) => modelBusy && queue?.items.some(({ id }) => id === itemId));
+	assert.equal(await page.locator(".task").filter({ hasText: queueInput }).count(), 0);
 	await openPicker();
 	assert(await by("effort-range").isDisabled());
-	const busy = await state();
+	assert(await by("picker-service").isDisabled());
 	await assert.rejects(
 		page.evaluate((revision) => window.flower.setModelEffort("high", revision), busy.modelRevision),
 		/运行和排队/,
@@ -418,14 +458,26 @@ try {
 	);
 	await page.keyboard.press("Escape");
 	await by("model-picker").waitFor({ state: "hidden" });
-	await queued.getByRole("button", { name: "取消任务", exact: true }).click();
+	await queued.getByRole("button", { name: "删除", exact: true }).click();
+	await queued.waitFor({ state: "detached" });
+	assert((await state()).modelBusy, "删除排队消息后，运行中的任务仍锁定模型");
 	await running.getByRole("button", { name: "取消任务", exact: true }).click();
-	await waitState(({ modelBusy }) => !modelBusy);
+	await running.and(page.locator('[data-status="cancelled"]')).waitFor();
+	const settled = await waitState(({ modelBusy, queue }) => !modelBusy && !queue?.items.length);
+	assert.equal(settled.modelSettings.effort, "low");
+	assert.equal(settled.modelSettings.id, aId);
+	assert.equal(a.observations.attempts.length, requestsBeforeRemoval, "已删除的排队消息不应发往模型");
+	await openPicker();
+	assert(await by("effort-range").isEnabled());
+	await page.keyboard.press("Escape");
+	await by("model-picker").waitFor({ state: "hidden" });
 	await openSettings();
 	await by("settings-appearance").click();
-	await page.locator(".theme-settings").waitFor();
+	await page.locator('#workbench[data-management="appearance"] #appearance-page').waitFor();
+	assert.equal(await page.locator("dialog[open]").count(), 0);
 	await page.screenshot({ path: join(evidence, "外观设置.png") });
 	await page.keyboard.press("Escape");
+	await by("management-page").waitFor({ state: "hidden" });
 	assert(
 		[a, b].every(
 			({ observations }) =>
@@ -440,8 +492,12 @@ try {
 	const report = { exe, profile, compact, motion, results, traffic: [a.observations, b.observations] };
 	await writeFile(join(evidence, "result.json"), JSON.stringify(report, null, 2));
 	console.log(JSON.stringify(report));
+} catch (error) {
+	reportFailure(error);
 } finally {
-	await app?.close();
-	await a.close();
-	await b.close();
+	await close().catch(reportFailure);
+	for (const outcome of await Promise.allSettled([a.close(), b.close()])) {
+		if (outcome.status === "rejected") reportFailure(outcome.reason);
+	}
+	globalThis.clearTimeout(watchdog);
 }

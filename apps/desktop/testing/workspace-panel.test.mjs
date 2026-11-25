@@ -603,7 +603,7 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 	};
 	const fixture = Symbol.for("flower.workspace-panel.test.electron");
 	const moduleURL = `data:text/javascript,${encodeURIComponent(
-		`export const {app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, nativeTheme, safeStorage, screen, shell, utilityProcess} = globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(fixture))})];`,
+		`export const {app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, Notification, nativeImage, nativeTheme, safeStorage, screen, shell, utilityProcess} = globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(fixture))})];`,
 	)}`;
 	globalThis[fixture] = electron;
 	const hooks = registerHooks({
@@ -653,7 +653,7 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 	await assert.rejects(api.listWorkspaceEntries(second, ".", -1), /非负安全整数/);
 	await api.referenceFile(second, "note.md");
 	await api.referenceFile(second, "note.md");
-	assert.deepEqual((await api.state()).sessions.find(({ id }) => id === second).attachments, [fileReference("note.md")]);
+	assert.deepEqual((await api.state()).draft.attachments, [fileReference("note.md")]);
 	// 重试与放回输入框只作用于当前会话的有效请求，校验在启动运行时之前完成。
 	assert.equal((await api.state()).selected, second);
 	await assert.rejects(api.retryRequest(second, "../请求"), /无效请求标识/);
@@ -667,15 +667,14 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 	const pasted = Array.from({ length: 30 }, (_, index) => `第 ${index + 1} 行`).join("\n");
 	await api.pasteText(second, pasted);
 	await api.pasteText(second, `${pasted}\n`.slice(0, -1).replace("第 1 行", "第一行"));
-	const pastedNames = (await api.state()).sessions
-		.find(({ id }) => id === second)
-		.attachments.filter(({ name }) => name.startsWith("粘贴的文本"))
+	const pastedNames = (await api.state()).draft.attachments
+		.filter(({ name }) => name.startsWith("粘贴的文本"))
 		.map(({ name }) => name);
 	assert.deepEqual(pastedNames, ["粘贴的文本（30 行）.txt", "粘贴的文本 2（30 行）.txt"]);
 	await assert.rejects(api.pasteText(second, "  "), /粘贴的文本为空/);
 	await assert.rejects(api.pasteText(second, "字".repeat(400_000)), /超过 1 MiB/);
 	await assert.rejects(api.pasteText(first, pasted), /会话已切换/);
-	for (const { id } of (await api.state()).sessions.find(({ id }) => id === second).attachments)
+	for (const { id } of (await api.state()).draft.attachments)
 		if (id.startsWith("asset:")) await api.removeAttachment(second, id);
 	// 路径菜单只接受当前会话工作区内已有的条目。
 	await assert.rejects(api.showPathMenu(first, "note.md", true), /只能读取当前会话的工作区/);
@@ -692,7 +691,7 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 	await assert.rejects(api.referenceFile(first, "note.md"), /会话已切换/);
 	await assert.rejects(api.referenceFile(second, "../note.md"), /工作区/);
 	await api.removeAttachment(second, "file:note.md");
-	assert.deepEqual((await api.state()).sessions.find(({ id }) => id === second).attachments, []);
+	assert.deepEqual((await api.state()).draft.attachments, []);
 	await assert.rejects(api.listWorkspaceEntries(first, "."), /当前会话/);
 	await assert.rejects(api.previewWorkspaceFile(first, "note.md"), /当前会话/);
 	await assert.rejects(
@@ -708,6 +707,19 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 		attachable: true,
 	});
 
+	// 旧版曾持久化空会话。重启仍要读取已有会话绑定的目录，临时草稿则不会写入索引。
+	const working = join(profile, "local-workbench");
+	await mkdir(working, { recursive: true });
+	await writeFile(
+		join(working, "workbench.json"),
+		JSON.stringify({
+			selected: second,
+			sessions: [
+				{ id: first, title: "会话甲", workspace: await approveWorkspace(firstRoot) },
+				{ id: second, title: "会话乙", workspace: await approveWorkspace(secondRoot) },
+			],
+		}),
+	);
 	launch();
 	assert.deepEqual(await api.previewWorkspaceFile(second, "note.md"), {
 		kind: "markdown",

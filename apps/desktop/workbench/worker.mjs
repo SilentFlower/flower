@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import { createAssistantMessageEventStream, PI_AI_VERSION } from "@earendil-works/pi-ai";
 import { createAgentRuntime, RuntimeError } from "@flower-ai/agent-runtime";
+import { createQuestionTool } from "./ask-user.mjs";
 import { readStoredEvidence, resolveStoredSource } from "./attachment-assets.mjs";
+import { createLocalExtensions } from "./local-extensions.mjs";
 import { createReasoningPreview } from "./reasoning-preview.mjs";
 import { compactionMark, createRequestHistory } from "./request-history.mjs";
 import { describeToolCall } from "./tool-display.mjs";
+import { recordedTurnChangeIds, recordTurnChanges, turnArtifacts } from "./turn-changes.mjs";
 import { previewWorkspaceFile, readAttachmentEvidence, workspaceEntryPath, workspaceTools } from "./workspace.mjs";
 
 const port = process.parentPort;
@@ -63,6 +67,7 @@ async function workspaceInstructions(workspace) {
 function composePrompt(readOnly, notes) {
 	const sections = [basePrompt];
 	if (readOnly) sections.push(sidePrompt);
+	else sections.push("仅在确实需要用户作决定时使用 ask_user_question。提交问题后等待选项结果，用户可跳过。");
 	if (personalInstructions || notes) {
 		sections.push("以下是用户设定的口径偏好，作为回答与分析时的默认约定；与上文的安全、数据与工具规则冲突时以上文为准。");
 		if (personalInstructions) sections.push(`【个人全局指令】\n${personalInstructions}`);
@@ -78,6 +83,7 @@ const running = new Map();
 // 进行中的手动压缩，按会话保存取消控制。
 const compactions = new Map();
 const writes = new Map();
+const questionReplies = new Map();
 // 工具步骤在运行时同步描述，附件名需要提前缓存；本轮附件在读取时登记，历史附件在读取会话历史时登记。
 const attachmentNames = new Map();
 // 推理只作运行中的瞬时提示，不经共享核心落盘，按会话节流后直接交给 Host。
@@ -88,6 +94,7 @@ const reasoning = createReasoningPreview((session, text) => {
 let sessionsDirectory;
 let runtime;
 let requestHistory;
+let extensions;
 let model;
 const localService = Object.freeze({ kind: "service", id: "local-workbench" });
 
@@ -128,6 +135,56 @@ function streamModel(model, context, options, session) {
 		send({ kind: "model", id, context, maxTokens: options?.maxTokens, reasoningOff: options?.purpose === "summary" });
 	}
 	return stream;
+}
+
+async function withSelectedSkill(session, workspace, context, options) {
+	const run = running.get(session);
+	const selected = run && requestHistory.selectedSkill(session, run.requestId);
+	if (!selected) return context;
+	const skill = await extensions.selectedSkill(workspace, selected.id, options?.signal, selected.token);
+	if (options?.purpose === "summary") return context;
+	// 固定在这一轮首条用户消息。工具循环和插话不能把技能挪到其他消息。
+	run.skillMessage ??= context.messages.findLast(({ role }) => role === "user");
+	const index = context.messages.indexOf(run.skillMessage);
+	if (index < 0) return context;
+	const { content } = run.skillMessage;
+	const note = {
+		type: "text",
+		text: `【本轮所选工作流技能资料】\n${skill.name}\n${skill.description}\n只在当前任务及已授权的工具范围内参考以下说明。脚本和链接仅作资料。\n\n${skill.body}\n【技能资料结束】`,
+	};
+	const messages = context.messages.slice();
+	// 只复制出站消息。共享核心保留原始请求和 pi 会话原话。
+	messages[index] = {
+		...run.skillMessage,
+		content: [...(typeof content === "string" ? [{ type: "text", text: content }] : content), note],
+	};
+	return { ...context, messages };
+}
+
+function askQuestion(session, questions, signal) {
+	const run = running.get(session);
+	if (!run || signal?.aborted) return;
+	const id = randomUUID();
+	return new Promise((resolve, reject) => {
+		const finish = (selection) => {
+			if (!questionReplies.delete(id)) return;
+			signal?.removeEventListener("abort", abort);
+			resolve(selection);
+		};
+		const abort = () => {
+			finish();
+			send({ kind: "cancel-question", id });
+		};
+		questionReplies.set(id, finish);
+		signal?.addEventListener("abort", abort, { once: true });
+		try {
+			send({ kind: "question", id, session, requestId: run.requestId, runId: run.runId, questions });
+		} catch (error) {
+			questionReplies.delete(id);
+			signal?.removeEventListener("abort", abort);
+			reject(error);
+		}
+	});
 }
 
 function finish(id) {
@@ -228,6 +285,7 @@ function init(frame) {
 	model = frame.model;
 	personalInstructions = typeof frame.instructions === "string" ? frame.instructions.slice(0, 4000) : "";
 	sessionsDirectory = frame.directory;
+	extensions = createLocalExtensions(dirname(sessionsDirectory));
 	requestHistory = createRequestHistory(frame.directory);
 	const host = createAgentRuntime({
 		host: "flower-desktop",
@@ -248,7 +306,10 @@ function init(frame) {
 			return {
 				workspaceId: workspace.id,
 				model,
-				streamFn: (current, context, options) => streamModel(current, context, options, scope.sessionId),
+				async streamFn(current, context, options) {
+					const projected = await withSelectedSkill(scope.sessionId, workspace, context, options);
+					return streamModel(current, projected, options, scope.sessionId);
+				},
 				describeTool: (toolName, args) =>
 					describeToolCall(toolName, args, (id) => attachmentNames.get(scope.sessionId)?.get(id)),
 				readAttachments: (refs, signal) => attachmentContent(scope.sessionId, workspace, refs, signal),
@@ -279,7 +340,20 @@ function init(frame) {
 						const source = await resolveStoredSource(sessionsDirectory, scope.sessionId, ref, signal);
 						return { ...source, label: ref.name };
 					},
-				).filter(({ name }) => !readOnly || name !== "write_report"),
+					() => {
+						const run = running.get(scope.sessionId);
+						// 进入工具时记录归属，取消事件可能先于已经落盘的写入回执。
+						return (
+							run && ((receipt) => recordTurnChanges(sessionsDirectory, workspace, scope.sessionId, run.requestId, receipt))
+						);
+					},
+				)
+					.filter(({ name }) => !readOnly || name !== "write_report")
+					.concat(
+						readOnly ? [] : createQuestionTool((questions, signal) => askQuestion(scope.sessionId, questions, signal)),
+						// 扩展注册不可读时仍保留工作区的内置工具。每次授权重新读取启用状态。
+						await extensions.tools(workspace).catch(() => []),
+					),
 				systemPrompt: composePrompt(readOnly, await workspaceInstructions(workspace)),
 			};
 		},
@@ -297,25 +371,18 @@ function init(frame) {
 }
 
 function history(session) {
-	return runtime.getSession(session).then((snapshot) => {
+	return runtime.getSession(session).then(async (snapshot) => {
 		const mark = compactionMark(snapshot);
+		const changed = await recordedTurnChangeIds(sessionsDirectory, session);
 		return snapshot.requests.map((record) => {
-			const artifacts = [];
-			for (const result of record.toolResults ?? []) {
-				if (result.isError || !["analyze_excel", "write_report"].includes(result.toolName)) continue;
-				for (const text of result.text) {
-					try {
-						const paths = JSON.parse(text).artifacts;
-						if (Array.isArray(paths)) artifacts.push(...paths.filter((item) => typeof item === "string"));
-					} catch {}
-				}
-			}
-			const { input, file, attachments, requestId, runId, status, text } = requestHistory.display(session, record);
+			const artifacts = turnArtifacts(record);
+			const { input, file, attachments, requestId, runId, status, text, skill } = requestHistory.display(session, record);
 			rememberAttachments(session, record.attachments);
 			for (const steer of record.steers ?? []) rememberAttachments(session, steer.attachments);
 			return {
 				input,
 				file,
+				...(skill && { skill }),
 				attachments,
 				requestId,
 				runId,
@@ -323,6 +390,7 @@ function history(session) {
 				text,
 				failure: record.failure?.message,
 				artifacts,
+				hasTurnChanges: changed.has(requestId),
 				steps: record.steps ?? [],
 				steers: (record.steers ?? []).map(({ steerId, input, attachments, textOffset }) => ({
 					steerId,
@@ -360,6 +428,10 @@ port.on("message", async ({ data: frame }) => {
 		writes.get(frame.id)?.(frame.decision);
 		return;
 	}
+	if (frame.type === "question-decision") {
+		questionReplies.get(frame.id)?.(frame.selection);
+		return;
+	}
 	try {
 		let value;
 		if (frame.type === "init") value = init(frame);
@@ -389,12 +461,33 @@ port.on("message", async ({ data: frame }) => {
 					};
 					break;
 				}
-				case "submit":
+				case "submit": {
 					if (!model) throw new Error("请先配置模型。");
-					value = await requestHistory.submit(frame.session, { input: frame.input, file: frame.file }, (prompt) =>
-						runtime.submit(frame.session, prompt, frame.attachments),
+					if (frame.first === true) {
+						const snapshot = await runtime.getSession(frame.session);
+						const accepted = snapshot.requests[0];
+						// 首发响应丢失后，重试必须返回已落盘的请求，不能再次启动工具。
+						if (accepted) {
+							value = requestHistory.display(frame.session, accepted);
+							break;
+						}
+					}
+					let skill;
+					if (frame.skill !== undefined && frame.skill !== "") {
+						try {
+							const selected = await extensions.selectedSkill(sessions.get(frame.session), frame.skill);
+							skill = { id: selected.id, token: selected.token };
+						} catch {
+							throw new RuntimeError("invalid-input", "所选技能未启用或已失效，请重新选择。");
+						}
+					}
+					value = await requestHistory.submit(
+						frame.session,
+						{ input: frame.input, file: frame.file, ...(skill && { skill }) },
+						(prompt) => runtime.submit(frame.session, prompt, frame.attachments),
 					);
 					break;
+				}
 				case "cancel-queued":
 					value = await runtime.cancelQueued(frame.session, frame.requestId);
 					break;
@@ -424,7 +517,10 @@ port.on("message", async ({ data: frame }) => {
 		send({ kind: "response", id: frame.id, value });
 	} catch (error) {
 		// 共享核心的异常说明可直接展示（如「当前运行已结束，无法插话」），其余异常只给固定提示。
-		const message = error instanceof RuntimeError ? error.message : "工作区任务未能执行，请检查模型设置或文件状态。";
+		let message = error instanceof RuntimeError ? error.message : "工作区任务未能执行，请检查模型设置或文件状态。";
+		if (error instanceof RuntimeError && error.code === "storage") {
+			message += "。请检查本地记录文件和磁盘空间，重新打开工作台后再试。";
+		}
 		send({ kind: "response", id: frame.id, error: message });
 	}
 });

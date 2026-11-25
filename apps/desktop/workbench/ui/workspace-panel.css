@@ -391,6 +391,7 @@
 	display: flex;
 	align-items: center;
 	gap: 2px;
+	min-width: 0;
 }
 .panel-tabs .button {
 	display: flex;
@@ -401,6 +402,57 @@
 	padding: 3px 9px;
 	font-size: 12px;
 	color: var(--muted);
+}
+#panel-tool-menu [hidden] {
+	display: none;
+}
+
+#panel-tool-menu .button {
+	min-height: 31px;
+	gap: 8px;
+	border-radius: 7px;
+}
+
+#panel-tool-menu .button > .icon {
+	width: 15px;
+	height: 15px;
+	color: var(--muted);
+}
+
+#panel-tool-menu .button[aria-checked="true"] {
+	background: var(--wash);
+	color: var(--ink);
+	font-weight: 650;
+}
+
+#panel-tool-menu .button[aria-checked="true"]::after {
+	content: "";
+	width: 9px;
+	height: 5px;
+	margin-inline-start: auto;
+	border-inline-start: 1.5px solid var(--accent);
+	border-block-end: 1.5px solid var(--accent);
+	transform: rotate(-45deg) translateY(-2px);
+}
+
+.git-operation-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.git-operation-row :where(.git-row) {
+	flex: 1;
+	min-width: 0;
+	width: auto;
+}
+
+.git-operation-row .git-operation,
+.git-commit-open {
+	flex-shrink: 0;
+	min-height: 25px;
+	padding: 0 6px;
+	font-size: 12px;
 }
 .panel-tabs .button[aria-pressed="true"] {
 	background: var(--wash);

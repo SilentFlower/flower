@@ -1,7 +1,8 @@
 Flower Desktop · Windows x64
 
-双击 Flower Desktop.exe。请保留 EXE 旁边的 resources 和其他文件。
-进入工作台后可以离线选择目录、创建会话和查看本机历史。点击侧栏工作区可通过系统目录选择器切换，WSL 目录可从资源管理器左侧的 Linux 节点选择。再次浏览会从当前或最近使用的工作区开始。
+双击安装目录顶层的 Flower Desktop.exe。请保留同目录的 versions、current.txt 和 .flower-desktop-managed。
+平铺兼容包可直接双击其中的 Flower Desktop.exe。请保留 EXE 旁的 resources 和其他运行文件。
+进入工作台后可以离线选择目录、编辑临时草稿和查看本机历史。「新建会话」或选择目录后可先写任务和添加附件，首条消息被接收后才显示侧栏会话。前进和后退可在当前窗口恢复草稿。点击侧栏工作区可通过系统目录选择器切换，WSL 目录可从资源管理器左侧的 Linux 节点选择。再次浏览会从当前或最近使用的工作区开始。
 点击首页的任务建议可将其填入输入框，已有文字会保留。检查或编辑后按发送键执行。
 侧栏支持折叠、后退和前进。点击侧栏「搜索会话」或按 Ctrl+K 展开搜索框，输入会话名或工作区即可搜索，按 Esc 收起，搜索框右侧的筛选按钮可按状态（进行中、待批准）和工作区筛选，点击 Flower 头像可返回助手首页。
 点击侧栏右上角的按钮切换显示方式。「会话模式」平铺所有对话，「工作区模式」按本机目录分组。点击目录名可展开或收起会话，重启后沿用上次的显示模式。在会话或工作区上右击，也可点行末的「…」，可置顶、重命名、删除会话或移除工作区。移除工作区会清除该组的本地会话，磁盘项目文件会保留。空工作区仍可从菜单新建会话。
@@ -23,5 +24,28 @@ Flower Desktop · Windows x64
 点击输入框的加号，可以添加本地文件、从工作区引用文件、粘贴剪贴板图片，或选择和切换工作区。「添加本地文件」支持从电脑上的任意目录多选。也可直接拖入文件，或在右栏文件旁点加号、在预览中点「加入对话」。输入框支持直接粘贴截图。发送前可逐个移除，每条消息最多 8 项。已发送的附件随消息显示。外部附件和粘贴的截图保存在本次会话的本机资料中。草稿和已发送消息可以点击文本、表格、文档附件在右栏阅读。两处都会显示等比例图片缩略图，点击查看大图，可进一步放大或按 Esc 返回。
 PDF 读取文字层并标注页码，Excel 提供工作表和单元格位置，Word 提取正文；支持图片输入的模型可查看 PNG、JPEG、WebP。需要交付时可请 Flower 生成 Markdown 核对报告，再从消息中预览。
 交付文件保存在当前工作区。重启后可回读本机历史。
+展开回复下的「本轮文件变更」可核对实际产物。「撤销本轮文件…」经确认后将符合条件的文件移到工作区恢复目录，后续手改的文件会留在原处。
+成功回复旁的「修订此轮消息」可编辑重发、回到此处或从此处分叉。先核对轮次和受影响的文件。回退会在侧栏保留「回退前」历史。分叉会保留原会话并建立独立对话。
+Flower 需要进一步确认时会展示「选择答案」卡。可选择、跳过或取消任务，切回原会话后仍能处理在途问题。
+会话标题栏的「导出和分享会话」可保存离线 HTML、复制 Markdown，或逐条勾选提问、回复和插话后复制为图片。
+设置中的「更新」显示当前版本、下载进度和发行说明。应用启动后在后台检查稳定发布渠道，有新版时自动下载并校验，也可点「检查更新」。若显示「当前频道尚未发布更新」，可以继续使用现有版本并稍后再检查。准备完成后可选「立即重启更新」或「退出时更新」。正在执行任务时可等任务结束后再更新。取消退出会保留当前版本，稍后仍可更新。
+从旧平铺便携包迁移时，正常关闭旧版，把新的 install 目录整个放到单独位置，再用其中顶层的 Flower Desktop.exe 启动。工作区、会话和模型设置沿用同一份资料。此后可直接在应用内更新。
 默认资料位于 %APPDATA%\Flower Desktop Open。
-界面字体使用华为 HarmonyOS Sans SC（© Huawei Device Co., Ltd.），按 HarmonyOS Sans Fonts License Agreement 随应用分发，许可全文见同目录「HarmonyOS-Sans-字体许可.txt」。
+界面字体使用华为 HarmonyOS Sans SC（© Huawei Device Co., Ltd.），按 HarmonyOS Sans Fonts License Agreement 随应用分发。许可全文见版本目录中的「HarmonyOS-Sans-字体许可.txt」。
+
+本机准备发行制品
+
+在已构建共享核心的 WSL 仓库根目录运行以下命令。Windows 侧需提供系统 .NET Framework 编译器。准备官方 Electron 45.3.2 Windows x64 ZIP 和 SHASUMS256.txt。示例中的 flat-0.1.0 和 release-0.1.0 使用新目录。
+
+    npm run build
+    npm run package:windows -w @flower-ai/flower-desktop -- <Electron ZIP> <SHASUMS256.txt> flat-0.1.0 --version 0.1.0
+    npm run release:windows -w @flower-ai/flower-desktop -- flat-0.1.0 release-0.1.0 --notes <UTF-8 更新说明文件>
+
+release-0.1.0/install 是首装和迁移使用的完整目录。updates 中的版本化 ZIP 和 flower-desktop-update.json 供应用内更新使用。正式投放时先将 ZIP 上传到 SilentFlower/flower 的 flower-desktop-stable Release，确认可下载后再以同批清单替换旧清单。版本号按三段数字递增。同一版本的 ZIP 在上线后保持一致。
+
+首装使用 updates 中名称以 -portable.zip 结尾的完整包。其顶层包含 .flower-desktop-managed、启动器和版本目录。
+正式开源发行由 GitHub Actions 的 flower-desktop-vX.Y.Z 标签触发。跨平台制品、密钥配置与重试见 apps/desktop/RELEASE.md。
+
+    python3 -c "import shutil; shutil.make_archive('release-0.1.0/Flower-Desktop-0.1.0-Windows-First-Install', 'zip', 'release-0.1.0/install')"
+
+隔离验收时，给 vA 和 vB 的 package:windows 都加 --qa-source http://127.0.0.1:PORT/flower-desktop-update.json。在 vB 的 updates 目录用 python3 -m http.server PORT --bind 127.0.0.1 提供清单和 ZIP，用单独资料目录启动 vA 的 install 顶层入口。此参数生成的 QA 包用于本机验收。

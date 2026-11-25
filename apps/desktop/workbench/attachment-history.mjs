@@ -26,7 +26,12 @@ function matchesInput(message, record) {
 	);
 }
 
-function messageForRequest(snapshot, record) {
+/** 查找成功请求在持久会话中对应的原始用户消息。
+ * @param snapshot 会话快照
+ * @param record 该快照中的成功请求
+ * @returns 可复核归属的原始消息
+ */
+export function messageForRequest(snapshot, record) {
 	const completed = snapshot.requests.filter((row) => row.status === "succeeded");
 	const position = completed.indexOf(record);
 	if (position < 0) return;

@@ -149,6 +149,8 @@ try {
 	await page.locator("#composer-workspace").click();
 	await page.waitForFunction(() => window.flower.state().then((value) => Boolean(value.selected)));
 	const session = (await state()).selected;
+	assert.equal((await state()).draft.id, session);
+	assert.equal((await state()).sessions.length, 0);
 	assert.equal((await state()).writeMode, "read");
 	for (const [label, expected] of [
 		["读取目录", "orders.xlsx"],
@@ -212,6 +214,8 @@ try {
 	await page.locator("#new-session").click();
 	await page.waitForFunction((previous) => window.flower.state().then((value) => value.selected !== previous), session);
 	const other = (await state()).selected;
+	assert.equal((await state()).draft.id, other);
+	assert.equal((await state()).sessions.length, 1);
 	assert.equal((await state()).writeMode, "ask");
 	await setMode("auto");
 	const automatic = await submit("自动生成");
@@ -316,6 +320,7 @@ try {
 	await page.locator("#settings-appearance").click();
 	await page.getByText("深色", { exact: true }).click();
 	await page.locator(".theme-save").click();
+	await page.locator("#settings-close-dialog").click();
 	await current.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(660, 615));
 	await page.waitForFunction(() => innerWidth <= 660);
 	await showModePicker();

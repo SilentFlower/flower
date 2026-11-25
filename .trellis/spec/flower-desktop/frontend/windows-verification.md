@@ -26,7 +26,12 @@ cmd.exe /c "python D:\…\flower-ui-private-desktop.py D:\…\run.log cmd /c D:\
 
 ### 3. Contracts
 
+- 观察流式任务时优先通过界面或 Host 的历史入口等待终态。必须并发读取 Windows 会话 JSON 时，使用包含 `FileShare.Delete` 的 Windows 读句柄。WSL 直接打开挂载盘上的文件可使 Windows 的原子替换返回 `EPERM`。
+- `writeJson` 在 Windows 替换同目录临时文件遇到 `EBUSY`、`EACCES`、`EPERM` 时，对同一份已刷盘的内容有限重试。持续占用须保留原快照，清理临时文件，并报告保存失败。用 `testing/storage-windows.test.mjs` 覆盖短暂和持续占用；流式场景须核对完整正文、界面终态及重启回读。
 - 主进程替身在 `boot()` 里用 `app.evaluate` 安装：`dialog.showOpenDialog` 返回测试目录、`dialog.showMessageBox` 按 `answers` 队列应答并记录、`shell.showItemInFolder` 只记录、`Notification.prototype.show` 记录并监听 `show`/`failed`、`BrowserWindow.prototype.flashFrame` 记录、`Menu.buildFromTemplate` 返回只记录模板并可按标签点击的替身。应用代码从 `"electron"` 导入的是同一对象，替换静态方法或原型即可生效。
+- 图片剪贴板验收使用独立 Window Station。Electron 45.3.2 主进程用 `clipboard.write([new ClipboardItem({ "image/png": blob })])` 写入，按 `clipboard.read()` 返回条目的 `types` 及 `getType()` 读回。系统读写保留原始方法，测试直接回读实际 PNG。系统文本读写等待 `readText()`、`writeText()` 的 Promise。
+- 自动更新验收用 `package:windows --version <版本> --qa-source <回环清单>` 和 `release:windows` 生成两个完整版本。每个安装场景使用独立的受管理目录和资料目录。Playwright 可连接 `install/versions/<版本>/Flower Desktop.exe`，恢复启动从 `install/Flower Desktop.exe` 进入。检查 `current.txt`、真实新进程的路径和版本，以及原会话正文。配置正式包时省略 `--qa-source`。
+- 验收退出时更新须先模拟用户取消关闭，核对旧进程和启动指针。真正退出后验证已切换指针，随后手动双击根入口打开新版。验收立即重启须检查进行中任务门禁、旧进程实际结束、独立助手启动新版和原资料恢复。
 - 所有 `page.evaluate`/`app.evaluate` 读取都包一层超时（脚本用 20 秒）；`until()` 轮询有上限。
 - 收尾顺序：`catch` 中先 `console.error` 失败原因并设 `process.exitCode`；`finally` 中关闭应用时先把关窗确认答案设为「仍然关闭」，`app.close()` 加超时，超时后 `app.process().kill()`；看门狗在收尾完成后才清除。
 - `timeout` 命令在 WSL 侧只能结束 `cmd.exe` 互操作进程，Windows 上的 node 与 Electron 会继续运行；清理时按命令行确认属于本次证据目录后，只按根进程 PID `taskkill /T /F`，不要按进程名或时间范围批量结束（用户自己的 Flower Desktop 也在运行）。
@@ -78,3 +83,7 @@ cmd.exe /c "python D:\…\flower-ui-private-desktop.py D:\…\run.log cmd /c D:\
 	globalThis.clearTimeout(watchdog);
 }
 ```
+
+## 公开发行的安装与升级验收
+
+Windows 首装运行 `verify-release-windows.ps1 -Version <版本> -Assets <制品目录>`。升级运行 `node apps/desktop/testing/verify-windows-update.mjs <旧版安装目录> <新版更新目录> <回环清单URL>`。Windows 的 `TEMP` 可含 8.3 用户名，工作台向启动器传入资料目录的真实绝对路径。验收触发窗口正常关闭，等候旧进程退出后读取版本指针。完整的三端验收和稳定频道规则见[开源发版规范](./public-release.md)。

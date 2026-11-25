@@ -146,11 +146,37 @@ function insideArea({ bounds, workArea }) {
 	);
 }
 
+async function headerDragPoint(page) {
+	const point = await page.locator(".workspace-panel-header").evaluate((header) => {
+		const { left, right, top, height } = header.getBoundingClientRect();
+		const y = Math.floor(top + height / 2);
+		let start = Math.max(0, Math.ceil(left));
+		let widest = { x: start, y, width: 0 };
+		// 按实际命中计算连续空白，隐藏标签及溢出的按钮都不会误作拖动起点。
+		for (let x = start; x < Math.min(right, innerWidth); x++) {
+			const hit = document.elementFromPoint(x, y);
+			if (
+				!header.contains(hit) ||
+				hit.closest("button, a[href], input, textarea, select, summary, [role='separator'], [contenteditable='true']")
+			) {
+				start = x + 1;
+				continue;
+			}
+			const width = x - start + 1;
+			if (width > widest.width) widest = { x: Math.floor((start + x) / 2), y, width };
+		}
+		return widest;
+	});
+	assert(point.width >= 8, `标题栏需要至少 8 像素连续可拖空白，实际 ${point.width} 像素`);
+	return point;
+}
+
 let session = await open();
 try {
 	const { app, page, by, native, snapshot, place, moveTo, toggle } = session;
 	await by("workspace").click();
-	await page.locator(".session-row, [data-session-id]").first().waitFor();
+	await page.waitForFunction(() => window.flower.state().then(({ draft }) => Boolean(draft)));
+	assert.equal(await page.locator(".session-row").count(), 0);
 	await by("prompt").fill("整理布局验证");
 	const { workArea, displays, scaleFactor } = await native();
 	results.display = { workArea, scaleFactor, displays };
@@ -275,15 +301,7 @@ try {
 	await diff.evaluate((node) => {
 		globalThis.dockedDiff = node;
 	});
-	const blank = await page.evaluate(() => {
-		const tabs = document.querySelector(".panel-tabs");
-		const last = tabs.lastElementChild.getBoundingClientRect();
-		const x = (last.right + tabs.getBoundingClientRect().right) / 2;
-		const y = last.top + last.height / 2;
-		const hit = document.elementFromPoint(x, y);
-		return { x, y, blank: !hit.closest("button") && Boolean(hit.closest(".workspace-panel-header")) };
-	});
-	assert(blank.blank, "标题栏空白处被控件占用");
+	const blank = await headerDragPoint(page);
 	await page.mouse.move(blank.x, blank.y);
 	await page.mouse.down();
 	await page.mouse.move(blank.x - 3, blank.y + 2);
@@ -303,20 +321,16 @@ try {
 	assert(docked.page.panel.right <= docked.page.chat.x + 1);
 	assert.deepEqual(docked.native.bounds, expanded.native.bounds);
 	sameChat(before, docked, "拖到左侧后的聊天宽度", false);
-	assert(await page.evaluate(() => globalThis.dockedDiff.isConnected));
+	assert(await diff.evaluate((node) => node === globalThis.dockedDiff));
 	assert.equal(await diff.textContent(), diffText);
 	assert.equal(await by("panel-git").getAttribute("aria-pressed"), "true");
 	assert.equal(await page.locator(".panel-drop-zone, .panel-drag-ghost").count(), 0);
 	await page.mouse.move(5, 300);
 	await page.screenshot({ scale: "css", path: join(evidence, "左侧停靠.png") });
-	results.scenarios.dragLeft = { before: expanded, after: docked };
+	results.scenarios.dragLeft = { before: expanded, after: docked, blankWidth: blank.width };
 
 	// 9. 拖向右侧途中按 Esc：取消拖动，不收起面板，停靠位置不变。
-	const leftBlank = await page.evaluate(() => {
-		const tabs = document.querySelector(".panel-tabs");
-		const last = tabs.lastElementChild.getBoundingClientRect();
-		return { x: (last.right + tabs.getBoundingClientRect().right) / 2, y: last.top + last.height / 2 };
-	});
+	const leftBlank = await headerDragPoint(page);
 	await page.mouse.move(leftBlank.x, leftBlank.y);
 	await page.mouse.down();
 	await page.mouse.move(docked.page.chat.right - 80, leftBlank.y + 120, { steps: 8 });
@@ -327,7 +341,9 @@ try {
 	await page.mouse.up();
 	assert(await by("workspace-panel").isVisible());
 	assert.equal((await session.snapshot("取消后")).page.side, "left");
-	results.scenarios.cancel = { side: "left", panelOpen: true };
+	assert(await diff.evaluate((node) => node === globalThis.dockedDiff));
+	assert.equal(await diff.textContent(), diffText);
+	results.scenarios.cancel = { side: "left", panelOpen: true, diffPreserved: true, blankWidth: leftBlank.width };
 
 	// 10. 点击标签与拖动调宽手柄不触发停靠。
 	await by("panel-files").click();
@@ -418,15 +434,62 @@ try {
 		results.scenarios.secondaryDisplay = { skipped: "当前只有一块显示器" };
 	}
 	await place(home);
+
+	// 15. 并排布局下把面板收至最小宽度，分别验证隐藏和显示工具标签时仍可拖动。
+	await toggle(true);
+	await by("workspace-panel-resize").press("Home");
+	const narrowPanel = await snapshot("面板最小宽度");
+	assert.equal(narrowPanel.page.panel.width, 320);
+	assert(await by("panel-current-tool").isHidden());
+	const toRight = await headerDragPoint(page);
+	await page.mouse.move(toRight.x, toRight.y);
+	await page.mouse.down();
+	await page.mouse.move(narrowPanel.page.chat.right - 80, toRight.y + 120, { steps: 8 });
+	await zone.waitFor();
+	assert.equal(await zone.textContent(), "松手放到聊天区右侧");
+	await page.screenshot({ scale: "css", path: join(evidence, "最窄面板拖向右侧.png") });
+	await page.mouse.up();
+	const narrowRight = await snapshot("最窄面板停靠右侧");
+	assert.equal(narrowRight.page.side, "right");
+	assert.equal(narrowRight.page.panel.width, 320);
+	assert.deepEqual(narrowRight.native.bounds, narrowPanel.native.bounds);
+	assert.equal(await page.locator(".panel-drop-zone, .panel-drag-ghost").count(), 0);
+
+	await by("panel-more-tools").click();
+	await page.locator('#panel-tool-menu [data-panel-mode="tasks"]').click();
+	assert(await by("panel-current-tool").isVisible());
+	const toLeft = await headerDragPoint(page);
+	await page.mouse.move(toLeft.x, toLeft.y);
+	await page.mouse.down();
+	await page.mouse.move(narrowRight.page.chat.x + 80, toLeft.y + 120, { steps: 8 });
+	await zone.waitFor();
+	assert.equal(await zone.textContent(), "松手放到聊天区左侧");
+	await page.mouse.up();
+	const narrowLeft = await snapshot("最窄面板停靠左侧");
+	assert.equal(narrowLeft.page.side, "left");
+	assert.equal(narrowLeft.page.panel.width, 320);
+	assert.deepEqual(narrowLeft.native.bounds, narrowPanel.native.bounds);
+	assert(await by("panel-current-tool").isVisible());
+	assert.equal(await page.locator(".panel-drop-zone, .panel-drag-ghost").count(), 0);
+	await toggle(false);
+	results.scenarios.minimumWidthDrag = {
+		panelWidth: narrowPanel.page.panel.width,
+		dragRightBlankWidth: toRight.width,
+		dragLeftBlankWidth: toLeft.width,
+		bounds: narrowPanel.native.bounds,
+	};
 } finally {
 	await session.app.close();
 }
 
-// 15. 重启后恢复左侧停靠，仍按原规则扩窗与还原。
+// 16. 重启后恢复左侧停靠，仍按原规则扩窗与还原。
 session = await open();
 try {
 	const { page, by, snapshot, place, toggle } = session;
 	assert.equal(await by("workbench").getAttribute("data-panel-side"), "left");
+	// 只有面板首选项需要重启恢复，离线的临时草稿关联通过正常目录入口重新选择。
+	await by("workspace").click();
+	await page.waitForFunction(() => window.flower.state().then(({ draft }) => Boolean(draft)));
 	const { workArea } = await session.native();
 	await place({
 		x: workArea.x + Math.max(0, Math.min(200, workArea.width - 1850)),

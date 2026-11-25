@@ -162,6 +162,21 @@ async function storeFile(directory, session, name, bytes, expectedMime) {
 	}
 }
 
+/** 将已核对的历史文件快照复制到派生会话，并返回其新归属引用。
+ * @param directory sessions 目录
+ * @param source 来源会话
+ * @param destination 目标会话
+ * @param ref 来源历史引用
+ * @returns 在目标会话中可读取的引用
+ */
+export async function copyStoredAttachment(directory, source, destination, ref) {
+	const stored = await storedFile(directory, source, ref);
+	const { bytes } = await readSelectedFile(stored.path, imageFilename.test(stored.name) ? imageLimit : fileLimit);
+	await confirmStoredFile(stored);
+	if (makeRef(sessionId(source), stored.name, bytes).id !== ref.id) throw new Error("附件快照已变化。");
+	return storeFile(directory, sessionId(destination), stored.name, bytes);
+}
+
 /** 从用户明确选择的单个绝对路径导入会话附件快照。
  * @param directory Host 与 worker 共用的 sessions 目录
  * @param session 附件所属会话 UUID

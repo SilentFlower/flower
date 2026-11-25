@@ -78,7 +78,7 @@ test("新会话首条消息自动命名、手动改名优先、失败保留临�
 
 	// 模型失败：保留临时标题，长消息截断加省略号。
 	mode = "fail";
-	const third = await api.newSession(id);
+	const third = await api.newSession(second);
 	const long = `${"汇总".repeat(25)}的结果`;
 	await api.submit(third, long);
 	await titles(3);
@@ -94,8 +94,8 @@ test("新会话首条消息自动命名、手动改名优先、失败保留临�
 	const conversation = fixture.observations.titles.at(-1).body;
 	assert.match(conversation, /<conversation>\n用户：请核对二月预算和报价的差额并生成汇总表\n助手：回答：/);
 	assert.match(conversation, /用户：再看三月/);
-	const empty = await api.newSession(id);
-	await assert.rejects(api.renameSessionWithAI(empty), /没有可用于命名的内容/);
+	const empty = await api.newSession(third);
+	await assert.rejects(api.renameSessionWithAI(empty), /没有找到对应的本机会话/);
 	mode = "fail";
 	await assert.rejects(api.renameSessionWithAI(id), /暂时无法生成标题/);
 	assert.equal(await title(id), "季度对账");
@@ -106,9 +106,17 @@ test("新会话首条消息自动命名、手动改名优先、失败保留临�
 	const file = join(root, "profile", "local-workbench", "workbench.json");
 	const stored = JSON.parse(await readFile(file, "utf8"));
 	for (const entry of stored.sessions) delete entry.titlePending;
+	stored.sessions.unshift({
+		id: empty,
+		title: "旧版新会话",
+		workspace: stored.sessions[0].workspace,
+		writeMode: "auto",
+	});
+	stored.selected = empty;
 	await writeFile(file, JSON.stringify(stored));
 	desktop.launch();
 	await desktop.state((state) => state.ready);
+	await assert.rejects(api.renameSessionWithAI(empty), /没有可用于命名的内容/);
 	const before = fixture.observations.titles.length;
 	await api.submit(empty, "旧会话的第一条消息");
 	await settled(empty);

@@ -250,6 +250,7 @@ try {
 	await until(async () => (await state()).selected !== firstSession);
 	const second = (await state()).selected;
 	await send("读取说明（后台）");
+	await until(async () => (await state()).sessions.some(({ id }) => id === second), "首发未创建侧栏会话");
 	const firstTitle = (await state()).sessions.find(({ id }) => id === firstSession).title;
 	await page.locator(`.session-row[title="${firstTitle}"]`).click();
 	await until(async () => (await state()).selected === firstSession);

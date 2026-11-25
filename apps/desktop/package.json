@@ -4,21 +4,34 @@
 	"private": true,
 	"type": "module",
 	"productName": "Flower Desktop",
+	"config": {
+		"electronVersion": "45.3.2"
+	},
 	"main": "workbench/entry.mjs",
 	"scripts": {
 		"package:windows": "node scripts/package-windows.mjs",
+		"release:windows": "node scripts/release-windows.mjs",
+		"release:macos": "node scripts/release-macos.mjs",
 		"test": "node --test testing/*.test.mjs testing/preview/demo.test.mjs"
 	},
 	"dependencies": {
 		"@earendil-works/pi-ai": "1.6.0",
 		"@flower-ai/agent-runtime": "0.1.0",
+		"@xterm/addon-fit": "0.11.0",
+		"@xterm/xterm": "6.0.0",
 		"exceljs": "4.4.0",
 		"marked": "18.0.11",
 		"pdfjs-dist": "6.5.438",
 		"saxes": "5.0.1",
+		"yaml": "2.9.0",
 		"yauzl": "3.2.0"
 	},
 	"devDependencies": {
-		"jszip": "3.10.2"
+		"@electron/packager": "20.3.0",
+		"jszip": "3.10.2",
+		"playwright-core": "1.65.1"
+	},
+	"optionalDependencies": {
+		"node-pty": "1.1.0"
 	}
 }

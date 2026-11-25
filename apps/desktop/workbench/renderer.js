@@ -11,15 +11,22 @@ let contextRevision = 0;
 let streamFrame = 0;
 const drafts = new Map();
 const timelines = new Map();
+const firstSending = new Set();
 let recentSession;
 const visits = [];
 let visitIndex = -1;
-let moving;
+let moving = false;
 const picker = by("model-picker");
 const modePicker = by("write-mode-picker");
 const modeOptions = [...modePicker.querySelectorAll("[data-write-mode]")];
 const writePanel = by("write-approval");
+const showQuestion = window.flowerQuestion(by("ask-user"), {
+	answer: (id, selection) => ui.answerQuestion(id, selection),
+	cancel: ({ session, requestId, runId }) => void action(() => ui.cancel(session, requestId, runId))(),
+	restoreFocus: () => by("prompt").focus({ preventScroll: true }),
+});
 const workbench = by("workbench");
+const management = window.flowerManagement;
 const sidebarPreference = "flower.desktop.sidebar.collapsed";
 const sidebarViewPreference = "flower.desktop.sidebar.view";
 const sidebarView = by("sidebar-view");
@@ -36,11 +43,13 @@ const sessionFilter = { status: "", workspace: "" };
 const statusFilters = {
 	busy: (item) => item.busy,
 	waiting: (item) => item.awaitingWrite,
+	answering: (item) => item.awaitingAnswer,
 };
 const statusOptions = [
 	{ value: "", label: "全部" },
 	{ value: "busy", label: "进行中" },
 	{ value: "waiting", label: "待批准" },
+	{ value: "answering", label: "待回答" },
 ];
 const back = by("sidebar-back");
 const forward = by("sidebar-forward");
@@ -56,7 +65,7 @@ let settingsEditor;
 let settingsDiscovery = 0;
 let settingsSaving = false;
 let editorFocus;
-let settingsFocus;
+let returnToTaskAfterSetup = false;
 let capabilityRequest = 0;
 let recommendedLevels = [];
 let manualLevelsInitialized = false;
@@ -84,7 +93,7 @@ const modelsWithIcons = [
 ];
 const updateSessions = agentUI.sessionList(
 	by("sessions"),
-	(id) => action(() => ui.selectSession(id))(),
+	(id) => action(() => goToConversation(() => (id === session ? undefined : ui.selectSession(id))))(),
 	openSidebarMenu,
 	openHit,
 );
@@ -122,8 +131,8 @@ function openSidebarMenu(type, key, trigger) {
 				() => {
 					sidebarOptions.hidePopover();
 					trigger.focus();
-					if (["pin", "create"].includes(operation))
-						return action(() => ui.manageSidebar(type, key, operation, !item.pinned))();
+					if (operation === "create") return action(() => goToConversation(() => ui.manageSidebar(type, key, operation)))();
+					if (operation === "pin") return action(() => ui.manageSidebar(type, key, operation, !item.pinned))();
 					if (operation === "ai-rename")
 						return action(async () => {
 							toast("正在用 AI 起名…");
@@ -167,7 +176,8 @@ function showMenu(menu, trigger) {
 	menu.querySelector("button:not(:disabled)")?.focus();
 }
 function menuNavigation(event) {
-	const buttons = [...event.currentTarget.querySelectorAll("button")];
+	const buttons = [...event.currentTarget.querySelectorAll("button:not([hidden], :disabled)")];
+	if (!buttons.length) return;
 	const index = buttons.indexOf(document.activeElement);
 	const next = {
 		ArrowDown: (index + 1) % buttons.length,
@@ -250,7 +260,35 @@ by("sidebar-dialog-form").addEventListener("submit", (event) => {
 	void action(() => ui.manageSidebar(type, key, operation, value))();
 });
 
-const workspacePanel = window.createWorkspacePanel(ui);
+const workspacePanel = window.createWorkspacePanel(ui, { showMenu, menuNavigation });
+workbench.addEventListener("managementchange", ({ detail }) => {
+	workspacePanel.setSuspended(Boolean(detail));
+	by("assistant-home").setAttribute("aria-current", String(!detail && !session));
+	rememberVisit();
+	renderSessions();
+});
+const draftSkills = new Map();
+function renderDraftSkill() {
+	const skill = draftSkills.get(session);
+	by("composer-skill").hidden = !skill;
+	by("composer-skill-name").textContent = skill ? `技能 · ${skill.name}` : "";
+}
+const automationSettings = window.createAutomationSettings(ui, {
+	showTasks: workspacePanel.showTasks,
+	confirm: confirmAction,
+	showMenu,
+	menuNavigation,
+	selectSkill(skill) {
+		if (!session) return;
+		draftSkills.set(session, skill);
+		renderDraftSkill();
+	},
+});
+by("composer-skill-remove").onclick = () => {
+	draftSkills.delete(session);
+	renderDraftSkill();
+	by("prompt").focus();
+};
 const showDraftFiles = window.flowerAttachments.view(
 	by("attachment"),
 	(key) => action(() => ui.removeAttachment(session, key))(),
@@ -355,6 +393,22 @@ function releaseReplyImages(owner) {
 	}
 }
 
+const conversationActions = window.flowerConversationActions.mount({
+	ui,
+	getSession: () => session,
+	showMenu,
+	menuNavigation,
+	notify: toast,
+	restoreDraft(id, input) {
+		drafts.set(id, input);
+		if (session !== id) return;
+		const prompt = by("prompt");
+		prompt.value = input;
+		syncSend();
+		prompt.focus();
+	},
+});
+
 const thread = agentUI.thread(
 	by("timeline"),
 	by("thread-scroll"),
@@ -385,6 +439,20 @@ const thread = agentUI.thread(
 		artifactInfo: (path) => ui.artifactInfo(session, path).catch(() => undefined),
 		previewAttachment: workspacePanel.previewAttachment,
 		preview: (path, trigger) => workspacePanel.preview(path, trigger),
+		revise: conversationActions.openRevision,
+		turnChanges: {
+			inspect: (id) => ui.turnChanges(session, id),
+			undo: async (id) => {
+				const selected = session;
+				const result = await ui.undoTurnChanges(selected, id);
+				if (result?.undone) {
+					forgetMissingPaths(selected);
+					toast(`已撤销 ${result.undone} 个文件。`);
+				}
+				return result;
+			},
+			preview: (path, trigger) => workspacePanel.preview(path, trigger),
+		},
 		openLink: (url) => action(() => ui.openReplyLink(url))(),
 		copy: (id) =>
 			action(async () => {
@@ -532,22 +600,6 @@ function timelineFor(id) {
 	return timelines.get(id);
 }
 
-/** 判断当前会话是否可作为空白会话复用。
- * @returns {boolean} 记录已加载，且没有请求、文本草稿和待发附件
- */
-function emptySession() {
-	const timeline = timelines.get(session);
-	const selected = state.sessions.find(({ id }) => id === session);
-	return Boolean(
-		timeline?.loaded &&
-			!timeline.requests.size &&
-			!timeline.active.size &&
-			!timeline.submitting &&
-			!by("prompt").value &&
-			!selected?.attachments?.length,
-	);
-}
-
 function pruneTimelines() {
 	for (const [id, timeline] of timelines) {
 		if (id !== session && id !== recentSession && !timeline.active.size && !timeline.submitting) timelines.delete(id);
@@ -565,7 +617,7 @@ function renderRequests(follow = false) {
 		streamFrame = 0;
 	}
 	const timeline = timelines.get(session);
-	const home = Boolean(!session || (timeline?.loaded && !timeline.requests.size));
+	const home = Boolean(!session || state?.draft?.id === session || (timeline?.loaded && !timeline.requests.size));
 	// 进入或离开空白页（如新会话发出首个请求）时同步上下文圆环。
 	const homeChanged = workbench.dataset.home !== String(home);
 	workbench.dataset.home = String(home);
@@ -573,8 +625,22 @@ function renderRequests(follow = false) {
 	by("title").hidden = !session;
 	by("home-suggestions").hidden = !home;
 	by("thread-scroll").hidden = home;
-	by("history-status").hidden = !session || timeline?.loaded || timeline?.failed || Boolean(timeline?.requests.size);
-	thread.update(timeline?.requests.values() ?? [], follow);
+	by("history-status").hidden = home || timeline?.loaded || timeline?.failed || Boolean(timeline?.requests.size);
+	const rows = timeline?.requests.values() ?? [];
+	const pendingQuestion = state?.question?.requestId;
+	thread.update(
+		pendingQuestion
+			? Array.from(rows, (row) => (row.requestId === pendingQuestion ? { ...row, awaitingAnswer: true } : row))
+			: rows,
+		follow,
+	);
+	conversationActions.sync(
+		session,
+		!home &&
+			[...(timeline?.requests.values() ?? [])].some(
+				({ status, input, text }) => !activeStatuses.has(status) && (input || text),
+			),
+	);
 	revealPending();
 	syncCompact();
 	if (homeChanged) void refreshContextUsage(true);
@@ -609,9 +675,13 @@ function matchingSessions(query, hits) {
 			(!status || statusFilters[status](item)) &&
 			(!query ||
 				hits?.has(item.id) ||
-				[item.title, item.workspace, item.path, item.awaitingWrite ? "待批准" : ""].some((value) =>
-					value?.toLocaleLowerCase().includes(query),
-				)),
+				[
+					item.title,
+					item.workspace,
+					item.path,
+					item.awaitingWrite ? "待批准" : "",
+					item.awaitingAnswer ? "待回答" : "",
+				].some((value) => value?.toLocaleLowerCase().includes(query))),
 	);
 }
 
@@ -643,8 +713,10 @@ function searchBodies() {
 /** 打开正文命中的那一轮：切换会话后等历史渲染再跳转。@param {string} id 会话 ID @param {string} requestId 请求 ID @returns {void} */
 function openHit(id, requestId) {
 	pendingReveal = { session: id, requestId, query: bodyQuery };
-	if (id === session) revealPending();
-	else action(() => ui.selectSession(id))();
+	void action(async () => {
+		await goToConversation(() => (id === session ? undefined : ui.selectSession(id)));
+		revealPending();
+	})();
 }
 
 function revealPending() {
@@ -691,7 +763,13 @@ function renderSessions() {
 	const count = groupedByWorkspace ? spaces.length : items.length;
 	// 会话列表用 query 判断是否处于搜索态并自动展开分组，筛选条件变化同样视为一次新搜索
 	const searchKey = query || filtered ? [query, sessionFilter.status, sessionFilter.workspace].join("\n") : "";
-	updateSessions(items, { active: session, grouped: groupedByWorkspace, spaces, query: searchKey, snippets: hits });
+	updateSessions(items, {
+		active: management.current() ? undefined : session,
+		grouped: groupedByWorkspace,
+		spaces,
+		query: searchKey,
+		snippets: hits,
+	});
 	listedCount = count;
 	syncSessionTools();
 	by("session-search-empty").hidden = !searchKey || Boolean(count);
@@ -718,7 +796,6 @@ for (const node of [sidebarScroll, by("thread-scroll")]) flowerUI.softScroll(nod
 
 function collapseSidebar(collapsed) {
 	workbench.dataset.sidebar = collapsed ? "collapsed" : "expanded";
-	by("sidebar-main").hidden = collapsed;
 	const toggle = by("sidebar-toggle");
 	toggle.title = collapsed ? "展开侧栏" : "折叠侧栏";
 	toggle.setAttribute("aria-label", toggle.title);
@@ -797,13 +874,34 @@ function syncNavigation() {
 }
 
 function rememberVisit() {
-	if (visits[visitIndex] === session) return;
-	if (moving?.target === session) visitIndex = moving.index;
+	if (!state?.ready || moving) return;
+	const current = { session, page: management.current() };
+	const previous = visits[visitIndex];
+	if (previous?.page === current.page && previous?.session === current.session) return;
+	// 在技能或扩展页内选工作区时，更新本页的归属。只有实际换页才加入导航记录。
+	if (current.page && previous?.page === current.page) visits[visitIndex] = current;
 	else {
-		visits.splice(visitIndex + 1, visits.length, session);
+		visits.splice(visitIndex + 1, visits.length, current);
 		visitIndex = visits.length - 1;
 	}
 	syncNavigation();
+}
+
+/** 打开指定会话。管理页在选择成功后退出，只记录最终目的地。@param {Function} select 选择或创建会话 @returns {Promise<void>} 切换完成 */
+async function goToConversation(select) {
+	if (moving) return;
+	if (!management.current()) return select();
+	moving = true;
+	syncNavigation();
+	try {
+		await select();
+		management.leave(false);
+		if (!by("prompt").closest("[inert]")) by("prompt").focus({ preventScroll: true });
+	} finally {
+		moving = false;
+		rememberVisit();
+		syncNavigation();
+	}
 }
 
 for (const [button, step] of [
@@ -813,17 +911,20 @@ for (const [button, step] of [
 	button.addEventListener(
 		"click",
 		action(async () => {
-			const index = visitIndex + step;
-			if (moving || index < 0 || index >= visits.length) return;
+			const target = visits[visitIndex + step];
+			if (moving || !target) return;
 			const restoreFocus = document.activeElement === button;
-			moving = { index, target: visits[index] };
+			moving = true;
 			syncNavigation();
 			try {
-				await ui.selectSession(moving.target);
+				if (target.session !== session) await ui.selectSession(target.session);
+				if (target.page) management.show(target.page, button);
+				else management.leave(false);
+				visitIndex = visits.indexOf(target);
 			} finally {
-				moving = undefined;
+				moving = false;
 				syncNavigation();
-				if (restoreFocus && [button, document.body].includes(document.activeElement)) {
+				if (restoreFocus) {
 					const alternate = step < 0 ? forward : back;
 					(!button.disabled ? button : !alternate.disabled ? alternate : by("sidebar-toggle")).focus();
 				}
@@ -915,8 +1016,8 @@ document.addEventListener("keydown", (event) => {
 by("assistant-home").addEventListener(
 	"click",
 	action(async () => {
-		if (session) await ui.selectSession("");
-		else by("prompt").focus();
+		await goToConversation(() => (session ? ui.selectSession("") : undefined));
+		if (!session) by("prompt").focus();
 	}),
 );
 by("home-suggestions").addEventListener("click", (event) => {
@@ -935,7 +1036,7 @@ by("home-suggestions").addEventListener("click", (event) => {
 });
 
 async function reloadHistory(id) {
-	if (!id || !state?.ready) return;
+	if (!id || !state?.ready || state.draftIds?.includes(id)) return;
 	const timeline = timelineFor(id);
 	if (timeline.reading || (timeline.loaded && !timeline.stale)) return;
 	const stamp = Symbol();
@@ -1045,7 +1146,7 @@ function showContextUsage(usage) {
 async function refreshContextUsage(reset = false) {
 	const stamp = ++contextRevision;
 	if (reset) showContextUsage();
-	if (!session || !model || !state?.modelSettings?.context) return;
+	if (!session || state?.draft || !model || !state?.modelSettings?.context) return;
 	try {
 		const usage = await ui.contextUsage(session);
 		if (stamp === contextRevision) showContextUsage(usage);
@@ -1059,8 +1160,11 @@ function update(next) {
 	const previous = state;
 	const wasReady = state?.ready;
 	state = next;
+	conversationActions.syncUpdate(next.desktopUpdate);
 	model = next.model;
 	session = next.selected;
+	const transientIds = next.draftIds ?? [];
+	const accepted = previous?.draft?.id === session && !next.draft && next.sessions.some(({ id }) => id === session);
 	window.flowerImages.setSession(session);
 	const runtimeExited = previous && next.runtimeRevision !== previous.runtimeRevision;
 	if (runtimeExited) {
@@ -1071,14 +1175,18 @@ function update(next) {
 			invalidateHistory(timeline);
 		}
 	}
-	if (previous && next.sessions.length < previous.sessions.length) {
-		const live = new Set(["", ...next.sessions.map((entry) => entry.id)]);
+	if (
+		previous &&
+		(next.sessions.length < previous.sessions.length || transientIds.length < (previous.draftIds?.length ?? 0))
+	) {
+		const live = new Set(["", ...transientIds, ...next.sessions.map((entry) => entry.id)]);
 		for (let i = visits.length - 1; i >= 0; i--)
-			if (!live.has(visits[i])) {
+			if (!live.has(visits[i].session)) {
 				visits.splice(i, 1);
 				if (i <= visitIndex) visitIndex--;
 			}
 		for (const id of drafts.keys()) if (!live.has(id)) drafts.delete(id);
+		for (const id of draftSkills.keys()) if (!live.has(id)) draftSkills.delete(id);
 		for (const id of timelines.keys()) if (!live.has(id)) timelines.delete(id);
 	}
 	if (next.ready) rememberVisit();
@@ -1097,6 +1205,7 @@ function update(next) {
 	])
 		by(id).disabled = !next.ready;
 	syncWriteControls(next);
+	showQuestion(next.question);
 	const modelName = next.modelSettings?.modelId;
 	by("model").textContent = modelName || "选择模型";
 	const effort = next.modelSettings?.available.length ? effortNames[next.modelSettings.effort] : "";
@@ -1117,9 +1226,12 @@ function update(next) {
 	by("gateway-notice").hidden = !next.gatewayError;
 	by("gateway-notice").textContent = next.gatewayError ?? "";
 	renderSessions();
-	by("assistant-home").setAttribute("aria-current", String(!session));
-	const selected = next.sessions.find(({ id }) => id === session);
+	by("assistant-home").setAttribute("aria-current", String(!management.current() && !session));
+	const selected = next.draft ?? next.sessions.find(({ id }) => id === session);
 	workspacePanel.setSession(selected, next.ready);
+	workspacePanel.refreshTasks();
+	automationSettings.sync(next);
+	renderDraftSkill();
 	by("title").textContent = selected?.title ?? "Flower Desktop";
 	by("title").title = selected ? `${selected.title} · ${selected.path}` : by("title").textContent;
 	const workspaceLabel = selected?.workspace || "选择工作区";
@@ -1131,14 +1243,15 @@ function update(next) {
 	showDraftFiles(selected?.attachments, session);
 	showInterrupted(next.interrupted ?? []);
 	updateQueue(next.queue);
-	sideChat.setState(session, next.sideChats, next.runtimeRevision);
+	sideChat.setState(next.draft ? "" : session, next.sideChats, next.runtimeRevision);
 	by("composer-workspace").querySelector("span").textContent = selected ? "切换工作区…" : "选择工作区…";
 	if (old !== session) {
 		const prompt = by("prompt");
-		if (old === "" || next.sessions.some((item) => item.id === old)) drafts.set(old, prompt.value);
+		if (old === "" || transientIds.includes(old) || next.sessions.some((item) => item.id === old))
+			drafts.set(old, prompt.value);
 		if (old) recentSession = old;
-		const created = session && wasReady && !previous.sessions.some(({ id }) => id === session);
-		if (created) timelineFor(session).loaded = true;
+		const created =
+			session && wasReady && !previous.draftIds?.includes(session) && !previous.sessions.some(({ id }) => id === session);
 		// 首页草稿只随刚选定的新工作区转移。打开已有会话时读取该会话的草稿。
 		if (old === "" && created) {
 			drafts.set(session, prompt.value);
@@ -1148,14 +1261,21 @@ function update(next) {
 		releaseReplyImages(old);
 		prompt.value = drafts.get(session) ?? "";
 		renderRequests();
-		if (!moving && !by("model-dialog").open) prompt.focus();
+		if (!moving && !management.current()) prompt.focus();
 	}
+	if (accepted || (old === session && next.question?.id !== previous?.question?.id)) renderRequests();
 	syncSend();
 	syncCompact();
-	if (old !== session || runtimeExited || next.modelRevision !== previous?.modelRevision || (!wasReady && next.ready)) {
+	if (
+		accepted ||
+		old !== session ||
+		runtimeExited ||
+		next.modelRevision !== previous?.modelRevision ||
+		(!wasReady && next.ready)
+	) {
 		void refreshContextUsage(true);
 	}
-	if (old !== session || runtimeExited || (!wasReady && next.ready)) {
+	if (accepted || old !== session || runtimeExited || (!wasReady && next.ready)) {
 		pruneTimelines();
 		void reloadHistory(session);
 	}
@@ -1268,7 +1388,7 @@ function syncSend() {
 		send.setAttribute("aria-label", label);
 		send.title = label;
 	}
-	send.disabled = !state?.ready || effortSaving || !by("prompt").value.trim();
+	send.disabled = !state?.ready || firstSending.has(session) || effortSaving || !by("prompt").value.trim();
 }
 
 /**
@@ -1730,7 +1850,6 @@ function renderModelOverview(snapshot = state) {
 	const saved = snapshot?.modelSettings;
 	by("model-title").textContent = "模型设置";
 	delete by("model-dialog").dataset.editor;
-	by("settings-appearance").hidden = false;
 	by("model-overview").hidden = false;
 	by("model-form").hidden = true;
 	by("api-key").value = "";
@@ -1788,7 +1907,7 @@ async function changeOverview(change, focusModel) {
 		const row = [...by("settings-model-cards").querySelectorAll(".catalog-model-select")].find(
 			(button) => button.dataset.model === focusModel,
 		);
-		(row ?? by("settings-service")).focus();
+		if (management.current() === "models") (row ?? by("settings-service")).focus();
 	}
 }
 
@@ -1799,7 +1918,6 @@ function showSettingsEditor(kind, saved, id) {
 	const names = { setup: "添加服务", service: "编辑服务", model: id ? "编辑模型" : "添加模型" };
 	by("model-title").textContent = names[kind];
 	by("model-dialog").dataset.editor = kind;
-	by("settings-appearance").hidden = kind === "model";
 	by("model-overview").hidden = true;
 	by("model-form").hidden = false;
 	by("service-editor").hidden = kind === "model";
@@ -1824,53 +1942,53 @@ function returnToModelOverview(snapshot = state) {
 	(edit ?? by(editorFocus?.id) ?? by("model-title")).focus({ preventScroll: true });
 }
 
-function openModelSettings(trigger) {
-	const dialog = by("model-dialog");
-	if (dialog.open || !state?.ready) return;
-	settingsFocus = trigger;
-	if (state.modelSettings) renderModelOverview();
-	else showSettingsEditor("setup");
-	dialog.showModal();
-	by(state.modelSettings ? "model-title" : "service-name").focus();
+function openModelSettings(trigger, resumeTask = false) {
+	if (!state?.ready || management.current() === "models") return;
+	returnToTaskAfterSetup = resumeTask;
+	management.show("models", trigger);
 }
 
-// 全局指令：与外观设置一样从模型设置标题栏进入，关闭后焦点回到设置入口。
-const instructionsDialog = by("instructions-dialog");
+const modelPage = by("model-dialog");
+modelPage.addEventListener("managemententer", () => {
+	if (state?.modelSettings) renderModelOverview();
+	else showSettingsEditor("setup");
+});
+modelPage.addEventListener("managementleave", () => {
+	returnToTaskAfterSetup = false;
+	settingsDiscovery++;
+	capabilityRequest++;
+	by("api-key").value = "";
+});
+
+const instructionsPage = by("instructions-dialog");
 function syncInstructionsCount() {
 	const length = [...by("instructions-text").value].length;
 	by("instructions-count").textContent = `${length} / 4000 字`;
 }
-by("settings-instructions").addEventListener("click", () => {
-	if (instructionsDialog.open) return;
-	by("model-dialog").close();
+function resetInstructions() {
 	by("instructions-text").value = state?.instructions ?? "";
 	syncInstructionsCount();
 	flowerUI.feedback(by("instructions-feedback"), "");
-	instructionsDialog.showModal();
-	by("instructions-text").focus();
-});
+}
+instructionsPage.addEventListener("managemententer", resetInstructions);
 by("instructions-text").addEventListener("input", syncInstructionsCount);
-for (const id of ["instructions-close", "instructions-cancel"])
-	by(id).addEventListener("click", () => instructionsDialog.close());
-instructionsDialog.addEventListener("close", () => {
-	const focused = document.activeElement;
-	if (focused === document.body || instructionsDialog.contains(focused)) by("theme-open").focus();
-});
+by("instructions-cancel").addEventListener("click", resetInstructions);
 by("instructions-form").addEventListener("submit", async (event) => {
 	event.preventDefault();
+	const save = event.currentTarget.querySelector('[type="submit"]');
+	if (save.disabled) return;
+	save.disabled = true;
 	try {
 		await ui.saveInstructions(by("instructions-text").value);
-		instructionsDialog.close();
-		toast("已保存全局指令，下一轮起生效。");
+		flowerUI.feedback(by("instructions-feedback"), "已保存，下一轮起生效。");
 		void refreshContextUsage();
 	} catch (error) {
 		flowerUI.feedback(by("instructions-feedback"), modelError(error, "无法保存全局指令。"), "error");
+	} finally {
+		save.disabled = false;
 	}
 });
-by("settings").addEventListener("click", () => {
-	picker.hidePopover();
-	openModelSettings(by("model-picker-open"));
-});
+by("settings").addEventListener("click", () => openModelSettings(by("model-picker-open")));
 by("theme-open").addEventListener("click", () => openModelSettings(by("theme-open")));
 const settingsService = window.flowerSelect(by("settings-service-select"), "settings-service", "当前服务商", (id) => {
 	if (id) void changeOverview(() => ui.chooseModelService(id, state.modelRevision));
@@ -1909,23 +2027,17 @@ by("settings-discover").addEventListener("click", async () => {
 		flowerUI.feedback(by("settings-discovery"), modelError(error, "暂时无法读取模型。"), "error");
 	}
 });
-by("settings-close-dialog").addEventListener("click", () => by("model-dialog").close());
-by("close-settings").addEventListener("click", () => {
-	if (!state?.modelSettings) by("model-dialog").close();
+function cancelModelEditor() {
+	if (settingsSaving) return;
+	if (!state?.modelSettings) management.leave();
 	else returnToModelOverview();
-});
-by("model-dialog").addEventListener("cancel", (event) => {
-	if (!state?.modelSettings || by("model-form").hidden) return;
+}
+by("close-settings").addEventListener("click", cancelModelEditor);
+modelPage.addEventListener("keydown", (event) => {
+	if (event.key !== "Escape" || event.isComposing || by("model-form").hidden || document.querySelector(":popover-open"))
+		return;
 	event.preventDefault();
-	if (!settingsSaving) returnToModelOverview();
-});
-by("model-dialog").addEventListener("close", () => {
-	settingsDiscovery++;
-	capabilityRequest++;
-	by("api-key").value = "";
-	if (document.activeElement === document.body || by("model-dialog").contains(document.activeElement)) {
-		settingsFocus?.focus({ preventScroll: true });
-	}
+	cancelModelEditor();
 });
 by("model-form").addEventListener("submit", async (event) => {
 	event.preventDefault();
@@ -1954,8 +2066,9 @@ by("model-form").addEventListener("submit", async (event) => {
 								.map(([level]) => level),
 						},
 		});
-		if (settingsEditor === "setup" && editorFocus?.id !== "settings-service") {
-			by("model-dialog").close();
+		if (management.current() !== "models") return;
+		if (settingsEditor === "setup" && returnToTaskAfterSetup) {
+			management.leave(false);
 			by("prompt").focus({ preventScroll: true });
 		} else {
 			settingsSaving = false;
@@ -1988,6 +2101,7 @@ addMenu.addEventListener("click", (event) => {
 	addMenu.hidePopover();
 	addTrigger.focus({ preventScroll: true });
 	void action(async () => {
+		if (item.id === "composer-local-extensions") return automationSettings.openExtensions(addTrigger);
 		if (item.id === "composer-workspace") return ui.chooseWorkspace();
 		const id = session || (await ui.chooseWorkspace());
 		if (!id) return;
@@ -2005,11 +2119,12 @@ let creatingSession = false;
 by("new-session").addEventListener(
 	"click",
 	action(async () => {
-		// 仅复用真正空白的会话，避免重复点击堆出空会话，同时保留有内容的草稿。
-		if (!session || creatingSession || emptySession()) return by("prompt").focus();
+		const blank = state?.draft && !by("prompt").value && !state.draft.attachments?.length;
+		if (creatingSession) return;
 		creatingSession = true;
 		try {
-			await ui.newSession(session);
+			await goToConversation(() => (session && !blank ? ui.newSession(session) : undefined));
+			if (!session || blank) by("prompt").focus();
 		} finally {
 			creatingSession = false;
 		}
@@ -2037,7 +2152,7 @@ by("send").addEventListener(
 		const selected = session;
 		const prompt = by("prompt");
 		const text = prompt.value;
-		if (!text.trim()) return;
+		if (!text.trim() || firstSending.has(selected)) return;
 		if (!selected) {
 			await ui.chooseWorkspace();
 			return;
@@ -2045,16 +2160,27 @@ by("send").addEventListener(
 		if (!model) {
 			if (state?.modelSettings && !state.modelSettings.keyUnavailable)
 				picker.showPopover({ source: by("model-picker-open") });
-			else openModelSettings();
+			else openModelSettings(by("send"), true);
 			return;
 		}
-		prompt.value = "";
+		const first = state?.draft?.id === selected;
+		if (first) firstSending.add(selected);
+		else prompt.value = "";
 		prompt.focus({ preventScroll: true });
 		syncSend();
 		const timeline = timelineFor(selected);
 		timeline.submitting++;
+		const skill = draftSkills.get(selected);
 		try {
-			const record = await ui.submit(selected, text);
+			const record = await ui.submit(selected, text, first, skill?.id);
+			if (draftSkills.get(selected) === skill) {
+				draftSkills.delete(selected);
+				if (selected === session) renderDraftSkill();
+			}
+			if (first) {
+				if (session === selected && prompt.value === text) prompt.value = "";
+				else if (session !== selected && drafts.get(selected) === text) drafts.delete(selected);
+			}
 			if (record.queued) return;
 			const { requests } = timeline;
 			const current = requests.get(record.requestId);
@@ -2075,8 +2201,10 @@ by("send").addEventListener(
 			}
 			if (!drafts.get(selected)) drafts.set(selected, text);
 		} finally {
+			firstSending.delete(selected);
 			timeline.submitting--;
 			pruneTimelines();
+			if (selected === session) syncSend();
 		}
 	}),
 );
@@ -2084,7 +2212,11 @@ renderRequests();
 syncSend();
 const unsubscribe = ui.subscribe((message) => {
 	if (message.kind === "state") update(message.state);
-	else if (message.kind === "event") receive(message.event);
+	else if (message.kind === "native-panel") workspacePanel.receiveNative(message);
+	else if (message.kind === "automation-changed") {
+		workspacePanel.refreshTasks();
+		automationSettings.refresh();
+	} else if (message.kind === "event") receive(message.event);
 	else if (message.kind === "reasoning") receiveReasoning(message);
 	else if (message.kind === "reply-menu" && menuSelection) {
 		const text = menuSelection;
@@ -2096,6 +2228,9 @@ const unsubscribe = ui.subscribe((message) => {
 		toast(title ? `${title}：${message.text}` : message.text, { tone: message.tone });
 	}
 	// 点击系统通知后回到对应会话，与侧栏点击走同一路径。
-	else if (message.kind === "focus-session" && message.id !== session) action(() => ui.selectSession(message.id))();
+	else if (message.kind === "focus-session") {
+		if (management.current() || message.id !== session)
+			void action(() => goToConversation(() => (message.id === session ? undefined : ui.selectSession(message.id))))();
+	}
 });
 window.addEventListener("unload", unsubscribe, { once: true });

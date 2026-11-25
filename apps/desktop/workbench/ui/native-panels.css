@@ -1,0 +1,111 @@
+#native-panel-view,
+.native-panel-body {
+	min-height: 0;
+	min-width: 0;
+}
+
+#native-panel-view {
+	display: flex;
+	flex: 1;
+	outline: none;
+}
+
+#native-panel-view[hidden],
+.native-panel-body[hidden] {
+	display: none;
+}
+
+.native-panel-body {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+}
+
+.native-panel-toolbar {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 5px;
+	padding: 9px 11px;
+	border-bottom: 1px solid var(--line);
+}
+
+.native-panel-toolbar .button {
+	flex: none;
+}
+
+.native-panel-toolbar .icon-button {
+	width: 28px;
+	height: 28px;
+}
+
+.native-terminal-path {
+	min-width: 0;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.native-terminal-canvas {
+	min-height: 0;
+	flex: 1;
+	overflow: hidden;
+	margin: 8px 10px 2px;
+	background: var(--surface);
+}
+
+.native-terminal-frame {
+	display: block;
+	width: 100%;
+	height: 100%;
+	border: 0;
+}
+
+.native-browser-address {
+	min-width: 42px;
+	flex: 1;
+	height: 32px;
+	padding-inline: 8px;
+	border: 1px solid var(--line);
+	border-radius: 7px;
+	background: var(--surface);
+	color: var(--ink);
+	font: inherit;
+	font-size: 13px;
+}
+
+.native-panel-status {
+	margin: 0;
+	padding: 7px 11px;
+	overflow-wrap: anywhere;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.native-panel-status:empty {
+	display: none;
+}
+
+.native-panel-status[data-tone="error"] {
+	color: var(--danger);
+}
+
+.native-browser-viewport {
+	min-height: 0;
+	flex: 1;
+	overflow: hidden;
+	background: var(--surface);
+}
+
+.native-browser-empty {
+	margin: 20px 13px;
+	color: var(--muted);
+	font-size: 13px;
+}
+
+.native-browser-viewport[data-page="true"] .native-browser-empty {
+	display: none;
+}

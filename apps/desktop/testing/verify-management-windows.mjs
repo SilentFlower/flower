@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
+import { startMockModel } from "./mock-model.mjs";
 
 const [binary, output, tooling, linuxRepo] = process.argv.slice(2);
 assert(process.platform === "win32" && linuxRepo, "需要 Windows 程序、验收目录、Playwright 及独立 WSL 仓库。");
@@ -16,6 +17,10 @@ git("add", "--", "项目计划.md");
 await writeFile(join(workspace, "项目计划.md"), "# 项目计划\n\n周五提交初稿。\n");
 await writeFile(join(workspace, "验收清单.txt"), "核对交付日期。");
 const { _electron: electron } = createRequire(join(resolve(tooling), "package.json"))("playwright");
+const fixture = await startMockModel({
+	attachmentReply: () => ({ text: "管理验收记录完成。" }),
+	titleReply: (body) => ({ text: /<user_message>\n([^\n]+)/.exec(body)?.[1] ?? "验收会话" }),
+});
 let app;
 let page;
 async function boot() {
@@ -37,6 +42,13 @@ async function choose(path) {
 	}, path);
 	await by("workspace").click();
 }
+async function keepDraft(title) {
+	await page.waitForFunction(() => window.flower.state().then(({ draft }) => Boolean(draft)));
+	await by("prompt").fill(title);
+	await by("send").click();
+	await page.locator('.task[data-status="succeeded"]').waitFor();
+	await exact(`会话操作：${title}`).waitFor();
+}
 async function menu(label, operation) {
 	await exact(label).focus();
 	await exact(label).click();
@@ -56,7 +68,12 @@ async function gitPane() {
 }
 try {
 	await boot();
+	await page.evaluate(
+		(baseUrl) => window.flower.saveModel({ serviceId: "", baseUrl, modelId: "local-test", apiKey: "" }),
+		fixture.baseUrl,
+	);
 	await choose(workspace);
+	await keepDraft("桌面项目");
 	await gitPane();
 	const width = (await by("workspace-panel").boundingBox()).width;
 	await page.locator(".diff-number").first().waitFor();
@@ -85,6 +102,11 @@ try {
 	await rename("会话操作：桌面项目", "排期讨论");
 	await menu("会话操作：排期讨论", "pin");
 	await by("new-session").click();
+	await page.waitForFunction(() => window.flower.state().then(({ draft }) => Boolean(draft)));
+	assert.equal(await by("prompt").inputValue(), "");
+	assert.equal(await page.locator(".session-row").count(), 1);
+	assert.equal(await exact("预览附件：会议记录.txt").count(), 0);
+	await keepDraft("桌面项目 · 新会话");
 	await page.waitForFunction(() => document.querySelectorAll(".session-row").length === 2);
 	assert.equal(
 		await page
@@ -98,6 +120,7 @@ try {
 	await rename("工作区操作：桌面项目", "桌面工作台");
 	await menu("工作区操作：桌面工作台", "pin");
 	await choose(linuxRepo);
+	await keepDraft("WSL 工作区验收");
 	await gitPane();
 	await by("workspace-panel-close").click();
 	assert.equal(await page.locator(".workspace-group-name").first().textContent(), "桌面工作台");
@@ -124,6 +147,9 @@ try {
 	await by("sidebar-apply").click();
 	await exact("会话操作：桌面项目 · 新会话").waitFor({ state: "detached" });
 	await menu("工作区操作：桌面工作台", "create");
+	await page.waitForFunction(() => window.flower.state().then(({ draft }) => Boolean(draft)));
+	assert.equal(await exact("会话操作：桌面工作台 · 新会话").count(), 0);
+	await keepDraft("桌面工作台 · 新会话");
 	await exact("会话操作：桌面工作台 · 新会话").waitFor();
 	await menu("工作区操作：桌面工作台", "delete");
 	assert((await by("sidebar-detail").textContent()).includes("1 条会话"));
@@ -157,4 +183,5 @@ try {
 	);
 } finally {
 	await app?.close();
+	await fixture.close();
 }

@@ -1,10 +1,11 @@
 (() => {
-	/** 创建当前会话的只读工作区面板。
+	/** 创建当前会话的右栏工作台。
 	 * @param {object} host 工作台的受限桌面接口
+	 * @param {object} menus 菜单的定位与键盘行为
 	 * @returns {object} 用于绑定会话和从消息中预览交付物的面板接口
 	 */
-	function createWorkspacePanel(host) {
-		const { element, icon, button } = window.flowerUI;
+	function createWorkspacePanel(host, menus) {
+		const { element, icon, button, feedback } = window.flowerUI;
 		const by = (id) => document.getElementById(id);
 		const workbench = by("workbench");
 		const conversation = document.querySelector(".conversation");
@@ -18,6 +19,17 @@
 		const content = by("panel-content");
 		const location = by("panel-location");
 		const view = by("workspace-panel-view");
+		const native = window.createNativePanels(host);
+		const nativeView = by("native-panel-view");
+		const tasksView = by("background-tasks");
+		const tasks = window.createBackgroundTasks(host, tasksView);
+		const toolTrigger = by("panel-more-tools");
+		const toolMenu = by("panel-tool-menu");
+		const gitDialog = by("git-commit-dialog");
+		const gitForm = by("git-commit-form");
+		const gitMessage = by("git-commit-message");
+		const gitConfirm = gitForm.querySelector("[type=submit]");
+		const gitFeedback = by("git-commit-status");
 		window.flowerUI.softScroll(view);
 		const narrow = matchMedia("(max-width: 980px)");
 		const previewAdd = by("panel-reference");
@@ -30,6 +42,9 @@
 		// 回复中的文件名对应多个同名文件时的候选：{ name, paths }。
 		let choices;
 		let mode = "files";
+		let sideVisible = false;
+		let targetTask;
+		let gitCandidate;
 		let change;
 		const collator = new Intl.Collator(undefined, { numeric: true });
 		let revision = 0;
@@ -45,6 +60,7 @@
 		let fitStamp = 0;
 		let preferredWidth = 0;
 		let drag;
+		const labels = { terminal: "终端", browser: "浏览器", tasks: "后台任务" };
 
 		function status(text = "", error = false) {
 			const line = by("panel-status");
@@ -281,13 +297,40 @@
 
 		function setMode(next) {
 			mode = next;
+			const tool = labels[mode];
 			by("panel-files").setAttribute("aria-pressed", String(mode === "files"));
 			by("panel-git").setAttribute("aria-pressed", String(mode === "git"));
 			by("panel-side").setAttribute("aria-pressed", String(mode === "side"));
-			// 侧边追问有自己的消息区与输入框，文件浏览区随之隐藏。
-			view.hidden = mode === "side";
+			for (const id of ["panel-files", "panel-git"]) by(id).hidden = Boolean(tool);
+			by("panel-side").hidden = Boolean(tool) || !sideVisible;
+			by("panel-current-tool").textContent = tool || "";
+			by("panel-current-tool").hidden = !tool;
+			view.hidden = !["files", "git"].includes(mode);
 			by("side-chat-view").hidden = mode !== "side";
+			nativeView.hidden = !["terminal", "browser"].includes(mode);
+			tasksView.hidden = mode !== "tasks";
 		}
+		toolTrigger.onclick = () => {
+			if (toolMenu.matches(":popover-open")) return toolMenu.hidePopover();
+			toolMenu.querySelector('[data-panel-mode="side"]').hidden = !sideVisible;
+			for (const item of toolMenu.querySelectorAll("[data-panel-mode]"))
+				item.setAttribute("aria-checked", String(item.dataset.panelMode === mode));
+			menus.showMenu(toolMenu, toolTrigger);
+			toolMenu.querySelector('[aria-checked="true"]:not([hidden])')?.focus();
+		};
+		toolMenu.addEventListener("toggle", () => {
+			toolTrigger.setAttribute("aria-expanded", String(toolMenu.matches(":popover-open")));
+		});
+		toolMenu.addEventListener("keydown", menus.menuNavigation);
+		toolMenu.addEventListener("click", (event) => {
+			const choice = event.target.closest("button[data-panel-mode]")?.dataset.panelMode;
+			if (!choice) return;
+			toolMenu.hidePopover();
+			toolTrigger.focus();
+			setMode(choice);
+			void load();
+		});
+		by("panel-current-tool").onclick = () => toolTrigger.click();
 		for (const [id, next] of [
 			["panel-files", "files"],
 			["panel-git", "git"],
@@ -391,6 +434,21 @@
 			branch.append(icon("git"), element("strong", "", result.branch));
 			content.append(branch);
 			if (!result.total) return status("当前工作区没有变更。");
+			if (result.entries.some(({ group }) => group === "staged")) {
+				const commit = button(
+					"提交暂存的变更",
+					() => {
+						gitCandidate = { id: selected.id, control: commit };
+						gitMessage.value = "";
+						by("git-commit-branch").textContent = result.branch;
+						feedback(gitFeedback, "");
+						gitDialog.showModal();
+						gitMessage.focus();
+					},
+					"quiet git-commit-open",
+				);
+				branch.append(commit);
+			}
 			for (const [group, title] of [
 				["staged", "已暂存"],
 				["working", "未暂存"],
@@ -420,14 +478,67 @@
 						element("span", "git-state", entry.code),
 					);
 					row.dataset.code = entry.code;
-					content.append(row);
+					const action = group === "staged" ? "unstage" : "stage";
+					const label = group === "staged" ? "取消暂存" : "暂存";
+					const item = element("div", "git-operation-row");
+					const write = button(
+						label,
+						async () => {
+							if (stamp !== revision) return;
+							write.disabled = true;
+							try {
+								await host.gitStage(selected.id, entry.path, action);
+								if (stamp === revision) await load();
+							} catch (error) {
+								if (stamp !== revision) return;
+								write.disabled = false;
+								status(message(error), true);
+							}
+						},
+						"quiet git-operation",
+					);
+					write.setAttribute("aria-label", `${label}：${entry.path}`);
+					item.append(row, write);
+					content.append(item);
 				}
 			}
 			if (result.total > result.entries.length) status(`显示前 ${result.entries.length} 项，共 ${result.total} 项变更。`);
 		}
 
+		by("git-commit-cancel").onclick = () => gitDialog.close();
+		gitDialog.addEventListener("close", () => {
+			if (gitCandidate?.control.isConnected) gitCandidate.control.focus();
+		});
+		gitForm.addEventListener("submit", async (event) => {
+			event.preventDefault();
+			const id = gitCandidate?.id;
+			const title = gitMessage.value.trim();
+			if (!title || gitConfirm.disabled || id !== selected?.id) return;
+			gitConfirm.disabled = true;
+			feedback(gitFeedback, "");
+			try {
+				const result = await host.gitCommit(id, title);
+				if (result && id === selected?.id) {
+					gitDialog.close();
+					await load();
+					status(`已提交 ${result.commit.slice(0, 10)}。`);
+				}
+			} catch (error) {
+				feedback(gitFeedback, message(error), "error");
+			} finally {
+				gitConfirm.disabled = false;
+			}
+		});
+
+		let suspended = false;
+		let pendingLoad = false;
+
 		async function load(restoreName, more = false) {
 			const stamp = ++revision;
+			if (suspended) {
+				pendingLoad = true;
+				return;
+			}
 			if (more) {
 				view.focus({ preventScroll: true });
 				content.querySelector(".panel-more").disabled = true;
@@ -439,8 +550,18 @@
 				content.replaceChildren();
 				view.scrollTop = 0;
 			}
+			if (panel.hidden || !["terminal", "browser"].includes(mode)) native.hide();
+			if (panel.hidden || mode !== "tasks") tasks.hide();
 			if (panel.hidden) return;
 			previewAdd.hidden = true;
+			if (labels[mode]) {
+				by("panel-title").textContent = labels[mode];
+				if (mode === "tasks") {
+					tasks.show(targetTask);
+					targetTask = undefined;
+				} else native.show(mode, selected);
+				return;
+			}
 			if (mode === "side") {
 				status();
 				by("panel-title").textContent = "侧边追问";
@@ -498,10 +619,10 @@
 		}
 
 		function overlay() {
-			const drawer = !panel.hidden && narrow.matches;
-			const covered = drawer || (!panel.hidden && panel.dataset.maximized === "true");
+			const drawer = !suspended && !panel.hidden && narrow.matches;
+			const covered = drawer || (!suspended && !panel.hidden && panel.dataset.maximized === "true");
 			by("workspace-panel-scrim").hidden = !drawer;
-			conversation.inert = covered;
+			conversation.inert = suspended || covered;
 			document.querySelector(".sidebar").inert = drawer;
 			if (covered && !panel.contains(document.activeElement)) by("workspace-panel-close").focus({ preventScroll: true });
 		}
@@ -812,6 +933,27 @@
 		});
 
 		return {
+			/** 打开右栏后台任务并定位指定记录。@param id 可选任务 ID @returns 无 */
+			showTasks(id) {
+				setMode("tasks");
+				targetTask = id;
+				if (panel.hidden) display(true);
+				else void load();
+			},
+			/** 临时切走管理页面时保留面板 DOM 和正在运行的终端。@param {boolean} value 是否显示管理内容 @returns {void} */
+			setSuspended(value) {
+				if (suspended === value) return;
+				suspended = value;
+				native.refreshVisibility();
+				overlay();
+				if (suspended || !pendingLoad) return;
+				pendingLoad = false;
+				void load();
+			},
+			/** 刷新可见的任务面板。@returns 无 */
+			refreshTasks: tasks.refresh,
+			/** 处理主进程的当前工具事件。@param event 宿主事件 @returns 无 */
+			receiveNative: native.receive,
 			/** 绑定当前会话并清除上一会话的目录和预览。@param {object} next 当前选中会话 @param {boolean} initialized 工作台就绪状态 @returns {void} */
 			setSession(next, initialized) {
 				const ids = new Set((next?.attachments ?? []).map((ref) => ref.id));
@@ -832,6 +974,7 @@
 					return;
 				}
 				change = undefined;
+				if (gitDialog.open) gitDialog.close();
 				attachment = undefined;
 				choices = undefined;
 				selected = next;
@@ -858,7 +1001,8 @@
 			 * @returns {void}
 			 */
 			sideAvailable(available) {
-				by("panel-side").hidden = !available;
+				sideVisible = available;
+				by("panel-side").hidden = !available || Boolean(labels[mode]);
 				if (available || mode !== "side") return;
 				setMode("files");
 				void load();

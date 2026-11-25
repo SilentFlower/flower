@@ -211,7 +211,11 @@ try {
 	await page.locator("#settings-instructions").click();
 	await page.locator("#instructions-text").fill("结论写在开头。");
 	await page.getByRole("button", { name: "保存" }).last().click();
-	await page.locator("#instructions-dialog").waitFor({ state: "hidden" });
+	await page
+		.locator("#instructions-feedback")
+		.getByText(/已保存/)
+		.waitFor();
+	await page.locator("#settings-close-dialog").click();
 	await send("按口径再总结一次");
 	await task("按口径再总结一次").locator('.status[data-state="succeeded"]').waitFor({ timeout: 20000 });
 	assert.match(systems.at(-1), /【个人全局指令】\n结论写在开头。[\s\S]*【工作区约定（FLOWER\.md）】\n# 采购部口径/);
@@ -231,6 +235,9 @@ try {
 	await page.locator("#new-session").click();
 	await until(async () => (await state()).selected !== sessionId);
 	const blank = (await state()).selected;
+	assert.equal((await state()).draft.id, blank);
+	await send("准备一条可删除的验收会话");
+	await task("准备一条可删除的验收会话").locator('.status[data-state="succeeded"]').waitFor();
 	assert.equal(await page.locator("#session-search-toggle").innerText(), "搜索");
 	await page.keyboard.press("Control+K");
 	assert.equal(await page.locator("#session-search").getAttribute("placeholder"), "搜索标题或内容…");
