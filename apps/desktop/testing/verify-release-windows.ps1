@@ -9,8 +9,10 @@ $process = $null
 try {
     [IO.Directory]::CreateDirectory($install) | Out-Null
     $zip = Join-Path $Assets "Flower-Desktop-$Version-win32-x64-portable.zip"
-    & tar.exe -xf $zip -C $install
-    if ($LASTEXITCODE -ne 0) { throw "Windows 首装 ZIP 解压失败" }
+    # 按 ZIP 的 UTF-8 文件名标记解压，覆盖非中文 Windows 上的中文条目。
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $install)
+    if (!(Test-Path -LiteralPath (Join-Path $install '使用说明.txt') -PathType Leaf)) { throw "Windows 首装 ZIP 缺少中文使用说明" }
     if ((Get-Content -Raw -LiteralPath (Join-Path $install 'current.txt')).Trim() -ne $Version) { throw "启动版本不符" }
     $entry = Join-Path $install 'Flower Desktop.exe'
     Start-Process -FilePath $entry -ArgumentList ('"--user-data-dir=' + $profile + '"') -WorkingDirectory $install
