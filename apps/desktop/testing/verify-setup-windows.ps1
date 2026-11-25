@@ -8,7 +8,7 @@ $default = Join-Path $env:LOCALAPPDATA 'Programs/Flower Desktop'
 $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Flower Desktop.lnk'
 $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Flower Desktop.lnk'
 if ((Test-Path $default) -or (Test-Path $desktop) -or (Test-Path $menu)) { throw '本项验收需要干净的测试账户' }
-$shell = New-Object -ComObject WScript.Shell
+$shell = New-Object -ComObject Shell.Application
 function Run-Installer($Path, $Options = '') {
     (Start-Process -FilePath $Path -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART $Options" -Wait -PassThru).ExitCode
 }
@@ -27,18 +27,18 @@ try {
     $pointer = Join-Path $root 'current.txt'
     foreach ($link in @($desktop, $menu)) {
         if (!(Test-Path -LiteralPath $link -PathType Leaf)) { throw "缺少快捷方式 $link，程序位置 $entry" }
-        $shortcut = $shell.CreateShortcut($link)
-        $target = [IO.Path]::GetFullPath($shortcut.TargetPath)
-        $iconPath = ($shortcut.IconLocation -replace ',\s*-?\d+$', '').Trim('"')
-        # Shell 可将与目标相同的图标记录为默认索引，此时直接使用目标 EXE 的资源。
+        $item = $shell.Namespace([IO.Path]::GetDirectoryName($link)).ParseName([IO.Path]::GetFileName($link))
+        $target = $item.ExtendedProperty('System.Link.TargetParsingPath')
+        $iconPath = ''
+        $index = $item.GetLink.GetIconLocation([ref]$iconPath)
         if (!$iconPath) { $iconPath = $target }
         $iconPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($iconPath))
-        if ($target -ne $entry -or $iconPath -ne $entry) {
+        if ($target -ne $entry -or $iconPath -ne $entry -or $index -ne 0) {
             throw "快捷方式 $link 实际目标 [$target]、图标 [$iconPath]，预期 [$entry]"
         }
     }
     if ((Get-Content -Raw $pointer).Trim() -ne $Version) { throw '版本指针错误' }
-    Start-Process -FilePath ($shell.CreateShortcut($desktop).TargetPath) -ArgumentList ('"--user-data-dir=' + $profile + '"')
+    Start-Process -FilePath $desktop -ArgumentList ('"--user-data-dir=' + $profile + '"')
     $deadline = (Get-Date).AddSeconds(60)
     do {
         Start-Sleep -Milliseconds 350

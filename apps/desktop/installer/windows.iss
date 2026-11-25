@@ -334,15 +334,18 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Link: String;
-  Shell, Shortcut: Variant;
+  Shell, Folder, Shortcut: Variant;
 begin
   if (CurStep <> ssPostInstall) or WizardIsTaskSelected('desktopicon') then Exit;
   Link := ExpandConstant('{userdesktop}\Flower Desktop.lnk');
   if not FileExists(Link) then Exit;
   try
-    Shell := CreateOleObject('WScript.Shell');
-    Shortcut := Shell.CreateShortcut(Link);
-    if CompareText(Shortcut.TargetPath, ExpandConstant('{app}\Flower Desktop.exe')) = 0 then
+    { 通过 Unicode Shell 属性读取目标，英文 Windows 也能处理中文路径。 }
+    Shell := CreateOleObject('Shell.Application');
+    Folder := Shell.Namespace(ExtractFileDir(Link));
+    Shortcut := Folder.ParseName(ExtractFileName(Link));
+    if CompareText(Shortcut.ExtendedProperty('System.Link.TargetParsingPath'),
+       ExpandConstant('{app}\Flower Desktop.exe')) = 0 then
       DeleteFile(Link);
   except
     Log('无法核实桌面快捷方式，保留原文件。');
