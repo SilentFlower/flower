@@ -323,6 +323,8 @@ window.flowerConversationActions = (() => {
 		const panel = by("desktop-update");
 		const setting = by("settings-update");
 		const badge = by("desktop-update-ready");
+		const badgeLabel = by("desktop-update-label");
+		const miniProgress = by("desktop-update-mini-progress");
 		const title = by("desktop-update-title");
 		const status = by("desktop-update-feedback");
 		const current = by("desktop-update-version");
@@ -346,7 +348,7 @@ window.flowerConversationActions = (() => {
 			error: "更新失败，请重试。",
 			installing: "正在安装更新…",
 		};
-		const percentage = new Intl.NumberFormat("zh-CN", { style: "percent" });
+		const megabytes = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
 		let state;
 		let pending = false;
 		let actionError = "";
@@ -359,8 +361,25 @@ window.flowerConversationActions = (() => {
 				state ?? {};
 			const nativeExit = installPolicy === "on-exit";
 			const ready = phase === "ready";
-			badge.hidden = !ready;
-			setting.classList.toggle("has-desktop-update", ready);
+			const downloading = phase === "downloading";
+			const interrupted = phase === "error" && Boolean(version);
+			const knownSize = Number.isFinite(received) && Number.isFinite(size) && size > 0;
+			const percent = knownSize ? Math.floor((100 * Math.min(size, Math.max(0, received))) / size) : undefined;
+			// 字节收齐后仍须校验和准备安装，只有 ready 才能向用户提供安装操作。
+			const preparing = downloading && percent === 100;
+			const label = ready ? "更新就绪" : interrupted ? "更新中断" : preparing ? "正在准备更新" : "正在下载更新";
+			badge.hidden = !(ready || downloading || interrupted);
+			badge.dataset.phase = phase ?? "";
+			showText(badgeLabel, downloading && !preparing && knownSize ? `下载更新 ${percent}%` : label);
+			badge.title = `${version ? `Flower ${version} · ` : ""}${label}，查看应用更新`;
+			miniProgress.hidden = !downloading;
+			if (downloading) {
+				for (const bar of [miniProgress, progress]) {
+					if (percent === undefined) bar.removeAttribute("value");
+					else bar.value = percent;
+				}
+			}
+			setting.classList.toggle("has-desktop-update", ready || downloading || interrupted);
 			if (panel.hidden) return;
 
 			showText(
@@ -369,19 +388,24 @@ window.flowerConversationActions = (() => {
 			);
 			const nativeDescription =
 				nativeExit && phase === "unavailable" ? "此构建用于本机预演。正式版会在这里检查更新。" : undefined;
-			const message = actionError || error || nativeDescription || descriptions[phase] || "正在读取更新状态…";
+			const message =
+				actionError ||
+				error ||
+				nativeDescription ||
+				(preparing && "下载完成，正在准备安装…") ||
+				descriptions[phase] ||
+				"正在读取更新状态…";
 			feedback(status, message, actionError || error || phase === "error" ? "error" : "neutral");
 			candidate.hidden = !version;
 			showText(release, version ? `新版本 ${version}` : "");
 			notes.hidden = !state?.notes;
 			showText(notes, state?.notes ?? "");
-			transfer.hidden = phase !== "downloading";
-			if (!transfer.hidden) {
-				const ratio = Number.isFinite(received) && size > 0 ? Math.max(0, Math.min(1, received / size)) : undefined;
-				if (ratio === undefined) progress.removeAttribute("value");
-				else progress.value = 100 * ratio;
-				by("desktop-update-transfer-label").textContent = ratio === undefined ? "" : percentage.format(ratio);
-			}
+			transfer.hidden = !downloading;
+			if (downloading)
+				showText(
+					by("desktop-update-transfer-label"),
+					knownSize ? `${megabytes.format(received / 1048576)} / ${megabytes.format(size / 1048576)} MiB · ${percent}%` : "",
+				);
 			check.hidden = (ready && (nativeExit || !error)) || phase === "installing" || phase === "unavailable";
 			check.disabled = pending || !phase || phase === "checking" || phase === "downloading";
 			check.textContent = error || phase === "error" ? "重试" : "检查更新";

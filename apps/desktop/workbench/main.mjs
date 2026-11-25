@@ -203,6 +203,7 @@ export function launchWorkbench() {
 	const attention = createAttention();
 	// 系统通知在被点击前需要保持引用，否则可能被回收而丢失点击回调。
 	const notices = new Set();
+	let notifiedUpdateVersion;
 	let tray;
 	let quitRequested = false;
 	let closeConfirmed = false;
@@ -269,6 +270,21 @@ export function launchWorkbench() {
 	}
 	function updateBusy() {
 		return !initialized || pendingWork() > 0;
+	}
+	/** 更新进度只刷新更新控件。每次运行对同一个就绪版本提醒一次。 */
+	function announceUpdate() {
+		const update = updateState();
+		send({ kind: "desktop-update", update });
+		if (exiting || update.phase !== "ready" || !update.version || notifiedUpdateVersion === update.version) return;
+		notifiedUpdateVersion = update.version;
+		if (!window || window.isDestroyed()) return;
+		if (tray && (!window.isVisible() || window.isMinimized())) {
+			if (Notification.isSupported()) {
+				showNotice("Flower Desktop 更新就绪", `版本 ${update.version} 已下载，点击选择安装时间。`, () =>
+					send({ kind: "open-update" }),
+				);
+			}
+		} else send({ kind: "update-ready", version: update.version });
 	}
 	function pendingWork() {
 		return (
@@ -738,14 +754,26 @@ export function launchWorkbench() {
 		window.flashFrame(true);
 		if (!Notification.isSupported()) return;
 		const title = workbench.sessions.find(({ id }) => id === session)?.title || "Flower Desktop";
+		showNotice(title, body, () => send({ kind: "focus-session", id: session }));
+	}
+
+	/**
+	 * 保留系统通知直到点击、关闭或投递失败。激活通知时先恢复工作台。
+	 * @param {string} title 标题
+	 * @param {string} body 正文
+	 * @param {() => void} activate 恢复窗口后打开对应内容
+	 * @returns {void}
+	 */
+	function showNotice(title, body, activate) {
 		const notice = new Notification({ title, body });
 		notices.add(notice);
 		notice.once("close", () => notices.delete(notice));
+		notice.once("failed", () => notices.delete(notice));
 		notice.once("click", () => {
 			notices.delete(notice);
 			if (!window || window.isDestroyed()) return;
 			showWorkbench();
-			send({ kind: "focus-session", id: session });
+			activate();
 		});
 		notice.show();
 	}
@@ -2672,7 +2700,7 @@ export function launchWorkbench() {
 				directory,
 				available: true,
 				findInstallation: () => installation,
-				notify: announce,
+				notify: announceUpdate,
 				busy: updateBusy,
 				storage: safeStorage,
 				fetcher:
@@ -2690,7 +2718,7 @@ export function launchWorkbench() {
 				native: autoUpdater,
 				config: updateChannel,
 				version: app.getVersion(),
-				notify: announce,
+				notify: announceUpdate,
 				busy: updateBusy,
 				beforeRestart: () => {
 					macRestartHandoff = true;

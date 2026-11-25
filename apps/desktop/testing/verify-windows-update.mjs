@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { _electron as electron } from "playwright-core";
 
@@ -29,16 +30,29 @@ assert.equal(feed.download, `Flower-Desktop-${feed.version}-win32-x64.zip`);
 const archive = join(directory, feed.download);
 assert.equal((await stat(archive)).size, feed.size);
 const requests = [];
-const server = createServer((req, res) => {
+const resumeTransfer = Promise.withResolvers();
+
+/** 分段发送并留出回报间隔，确保回环网络足够快时也能操作下载中的页面。 */
+async function* archiveChunks() {
+	const split = Math.floor(feed.size / 3);
+	yield* createReadStream(archive, { end: split - 1 });
+	await delay(200);
+	yield* createReadStream(archive, { start: split, end: split * 2 - 1 });
+	await resumeTransfer.promise;
+	yield* createReadStream(archive, { start: split * 2 });
+}
+
+const server = createServer(async (req, res) => {
 	requests.push(req.url);
 	if (req.method !== "GET") return res.writeHead(405).end();
 	if (req.url === origin.pathname) return res.writeHead(200, { "content-type": "application/json" }).end(feedBytes);
 	if (req.url !== `/${feed.download}`) return res.writeHead(404).end();
 	res.writeHead(200, { "content-type": "application/zip", "content-length": feed.size });
-	const stream = createReadStream(archive);
-	stream.on("error", () => res.destroy());
-	res.on("close", () => stream.destroy());
-	stream.pipe(res);
+	try {
+		await pipeline(archiveChunks(), res);
+	} catch {
+		res.destroy();
+	}
 });
 const profile = await mkdtemp(join(tmpdir(), "flower-win-upgrade-"));
 let app;
@@ -68,7 +82,36 @@ try {
 	await page.locator("#instructions-text").fill(note);
 	await page.locator("#instructions-form [type=submit]").click();
 	await page.waitForFunction(async (text) => (await window.flower.state()).instructions === text, note);
-	await page.locator("#settings-update").click();
+	await page.locator("#settings-close-dialog").click();
+	const badge = page.locator("#desktop-update-ready");
+	await badge.filter({ hasText: /下载更新 [1-9]\d?%/ }).waitFor();
+	await badge.click();
+	assert(await page.locator("#desktop-update-progress").isVisible());
+	assert.match(await page.locator("#desktop-update-transfer-label").innerText(), /MiB · \d+%/);
+	await page.locator("#settings-close-dialog").click();
+	await app.evaluate(({ BrowserWindow, Notification }) => {
+		// 隔离桌面只截取投递，不将测试版系统通知送进用户的通知中心。
+		globalThis.flowerUpdateNotices = [];
+		Notification.prototype.show = function () {
+			globalThis.flowerUpdateNotices.push(this);
+		};
+		BrowserWindow.getAllWindows()[0].close();
+	});
+	resumeTransfer.resolve();
+	await badge.filter({ hasText: "更新就绪" }).waitFor({ state: "attached", timeout: 180000 });
+	assert(
+		await app.evaluate(({ BrowserWindow }) => {
+			const notices = globalThis.flowerUpdateNotices;
+			if (
+				notices.length !== 1 ||
+				notices[0].title !== "Flower Desktop 更新就绪" ||
+				BrowserWindow.getAllWindows()[0].isVisible()
+			)
+				return false;
+			notices[0].emit("click");
+			return BrowserWindow.getAllWindows()[0].isVisible();
+		}),
+	);
 	await page.locator("#desktop-update-schedule").waitFor({ timeout: 180000 });
 	await page.locator("#desktop-update-schedule").click();
 	await page.waitForFunction(async () => (await window.flower.state()).desktopUpdate.scheduled);
@@ -90,6 +133,7 @@ try {
 	assert(requests.includes(origin.pathname) && requests.includes(`/${feed.download}`));
 	console.log(`Windows 原生升级 ${before} → ${feed.version} 已安装，资料回读成功`);
 } finally {
+	resumeTransfer.resolve();
 	try {
 		await app?.close();
 	} finally {

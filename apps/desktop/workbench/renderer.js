@@ -2212,7 +2212,13 @@ renderRequests();
 syncSend();
 const unsubscribe = ui.subscribe((message) => {
 	if (message.kind === "state") update(message.state);
-	else if (message.kind === "native-panel") workspacePanel.receiveNative(message);
+	else if (message.kind === "desktop-update") conversationActions.syncUpdate(message.update);
+	else if (message.kind === "open-update") management.show("update");
+	else if (message.kind === "update-ready" && management.current() !== "update") {
+		toast(`Flower ${message.version} 已下载，可以安装了。`, {
+			action: { label: "查看更新", run: () => management.show("update") },
+		});
+	} else if (message.kind === "native-panel") workspacePanel.receiveNative(message);
 	else if (message.kind === "automation-changed") {
 		workspacePanel.refreshTasks();
 		automationSettings.refresh();

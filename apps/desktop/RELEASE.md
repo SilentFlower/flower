@@ -35,6 +35,8 @@ macOS 免费分发版提供 `*-darwin-arm64-manual.dmg`（Apple Silicon）和 `*
 
 ## 更新与重试
 
+Windows 版本的更新说明可写在 `apps/desktop/release-notes/X.Y.Z.txt`。发行作业将对应版本的文字放入稳定清单，旧客户端可在「应用更新」中阅读。
+
 Windows 首装 ZIP 含顶层启动器、版本指针及运行目录。稳定频道的 Windows 更新 ZIP 只含一个版本的载荷。0.1.4 客户端继续读取 `flower-desktop-stable/flower-desktop-update.json`。应用自动下载校验，用户可立即重启或安排退出安装。流水线从首装 ZIP 启动真实程序，并用两个回环版本演练旧应用后台下载、退出安装和重开资料。
 
 Mac 的 DMG 用于首次安装。应用内由 Electron 的原生 Squirrel 更新器按架构读取 `flower-desktop-mac-arm64.json` 或 `flower-desktop-mac-x64.json`，下载同一架构且签名匹配的应用 ZIP。正式标签构建会校验签名、公证票据，另以隔离身份演练两版签名应用的真实升级。原生更新就绪后，可立即重启或在正常退出时应用。

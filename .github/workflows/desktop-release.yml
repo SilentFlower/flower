@@ -84,7 +84,10 @@ jobs:
           $flat = Join-Path $env:RUNNER_TEMP flat
           node apps/desktop/scripts/package-windows.mjs (Join-Path $downloads $zip) (Join-Path $downloads SHASUMS256.txt) $flat --version $env:VERSION
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/desktop/scripts/release-windows.mjs $flat (Join-Path $env:RUNNER_TEMP windows-release)
+          $notesFile = Join-Path apps/desktop/release-notes "$env:VERSION.txt"
+          $notesArgs = @()
+          if (Test-Path -LiteralPath $notesFile -PathType Leaf) { $notesArgs = @('--notes', $notesFile) }
+          node apps/desktop/scripts/release-windows.mjs $flat (Join-Path $env:RUNNER_TEMP windows-release) @notesArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: 从首装 ZIP 启动实际版本
         shell: pwsh

@@ -1,6 +1,7 @@
 .workbench[data-management] > .conversation,
 .workbench[data-management] > #workspace-panel,
-.workbench[data-management] > .desktop-chrome :is(#title, #conversation-actions-open, #desktop-update-ready),
+.workbench[data-management] > .desktop-chrome :is(#title, #conversation-actions-open),
+.workbench[data-management="update"] #desktop-update-ready,
 .management-page [hidden] {
 	display: none;
 }

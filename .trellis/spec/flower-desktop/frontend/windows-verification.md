@@ -89,3 +89,5 @@ cmd.exe /c "python D:\…\flower-ui-private-desktop.py D:\…\run.log cmd /c D:\
 Windows 首装运行 `verify-release-windows.ps1 -Version <版本> -Assets <制品目录>`。再用 `node apps/desktop/testing/verify-tray-windows.mjs <受管理的安装目录>` 验证实际运行文件和启动器的品牌图标、关窗后的任务完成、恢复窗口、取消退出和真正退出。在隔离桌面使用真实 Electron 托盘并以程序方式触发左键和菜单回调。
 
 升级运行 `node apps/desktop/testing/verify-windows-update.mjs <旧版安装目录> <新版更新目录> <回环清单URL>`。Windows 的 `TEMP` 可含 8.3 用户名，工作台向启动器传入资料目录的真实绝对路径。验收先安排更新并关闭窗口，确认仍使用原版，再显式退出并等待切换版本，最后回读资料。完整的三端验收和稳定频道规则见[开源发版规范](./public-release.md)。
+
+下载期间在顶栏读取真实百分比，并点击进入更新设置核对字节换算。回环服务分段发送，待测试窗口收到托盘后才发送剩余数据。此时截取一次 Electron 原生通知，触发其点击回调应恢复工作台并打开更新详情，随后由用户安排安装。由 WSL 制作测试包时，应在运行客户端的 Windows 主机上选取空闲回环端口。

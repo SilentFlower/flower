@@ -166,7 +166,10 @@
 		<header class="desktop-chrome">
 			<div class="chrome-content">
 				<h1 class="wordmark" id="title" hidden>Flower Desktop</h1>
-				<button type="button" class="button quiet" id="desktop-update-ready" aria-controls="desktop-update" hidden><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg>更新就绪</button>
+				<button type="button" class="button quiet" id="desktop-update-ready" aria-controls="desktop-update" hidden>
+					<svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg><span id="desktop-update-label"></span>
+					<progress id="desktop-update-mini-progress" max="100" aria-hidden="true" hidden></progress>
+				</button>
 				<button type="button" class="button quiet icon-button" id="conversation-actions-open" aria-label="导出和分享会话" title="导出和分享会话" aria-haspopup="menu" aria-controls="conversation-actions" hidden><svg class="icon" aria-hidden="true"><use href="#icon-more"/></svg></button>
 			</div>
 		</header>

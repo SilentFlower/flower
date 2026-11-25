@@ -238,6 +238,9 @@
 }
 #desktop-update-ready {
 	display: inline-flex;
+	position: relative;
+	overflow: hidden;
+	align-items: center;
 	gap: 5px;
 	margin-inline-start: auto;
 	min-height: 28px;
@@ -255,6 +258,22 @@
 #desktop-update-ready .icon {
 	width: 13px;
 	height: 13px;
+}
+#desktop-update-ready[data-phase="downloading"] {
+	background: var(--surface);
+	border-color: var(--line);
+	color: var(--ink);
+	font-variant-numeric: tabular-nums;
+}
+#desktop-update-ready[data-phase="downloading"] .icon {
+	transform: rotate(180deg);
+	color: var(--accent);
+}
+#desktop-update-mini-progress {
+	position: absolute;
+	inset: auto 0 0;
+	width: 100%;
+	height: 2px;
 }
 #settings-update.has-desktop-update::after {
 	content: "";
@@ -275,10 +294,28 @@
 #desktop-update-progress {
 	min-width: 0;
 	flex: 1;
+	height: 5px;
+}
+:is(#desktop-update-progress, #desktop-update-mini-progress) {
+	appearance: none;
+	border: 0;
+	border-radius: 99px;
+	overflow: hidden;
+}
+:is(#desktop-update-progress, #desktop-update-mini-progress)::-webkit-progress-bar {
+	background: var(--line);
+}
+:is(#desktop-update-progress, #desktop-update-mini-progress)::-webkit-progress-value {
+	border-radius: inherit;
+	background: var(--accent);
+}
+:is(#desktop-update-progress, #desktop-update-mini-progress):indeterminate {
+	appearance: auto;
 	accent-color: var(--accent);
 }
 #desktop-update-transfer-label {
 	min-width: 4ch;
+	font-size: 12px;
 	text-align: end;
 }
 .tier3-check {
