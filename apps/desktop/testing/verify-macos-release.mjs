@@ -163,7 +163,7 @@ try {
 		session,
 		filename,
 	});
-	assert.deepEqual(preview, { kind: "markdown", text: fileText });
+	assert.deepEqual(preview, { kind: "markdown", text: fileText, attachable: true });
 	const terminal = await page.evaluate(async (session) => {
 		window.macTerminalOutput = "";
 		window.flower.subscribe((frame) => {
