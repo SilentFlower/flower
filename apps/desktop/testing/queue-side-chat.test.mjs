@@ -18,20 +18,31 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	const workspace = join(root, "工作区");
 	await mkdir(workspace);
 	const systems = [];
+	const firstReply = Promise.withResolvers();
+	const cancelledReply = Promise.withResolvers();
+	const editingReply = Promise.withResolvers();
+	const interruptedReply = Promise.withResolvers();
+	const replies = new Map([
+		["慢：第一问", firstReply],
+		["慢：第三问", cancelledReply],
+		["慢：编辑期间运行", editingReply],
+		["慢：第五问", interruptedReply],
+	]);
 	const fixture = await startMockModel({
-		attachmentReply(messages) {
+		async attachmentReply(messages) {
 			const system = messages.find(({ role }) => role === "system");
 			systems.push(system ? text(system) : "");
 			const prompt = text(messages.findLast(({ role }) => role === "user"));
-			// 带「慢」的请求先输出几段推理，留出排队与插话的时间。
-			const slow = prompt.includes("慢") ? { reasoning: ["想", "再想", "还在想"], reasoningDelay: 500 } : {};
+			// 由各场景在队列操作完成后放行，磁盘或 CI 负载不会让模型抢先结束。
+			await replies.get(prompt)?.promise;
 			if (prompt.includes("改成二月")) return { text: "已按二月核对。" };
 			if (prompt.includes("侧边")) return { text: "侧边回答。" };
-			return { ...slow, text: `回答：${prompt.slice(0, 12)}` };
+			return { text: `回答：${prompt.slice(0, 12)}` };
 		},
 	});
 	const desktop = await launchDesktop(root);
 	t.after(async () => {
+		for (const reply of replies.values()) reply.resolve();
 		await desktop.close();
 		await fixture.close();
 		await rm(root, { recursive: true, force: true });
@@ -73,6 +84,7 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	);
 	assert.equal(state.sessions.find((entry) => entry.id === id).busy, true);
 	await api.steerQueueItem(id, steer.queued);
+	firstReply.resolve();
 	const steered = await desktop.event((event) => event.type === "steered");
 	assert.equal(steered.steerId, steer.queued);
 	assert.equal(steered.input, "改成二月");
@@ -98,6 +110,7 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	assert.ok(fourth.queued);
 	const running = await desktop.event((event) => event.requestId === third.requestId && event.type === "started");
 	await api.cancel(id, third.requestId, running.runId);
+	cancelledReply.resolve();
 	assert.equal((await terminal(third.requestId)).status, "cancelled");
 	state = await desktop.state((current) => current.queue.paused);
 	assert.deepEqual(
@@ -185,6 +198,7 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	await api.closeSideChat(id);
 	const pending = await api.submit(id, "待修改的原文");
 	await api.holdQueueItem(id, pending.queued);
+	editingReply.resolve();
 	assert.equal((await terminal(held.requestId)).status, "succeeded");
 	await delay(300);
 	assert.deepEqual(
@@ -204,6 +218,7 @@ test("排队、插话、暂停继续与侧边追问经真实 Main、worker 与�
 	await api.submit(id, "第六问");
 	await desktop.event((event) => event.requestId === fifth.requestId && event.type === "started");
 	await desktop.restart();
+	interruptedReply.resolve();
 	state = await desktop.state((current) => current.ready);
 	assert.deepEqual(
 		state.queue.items.map(({ input }) => input),
