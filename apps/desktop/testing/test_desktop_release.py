@@ -53,6 +53,20 @@ class ReleaseTests(unittest.TestCase):
         binaries, updates, manifests = release.validate(self.root, self.version, stable=True)
         self.assertEqual((len(binaries), len(updates), len(manifests)), (6, 3, 3))
 
+    def test_windows_release_checks_only_its_own_assets(self):
+        for file in self.root.iterdir():
+            if "darwin-" in file.name or "desktop-mac-" in file.name:
+                file.unlink()
+        binaries, updates, manifests = release.validate(self.root, self.version, stable=True, target="windows")
+        self.assertEqual(binaries, [self.prefix + "win32-x64-portable.zip", self.win])
+        self.assertEqual(updates, [self.win])
+        self.assertEqual(manifests, [release.FEED])
+        with self.assertRaises(FileNotFoundError):
+            release.validate(self.root, self.version, stable=True)
+        (self.root / self.win).write_bytes(b"broken")
+        with self.assertRaisesRegex(ValueError, "摘要"):
+            release.validate(self.root, self.version, target="windows")
+
     def test_reject_corrupt_payload_and_wrong_arch(self):
         self.winfeed["sha256"] = "0" * 64
         (self.root / release.FEED).write_text(json.dumps(self.winfeed))

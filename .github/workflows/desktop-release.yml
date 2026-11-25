@@ -20,11 +20,16 @@ on:
 permissions:
   contents: read
 
+env:
+  # 此值随源码标签固定。重新启用 macOS 正式发行时改为 all。
+  RELEASE_TARGET: windows
+
 jobs:
   version:
     runs-on: ubuntu-24.04
     outputs:
       number: ${{ steps.version.outputs.number }}
+      target: ${{ steps.version.outputs.target }}
     steps:
       - name: 解析标签或预演版本
         id: version
@@ -39,7 +44,9 @@ jobs:
             pull_request) value=0.0.1 ;;
           esac
           [[ "$value" =~ ^(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})\.(0|[1-9][0-9]{0,7})$ ]]
+          [[ "$RELEASE_TARGET" == windows || "$RELEASE_TARGET" == all ]]
           echo "number=$value" >> "$GITHUB_OUTPUT"
+          echo "target=$RELEASE_TARGET" >> "$GITHUB_OUTPUT"
 
   windows:
     needs: version
@@ -111,6 +118,7 @@ jobs:
 
   macos:
     needs: version
+    if: needs.version.outputs.target == 'all'
     strategy:
       fail-fast: false
       matrix:
@@ -176,6 +184,10 @@ jobs:
 
   verify:
     needs: [version, windows, macos]
+    if: >-
+      ${{ !cancelled() && needs.version.result == 'success' && needs.windows.result == 'success' &&
+      ((needs.version.outputs.target == 'windows' && needs.macos.result == 'skipped') ||
+      (needs.version.outputs.target == 'all' && needs.macos.result == 'success')) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -191,11 +203,11 @@ jobs:
           VERSION: ${{ needs.version.outputs.number }}
         run: |
           python3 -m unittest discover -s apps/desktop/testing -p 'test_desktop_release.py'
-          python3 apps/desktop/scripts/publish-desktop.py "$RUNNER_TEMP/release-assets" "$VERSION"
+          python3 apps/desktop/scripts/publish-desktop.py "$RUNNER_TEMP/release-assets" "$VERSION" --target "$RELEASE_TARGET"
 
   publish:
     needs: [version, verify]
-    if: github.event_name == 'push' && github.repository == 'SilentFlower/flower'
+    if: ${{ !cancelled() && needs.verify.result == 'success' && github.event_name == 'push' && github.repository == 'SilentFlower/flower' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -216,4 +228,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.number }}
         run: |
-          python3 apps/desktop/scripts/publish-desktop.py "$RUNNER_TEMP/release-assets" "$VERSION" --publish-commit "$(git rev-parse HEAD)"
+          python3 apps/desktop/scripts/publish-desktop.py "$RUNNER_TEMP/release-assets" "$VERSION" --target "$RELEASE_TARGET" --publish-commit "$(git rev-parse HEAD)"

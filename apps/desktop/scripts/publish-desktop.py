@@ -31,9 +31,10 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def validate(directory, version, stable=False):
+def validate(directory, version, stable=False, target="all"):
     """核对每个平台的首装布局、更新版本与固定下载地址，返回版本化文件和频道清单。"""
     semver(version)
+    require(target in ("all", "windows"), "未知的发行平台范围")
     prefix = f"Flower-Desktop-{version}-"
     winzip = prefix + "win32-x64.zip"
     portable = prefix + "win32-x64-portable.zip"
@@ -57,6 +58,8 @@ def validate(directory, version, stable=False):
     binaries = [portable, winzip]
     updates = [winzip]
     feeds = [FEED]
+    if target == "windows":
+        return binaries, updates, feeds
     for arch in ("arm64", "x64"):
         base = prefix + "darwin-" + arch
         dmg, archive, feed = base + ".dmg", base + ".zip", f"flower-desktop-mac-{arch}.json"
@@ -154,9 +157,9 @@ def advance_feed(item, name, staged, sha):
         raise
 
 
-def publish(directory, version, commit):
-    """在全部平台制品就绪后发布源码标签对应 Release，再推进兼容旧客户端的稳定频道。"""
-    binaries, updates, feeds = validate(directory, version, stable=True)
+def publish(directory, version, commit, target="all"):
+    """发布标签选定的平台制品，再推进这些平台的稳定清单。"""
+    binaries, updates, feeds = validate(directory, version, stable=True, target=target)
     tag = TAG_PREFIX + version
     require(re.fullmatch(r"[a-f0-9]{40}", commit) and api(f"commits/{tag}")["sha"] == commit,
             "远程版本标签与本次构建提交不一致")
@@ -173,8 +176,12 @@ def publish(directory, version, commit):
                 require(semver(version) >= semver(prior_version), f"稳定频道已在 {prior_version}，拒绝降到 {version}")
         tagged = release(tag)
         if not tagged:
+            notes = "Windows x64 首次安装请下载 portable.zip，完整解压后打开顶层的 Flower Desktop.exe。"
+            if target == "all":
+                notes += "macOS 首次安装请选择对应处理器的 DMG。"
+            notes += "已安装的工作台从稳定频道自动检查更新。"
             gh("release", "create", tag, "--verify-tag", "--target", commit, "--draft", "--title", f"Flower Desktop {version}",
-               "--notes", "Windows 首装请选择 portable.zip；macOS 请选择对应处理器的 DMG。已安装的工作台从稳定频道自动检查更新。", "--repo", REPO)
+               "--notes", notes, "--repo", REPO)
             tagged = release(tag)
         canonical = scratch / "version"
         canonical.mkdir()
@@ -191,7 +198,7 @@ def publish(directory, version, commit):
         else:
             # 签名及公证会使重建包的字节不同。已公开的版本是后续渠道重试的唯一来源。
             gh("release", "download", tag, "--repo", REPO, "--dir", canonical)
-            validate(canonical, version, stable=True)
+            validate(canonical, version, stable=True, target=target)
             originals = assets(tagged)
             for name in binaries + feeds:
                 require(originals[name].get("digest") == "sha256:" + digest(canonical / name), f"版本附件摘要不符：{name}")
@@ -223,10 +230,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
     parser.add_argument("version")
+    parser.add_argument("--target", choices=["all", "windows"], default="all", help="标签选定的发行平台范围")
     parser.add_argument("--publish-commit", help="将已验证制品发布到此标签提交")
     args = parser.parse_args()
     if args.publish_commit:
-        publish(args.directory, args.version, args.publish_commit)
+        publish(args.directory, args.version, args.publish_commit, target=args.target)
     else:
-        validate(args.directory, args.version)
-    print(f"Flower Desktop {args.version} 双平台发行制品已核对。")
+        validate(args.directory, args.version, target=args.target)
+    print(f"Flower Desktop {args.version} 发行制品已核对（{args.target}）。")
