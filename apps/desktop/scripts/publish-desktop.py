@@ -7,6 +7,7 @@ import plistlib
 import re
 import subprocess
 import tempfile
+import time
 from zipfile import ZipFile
 
 REPO = "SilentFlower/flower"
@@ -105,6 +106,20 @@ def release(tag):
     return next((r for page in pages for r in page if r["tag_name"] == tag), None)
 
 
+def create_draft(tag, commit, title, notes):
+    """创建草稿，并等候后续按标签上传的 CLI 能查到本次创建的 Release。"""
+    created = api("releases", "-X", "POST", "-f", f"tag_name={tag}", "-f", f"target_commitish={commit}",
+                  "-f", f"name={title}", "-f", f"body={notes}", "-F", "draft=true")
+    # GitHub 的读取可能落后于创建响应。按返回的 ID 匹配，避免将文件传给同名草稿。
+    for delay in (0, 1, 2, 4, 8, 16, 30):
+        if delay:
+            time.sleep(delay)
+        visible = release(tag)
+        if visible and visible["id"] == created["id"]:
+            return created
+    raise RuntimeError(f"草稿 {created['id']} 已创建，按标签 {tag} 查询仍未就绪，请重跑本标签的发布作业")
+
+
 def assets(item):
     pages = api(f"releases/{item['id']}/assets?per_page=100", "--paginate", "--slurp")
     return {asset["name"]: asset for page in pages for asset in page}
@@ -180,9 +195,7 @@ def publish(directory, version, commit, target="all"):
             if target == "all":
                 notes += "macOS 首次安装请选择对应处理器的 DMG。"
             notes += "已安装的工作台从稳定频道自动检查更新。"
-            gh("release", "create", tag, "--verify-tag", "--target", commit, "--draft", "--title", f"Flower Desktop {version}",
-               "--notes", notes, "--repo", REPO)
-            tagged = release(tag)
+            tagged = create_draft(tag, commit, f"Flower Desktop {version}", notes)
         canonical = scratch / "version"
         canonical.mkdir()
         if tagged["draft"]:
@@ -203,9 +216,8 @@ def publish(directory, version, commit, target="all"):
             for name in binaries + feeds:
                 require(originals[name].get("digest") == "sha256:" + digest(canonical / name), f"版本附件摘要不符：{name}")
         if not stable:
-            gh("release", "create", STABLE, "--target", commit, "--draft", "--title", "Flower Desktop 稳定更新频道",
-               "--notes", "此频道为已安装的 Flower Desktop 提供更新。首次安装请从对应版本的 Release 下载。", "--repo", REPO)
-            stable = release(STABLE)
+            stable = create_draft(STABLE, commit, "Flower Desktop 稳定更新频道",
+                                  "此频道为已安装的 Flower Desktop 提供更新。首次安装请从对应版本的 Release 下载。")
         known = assets(stable)
         for name in updates:
             ensure_asset(STABLE, stable, known, canonical / name, digest(canonical / name))

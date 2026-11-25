@@ -98,6 +98,24 @@ class ReleaseTests(unittest.TestCase):
                 release.publish(self.root, self.version, sha)
             gh.assert_not_called()
 
+    def test_first_upload_uses_draft_from_creation_response(self):
+        sha = "3" * 40
+        draft = {"id": 19, "draft": True}
+        tag = release.TAG_PREFIX + self.version
+        # 模拟刚创建的草稿暂时仍查不到，首次上传和附件核验须使用创建响应。
+        with patch.object(release, "release", side_effect=[None, None, None, draft]) as lookup, \
+                patch.object(release, "api", side_effect=[{"sha": sha}, draft]) as api, \
+                patch.object(release.time, "sleep") as sleep, \
+                patch.object(release, "gh") as gh, \
+                patch.object(release, "assets", side_effect=RuntimeError("测试停在草稿附件核验")) as assets:
+            with self.assertRaisesRegex(RuntimeError, "草稿附件核验"):
+                release.publish(self.root, self.version, sha, target="windows")
+            self.assertEqual([call.args[0] for call in lookup.call_args_list], [release.STABLE, tag, tag, tag])
+            sleep.assert_called_once_with(1)
+            self.assertIn(f"tag_name={tag}", api.call_args.args)
+            self.assertEqual(gh.call_args.args[:3], ("release", "upload", tag))
+            assets.assert_called_once_with(draft)
+
     def test_manifest_restored_on_failure_and_retry_can_promote(self):
         old = {"id": 10, "digest": "sha256:old"}
         new = {"id": 11, "digest": "sha256:new"}
