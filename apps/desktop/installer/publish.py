@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 REPO = "SilentFlower/flower"
 SUMS = "INSTALLER-SHA256SUMS.txt"
@@ -33,6 +34,27 @@ def release_assets(release_id):
     return {item["name"]: item for page in pages for item in page}
 
 
+def upload(tag, release_id, path, existing):
+    """清理中断的上传占位符，复用完整附件或上传并核对本地字节。"""
+    if existing and existing["state"] == "starter" and not existing["size"]:
+        gh("api", f"repos/{REPO}/releases/assets/{existing['id']}", "-X", "DELETE")
+        existing = None
+    if not existing:
+        gh("release", "upload", tag, path, "--repo", REPO)
+        # 列表读取偶尔落后于刚完成的上传，先等附件可见再核对摘要。
+        for delay in (0, 1, 2, 4, 8):
+            if delay:
+                time.sleep(delay)
+            existing = release_assets(release_id).get(path.name)
+            if existing and existing["state"] == "uploaded":
+                break
+        if not existing or existing.get("digest") != "sha256:" + sha(path) or existing["size"] != path.stat().st_size:
+            raise ValueError(f"远端摘要与本次上传不符：{path.name}")
+    if existing["state"] != "uploaded" or not existing["size"] or not re.fullmatch(r"sha256:[a-f0-9]{64}", existing.get("digest") or ""):
+        raise ValueError(f"版本页附件不完整：{path.name}")
+    return existing["digest"].removeprefix("sha256:")
+
+
 def publish(directory, version, manual_mac):
     """上传选定平台的安装包，按版本页已有附件恢复中断的补发。"""
     if not re.fullmatch(r"(?:0|[1-9][0-9]{0,7})(?:\.(?:0|[1-9][0-9]{0,7})){2}", version):
@@ -48,30 +70,19 @@ def publish(directory, version, manual_mac):
         names.extend(prefix + f"darwin-{arch}-manual.dmg" for arch in ("arm64", "x64"))
     if {p.name for p in directory.iterdir()} != set(names):
         raise ValueError("验收通过的文件与平台范围不一致")
+    if known.get(SUMS, {}).get("state") == "uploaded" and not set(names).issubset(known):
+        raise ValueError("已有安装包校验清单，补发范围与已发布版本不一致")
     checks = {}
     for name in names:
         path = directory / name
         if path.stat().st_size == 0:
             raise ValueError(f"安装包为空：{name}")
-        existing = known.get(name)
-        if existing and existing["state"] == "starter" and not existing["size"]:
-            gh("api", f"repos/{REPO}/releases/assets/{existing['id']}", "-X", "DELETE")
-            existing = None
-        if not existing:
-            gh("release", "upload", tag, path, "--repo", REPO)
-            existing = release_assets(item["id"])[name]
-            if existing["digest"] != "sha256:" + sha(path) or existing["size"] != path.stat().st_size:
-                raise ValueError(f"远端摘要与本次上传不符：{name}")
         # 重建 DMG 和安装 EXE 的字节可能变化。已公开的版本化附件是重试时的依据。
-        if existing["state"] != "uploaded" or not existing["size"] or not re.fullmatch(r"sha256:[a-f0-9]{64}", existing.get("digest") or ""):
-            raise ValueError(f"版本页附件不完整：{name}")
-        checks[name] = existing["digest"].removeprefix("sha256:")
+        checks[name] = upload(tag, item["id"], path, known.get(name))
     with tempfile.TemporaryDirectory() as temp:
         sums = Path(temp) / SUMS
         sums.write_text("".join(f"{checks[n]}  {n}\n" for n in sorted(names)))
-        if SUMS not in known:
-            gh("release", "upload", tag, sums, "--repo", REPO)
-        if release_assets(item["id"])[SUMS]["digest"] != "sha256:" + sha(sums):
+        if upload(tag, item["id"], sums, known.get(SUMS)) != sha(sums):
             raise ValueError("安装包校验清单不一致")
     heading = "### 首次安装"
     base = f"https://github.com/{REPO}/releases/download/{tag}/"

@@ -7,6 +7,7 @@ on:
       - '.github/workflows/desktop-installers.yml'
       - 'apps/desktop/installer/**'
       - 'apps/desktop/testing/verify-setup-windows.ps1'
+      - 'apps/desktop/testing/test_desktop_installers.py'
   push:
     tags: ['flower-desktop-installers-v*']
   workflow_call:
@@ -29,6 +30,11 @@ jobs:
       sha: ${{ steps.source.outputs.sha }}
       mac: ${{ steps.source.outputs.mac }}
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: 核对补发和中断恢复契约
+        run: python3 -m unittest discover -s apps/desktop/testing -p test_desktop_installers.py
       - id: source
         name: 核对正式版本并锁定应用源码
         env:
