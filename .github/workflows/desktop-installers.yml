@@ -10,7 +10,7 @@ on:
       - 'apps/desktop/testing/verify-setup-wizard.py'
       - 'apps/desktop/testing/test_desktop_installers.py'
   push:
-    tags: ['flower-desktop-installers-v*']
+    tags: ['flower-desktop-installers-v*', 'flower-desktop-setup-v*-r*']
   workflow_call:
     inputs:
       version:
@@ -30,6 +30,7 @@ jobs:
       number: ${{ steps.source.outputs.number }}
       sha: ${{ steps.source.outputs.sha }}
       mac: ${{ steps.source.outputs.mac }}
+      revision: ${{ steps.source.outputs.revision }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -44,10 +45,17 @@ jobs:
           MANUAL_MAC: ${{ inputs.manual_mac }}
         run: |
           set -eu
+          revision=
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             # 首个带公开便携包的版本是固定的跨平台首装验收样本。
             VERSION=0.1.5
             MANUAL_MAC=true
+          elif [[ "$GITHUB_REF_NAME" == flower-desktop-setup-v* ]]; then
+            value="${GITHUB_REF_NAME#flower-desktop-setup-v}"
+            VERSION="${value%-r*}"
+            revision="${value##*-r}"
+            [[ "$revision" =~ ^[1-9][0-9]{0,5}$ ]]
+            MANUAL_MAC=false
           elif [[ -z "$VERSION" ]]; then
             VERSION="${GITHUB_REF_NAME#flower-desktop-installers-v}"
             MANUAL_MAC=true
@@ -59,6 +67,7 @@ jobs:
           echo "number=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "mac=$MANUAL_MAC" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
   windows:
     needs: version
@@ -168,4 +177,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.number }}
           MANUAL_MAC: ${{ needs.version.outputs.mac }}
-        run: python3 apps/desktop/installer/publish.py "$RUNNER_TEMP/installers" "$VERSION" "$MANUAL_MAC"
+          REVISION: ${{ needs.version.outputs.revision }}
+        run: python3 apps/desktop/installer/publish.py "$RUNNER_TEMP/installers" "$VERSION" "$MANUAL_MAC" "$REVISION"

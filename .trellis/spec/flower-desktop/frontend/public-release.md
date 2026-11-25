@@ -67,3 +67,5 @@ Mac 预演使用独立的 `.preview` 应用身份，客户端更新功能关闭�
 版本 Release 发布后调用安装包工作流。历史版本使用 `flower-desktop-installers-vX.Y.Z` 补发。Windows 安装器输入为版本页的便携 ZIP 和原始 SHA-256，用户级安装后复用同一顶层启动器和更新指针。验收在真实向导中填写自选目录，核对多尺寸品牌图标、桌面及开始菜单入口、取消桌面快捷方式、防止降级，以及卸载时保留自选目录中的其他文件。两种 Mac 架构从原始源码标签分别组包、临时签名，在各自 runner 验收应用启动、终端与工作区，分发文件名带 `-manual.dmg`，应用内自动更新关闭。
 
 补发选定的全部附件及 `INSTALLER-SHA256SUMS.txt`，保留同名已发布制品作为重试依据。发布器只更新对应版本页，原有 `SHA256SUMS.txt` 和稳定频道独立。运行方式见[安装包工作流](../../../../.github/workflows/desktop-installers.yml)。
+
+Windows 向导修订标签 `flower-desktop-setup-vX.Y.Z-rN` 只构建并验收 Windows 安装器。修订文件及独立 SHA-256 附加到原版本页，并更新主下载入口；更早的修订禁止覆盖已公开的较新入口。

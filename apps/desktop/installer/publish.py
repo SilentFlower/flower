@@ -55,7 +55,36 @@ def upload(tag, release_id, path, existing):
     return existing["digest"].removeprefix("sha256:")
 
 
-def publish(directory, version, manual_mac):
+def publish_revision(directory, item, known, tag, setup, revision):
+    """在同一版本页发布 Windows 安装向导修订版，按公开字节生成独立校验值。"""
+    if not re.fullmatch(r"[1-9][0-9]{0,5}", revision) or not known.get(setup):
+        raise ValueError("安装器修订号无效或尚无初版 EXE")
+    if {p.name for p in directory.iterdir()} != {setup}:
+        raise ValueError("修订作业应仅提供 Windows 安装器")
+    name = setup.removesuffix(".exe") + f"-r{revision}.exe"
+    matcher = re.compile(re.escape(setup.removesuffix(".exe")) + r"-r([1-9][0-9]*)\.exe")
+    if any(int(match[1]) > int(revision) for n in known if (match := matcher.fullmatch(n))):
+        raise ValueError("版本页已有更新的安装向导修订版")
+    revision_exe = directory / name
+    (directory / setup).rename(revision_exe)
+    digest = upload(tag, item["id"], revision_exe, known.get(name))
+    checksum = directory / (name + ".sha256")
+    checksum.write_text(f"{digest}  {name}\n")
+    if upload(tag, item["id"], checksum, known.get(checksum.name)) != sha(checksum):
+        raise ValueError("安装向导修订版校验不符")
+    base = f"https://github.com/{REPO}/releases/download/{tag}/"
+    body = item.get("body") or ""
+    line = (f"- Windows x64：[下载新版安装 EXE]({base}{name}) · [校验值]({base}{checksum.name})。"
+            "可选择安装目录和桌面快捷方式。")
+    new_body, count = re.subn(r"(?m)^- Windows x64：[^\n]*", lambda _: line, body, count=1)
+    if not count:
+        new_body = line + "\n\n" + body
+    new_body = new_body.replace("三种安装包的校验值见", "两款 Mac DMG 和初版 Windows 安装包的校验值见")
+    if new_body != body:
+        api(f"releases/{item['id']}", "-X", "PATCH", "-f", "body=" + new_body)
+
+
+def publish(directory, version, manual_mac, revision=""):
     """上传选定平台的安装包，按版本页已有附件恢复中断的补发。"""
     if not re.fullmatch(r"(?:0|[1-9][0-9]{0,7})(?:\.(?:0|[1-9][0-9]{0,7})){2}", version):
         raise ValueError("无效的桌面版本")
@@ -66,6 +95,10 @@ def publish(directory, version, manual_mac):
     known = release_assets(item["id"])
     prefix = f"Flower-Desktop-{version}-"
     names = [prefix + "win32-x64-setup.exe"]
+    if revision:
+        if manual_mac:
+            raise ValueError("Windows 安装器修订模式只接受 EXE")
+        return publish_revision(directory, item, known, tag, names[0], revision)
     if manual_mac:
         names.extend(prefix + f"darwin-{arch}-manual.dmg" for arch in ("arm64", "x64"))
     if {p.name for p in directory.iterdir()} != set(names):
@@ -93,13 +126,13 @@ def publish(directory, version, manual_mac):
     section.append(f"- 三种安装包的校验值见 [{SUMS}]({base}{SUMS})。" if manual_mac else f"- 安装程序的校验值见 [{SUMS}]({base}{SUMS})。")
     body = item.get("body") or ""
     block = "\n".join(section)
-    if block not in body:
+    if heading not in body:
         api("releases/" + str(item["id"]), "-X", "PATCH", "-f", "body=" + block + "\n\n" + body)
     print(f"已核对 {len(names)} 个安装包，并更新 {tag} 的安装说明。")
 
 
 if __name__ == "__main__":
-    folder, number, mac = sys.argv[1:]
+    folder, number, mac, *revision = sys.argv[1:]
     if mac not in ("true", "false"):
         raise ValueError("未知的 Mac 发行方式")
-    publish(Path(folder), number, mac == "true")
+    publish(Path(folder), number, mac == "true", *revision)

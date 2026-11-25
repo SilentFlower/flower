@@ -58,6 +58,28 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(remote["flower-desktop-update.json"], b"original feed")
             self.assertEqual(item["body"].count("### 首次安装"), 1)
 
+    def test_revision_keeps_app_version_and_existing_downloads(self):
+        prefix = "Flower-Desktop-0.1.5-win32-x64-setup"
+        known = {prefix + ".exe": {"id": 1}}
+        tag = "flower-desktop-v0.1.5"
+        item = {"id": 9, "draft": False, "prerelease": False, "tag_name": tag,
+                "body": "### 首次安装\n- Windows x64：初版\n- macOS：原有下载"}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(installers, "api", return_value=item) as api, \
+                patch.object(installers, "release_assets", return_value=known), \
+                patch.object(installers, "upload", side_effect=lambda tag, rid, path, old: installers.sha(path)) as uploaded:
+            folder = Path(tmp)
+            (folder / (prefix + ".exe")).write_bytes(b"windows")
+            installers.publish(folder, "0.1.5", False, "2")
+            self.assertEqual([c.args[2].name for c in uploaded.call_args_list], [prefix + "-r2.exe", prefix + "-r2.exe.sha256"])
+            self.assertIn("- macOS：原有下载", api.call_args.args[-1])
+            self.assertIn(prefix + "-r2.exe", api.call_args.args[-1])
+            for f in folder.iterdir():
+                f.unlink()
+            (folder / (prefix + ".exe")).write_bytes(b"previous")
+            known[prefix + "-r3.exe"] = {"id": 3}
+            with self.assertRaisesRegex(ValueError, "更新"):
+                installers.publish(folder, "0.1.5", False, "2")
+
     def test_draft_is_not_modified(self):
         with patch.object(installers, "api", return_value={"draft": True}), patch.object(installers, "gh") as gh:
             with self.assertRaisesRegex(ValueError, "正式版本"):

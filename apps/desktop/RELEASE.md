@@ -41,6 +41,6 @@ Mac 的 DMG 用于首次安装。应用内由 Electron 的原生 Squirrel 更新
 
 ## 补发首装包
 
-版本页公开后，安装包工作流会从该版本的便携 ZIP 制作 Windows EXE，从原始源码标签构建两种免费 Mac DMG。已开启正式 Mac 更新的版本只补 Windows EXE。对历史版本可推送 `flower-desktop-installers-vX.Y.Z` 补发，首装包摘要另列于 `INSTALLER-SHA256SUMS.txt`。现有版本标签及更新清单继续使用原有内容。
+版本页公开后，安装包工作流会从该版本的便携 ZIP 制作 Windows EXE，从原始源码标签构建两种免费 Mac DMG。已开启正式 Mac 更新的版本只补 Windows EXE。对历史版本可推送 `flower-desktop-installers-vX.Y.Z` 补发，首装包摘要另列于 `INSTALLER-SHA256SUMS.txt`。现有版本标签及更新清单继续使用原有内容。只修订 Windows 安装界面时使用 `flower-desktop-setup-vX.Y.Z-rN`：版本页将主下载链接指向通过验收的 `setup-rN.exe`，并附独立 `.sha256` 文件。
 
 npm 库继续使用仓根的 Changesets 流程。桌面应用的版本由标签传给打包程序。
