@@ -603,7 +603,7 @@ test("通过真实 preload 和 Host 处理器限制当前会话，并在重启�
 	};
 	const fixture = Symbol.for("flower.workspace-panel.test.electron");
 	const moduleURL = `data:text/javascript,${encodeURIComponent(
-		`export const {app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, Notification, nativeImage, nativeTheme, safeStorage, screen, shell, utilityProcess} = globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(fixture))})];`,
+		`export const {app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, Notification, nativeImage, nativeTheme, safeStorage, screen, shell, Tray, utilityProcess} = globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(fixture))})];`,
 	)}`;
 	globalThis[fixture] = electron;
 	const hooks = registerHooks({

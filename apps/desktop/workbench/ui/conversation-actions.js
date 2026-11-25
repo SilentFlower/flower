@@ -391,7 +391,10 @@ window.flowerConversationActions = (() => {
 			restart.disabled = pending || canRestart === false;
 			schedule.textContent = scheduled ? "取消退出时更新" : "退出时更新";
 			const reminders = [
-				nativeExit ? "正常退出应用后将自动安装。" : scheduled && "已安排在你退出应用时安装。",
+				nativeExit
+					? "正常退出应用后将自动安装。"
+					: scheduled &&
+						(state.trayAvailable ? "在系统托盘中右键选择「退出 Flower」后安装。" : "已安排在你退出应用时安装。"),
 				canRestart === false && "工作台有任务正在处理，结束后可立即重启更新。",
 			].filter(Boolean);
 			scheduleNote.hidden = !ready || !reminders.length;

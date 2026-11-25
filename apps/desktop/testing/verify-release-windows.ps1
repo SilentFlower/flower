@@ -26,7 +26,7 @@ try {
     if (!$process) { throw "受管理启动器未显示 $Version 的实际窗口" }
     Write-Output "Windows $Version 首装、解压与启动成功"
 } finally {
-    if ($process) { [void]$process.CloseMainWindow(); [void]$process.WaitForExit(8000) }
+    if ($process) { [void]$process.CloseMainWindow(); [void]$process.WaitForExit(1500) }
     # 只清理本次解压目录启动的进程。
     Get-Process -Name 'Flower Desktop' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $expected } | Stop-Process -Force
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

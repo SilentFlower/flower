@@ -49,3 +49,5 @@ release-0.1.0/install 是首装和迁移使用的完整目录。updates 中的�
     python3 -c "import shutil; shutil.make_archive('release-0.1.0/Flower-Desktop-0.1.0-Windows-First-Install', 'zip', 'release-0.1.0/install')"
 
 隔离验收时，给 vA 和 vB 的 package:windows 都加 --qa-source http://127.0.0.1:PORT/flower-desktop-update.json。在 vB 的 updates 目录用 python3 -m http.server PORT --bind 127.0.0.1 提供清单和 ZIP，用单独资料目录启动 vA 的 install 顶层入口。此参数生成的 QA 包用于本机验收。
+
+点击窗口 × 后，Flower 会留在系统托盘，当前任务和定时自动化继续运行。点击托盘图标或再次打开快捷方式可返回工作台。右键托盘选择「退出 Flower」会结束应用，也会执行已安排的退出更新。

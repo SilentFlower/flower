@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { Data, NtExecutable, NtExecutableResource, Resource } from "resedit";
 import { buildMarker, packChannel, platform, product, releaseVersion } from "./windows-release-contract.mjs";
 
 const { values, positionals } = parseArgs({
@@ -45,6 +46,38 @@ const scratch = await mkdtemp(join(tmpdir(), "flower-desktop-package-"));
 const native = join(scratch, "windows");
 const install = join(scratch, "install");
 const bundle = join(scratch, "app");
+/** 给实际承载窗口的运行文件写入 Flower 的 Shell 图标和产品信息。
+ * @param {string} source 已校验发行包中的 Electron 运行文件
+ * @param {string} target 带有产品资源的新运行文件
+ * @param {string} iconPath 与安装器和托盘共用的多尺寸图标
+ * @returns {Promise<void>} 生成完成
+ */
+async function writeRuntime(source, target, iconPath) {
+	const exe = NtExecutable.from(await readFile(source));
+	const resources = NtExecutableResource.from(exe);
+	const groups = Resource.IconGroupEntry.fromEntries(resources.entries);
+	assert.equal(groups.length, 1, "Electron 运行文件的主图标组异常");
+	const icons = Data.IconFile.from(await readFile(iconPath)).icons.map(({ data }) => data);
+	Resource.IconGroupEntry.replaceIconsForResource(resources.entries, groups[0].id, groups[0].lang, icons);
+	const [info] = Resource.VersionInfo.fromEntries(resources.entries);
+	assert(info, "Electron 运行文件缺少版本资源");
+	// PE 的数字版本每段只容纳 16 位，完整产品版本始终写入显示字符串。
+	if (version.split(".").every((part) => Number(part) <= 65535)) info.setProductVersion(version);
+	for (const language of info.getAllLanguagesForStringValues()) {
+		info.setStringValues(language, {
+			ProductName: product,
+			FileDescription: product,
+			CompanyName: "SilentFlower",
+			OriginalFilename: `${product}.exe`,
+			InternalName: product,
+			ProductVersion: version,
+		});
+	}
+	info.outputToResourceEntries(resources.entries);
+	resources.outputResource(exe);
+	await writeFile(target, Buffer.from(exe.generate()));
+}
+
 const run = (command, args, cwd) => execFileSync(command, args, { cwd, stdio: "inherit" });
 // Windows 的 npm.cmd 需要额外一层 shell，直接让当前 Node 运行同一套 npm CLI 可保留空格路径。
 const npmCli = process.env.npm_execpath || join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
@@ -166,7 +199,10 @@ try {
 		scratch,
 	);
 	for (const file of ptyFiles) await access(join(native, "resources", "app.asar.unpacked", ptyRelative, file));
-	await rename(join(native, "electron.exe"), join(native, `${product}.exe`));
+	const icon = join(native, "resources", "flower.ico");
+	await cp(join(workspace, "installer", "artwork", "flower.ico"), icon);
+	await writeRuntime(join(native, "electron.exe"), join(native, `${product}.exe`), icon);
+	await rm(join(native, "electron.exe"));
 	try {
 		await rename(join(native, "electron_wer.dll"), join(native, `${product}_wer.dll`));
 	} catch (error) {

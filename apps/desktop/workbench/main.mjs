@@ -17,6 +17,7 @@ import {
 	safeStorage,
 	screen,
 	shell,
+	Tray,
 	utilityProcess,
 } from "electron";
 import { createQuestionBroker } from "./ask-user.mjs";
@@ -53,6 +54,7 @@ import {
 	writeModelLibrary,
 } from "./model-library.mjs";
 import { createNativePanelHost } from "./native-panels.mjs";
+import { findPortableInstallation } from "./portable-update-install.mjs";
 import { createRuntimeHost } from "./runtime-host.mjs";
 import { createSessionQueue, storedQueue } from "./session-queue.mjs";
 import { copySessionPrefix, planSessionRevision, revisionPaths } from "./session-revision.mjs";
@@ -118,6 +120,8 @@ const immediateHandlers = new Set(["state", "titlebar-theme", "panel-expansion",
  */
 export function launchWorkbench() {
 	const macOS = process.platform === "darwin";
+	const packagedWindows = process.platform === "win32" && app.isPackaged;
+	const windowsAppId = "Flower.Desktop.Open";
 	const updateChannel = macOS ? bundledMacUpdateChannel(process.arch) : bundledUpdateChannel();
 	if (!app.commandLine.hasSwitch("user-data-dir")) {
 		const profile = join(
@@ -128,7 +132,7 @@ export function launchWorkbench() {
 		app.setPath("userData", profile);
 	}
 	// Windows 通知按应用标识归属，标识不得含空格。
-	if (process.platform === "win32") app.setAppUserModelId("Flower.Desktop.Open");
+	if (process.platform === "win32") app.setAppUserModelId(windowsAppId);
 	if (!app.requestSingleInstanceLock()) {
 		app.quit();
 		return;
@@ -199,6 +203,8 @@ export function launchWorkbench() {
 	const attention = createAttention();
 	// 系统通知在被点击前需要保持引用，否则可能被回收而丢失点击回调。
 	const notices = new Set();
+	let tray;
+	let quitRequested = false;
 	let closeConfirmed = false;
 	let askingToClose = false;
 	const sessionsDirectory = join(directory, "sessions");
@@ -251,16 +257,15 @@ export function launchWorkbench() {
 		if (window && !window.isDestroyed()) window.webContents.send("flower:update", message);
 	}
 	function updateState() {
-		return (
-			desktopUpdater?.state() ?? {
-				phase: "unavailable",
-				currentVersion: app.getVersion(),
-				channel: updateChannel?.id ?? "stable",
-				...(macOS && { installPolicy: "on-exit" }),
-				scheduled: false,
-				canRestart: false,
-			}
-		);
+		const state = desktopUpdater?.state() ?? {
+			phase: "unavailable",
+			currentVersion: app.getVersion(),
+			channel: updateChannel?.id ?? "stable",
+			...(macOS && { installPolicy: "on-exit" }),
+			scheduled: false,
+			canRestart: false,
+		};
+		return tray ? { ...state, trayAvailable: true } : state;
 	}
 	function updateBusy() {
 		return !initialized || pendingWork() > 0;
@@ -714,6 +719,14 @@ export function launchWorkbench() {
 		});
 	}
 
+	/** 从托盘、通知或重复启动回到同一个工作台窗口。 */
+	function showWorkbench() {
+		if (!window || window.isDestroyed()) return;
+		if (window.isMinimized()) window.restore();
+		window.show();
+		window.focus();
+	}
+
 	/**
 	 * 窗口不在前台时提醒用户：闪烁任务栏并发送系统通知，点击通知回到对应会话。
 	 * @param {string} session 会话 ID
@@ -731,9 +744,7 @@ export function launchWorkbench() {
 		notice.once("click", () => {
 			notices.delete(notice);
 			if (!window || window.isDestroyed()) return;
-			if (window.isMinimized()) window.restore();
-			window.show();
-			window.focus();
+			showWorkbench();
 			send({ kind: "focus-session", id: session });
 		});
 		notice.show();
@@ -2508,9 +2519,17 @@ export function launchWorkbench() {
 			savedWindow,
 			screen.getAllDisplays().map(({ workArea }) => workArea),
 		);
+		const icon = packagedWindows
+			? join(process.resourcesPath, "flower.ico")
+			: fileURLToPath(new URL("./ui/flower-icon.png", import.meta.url));
+		const installation =
+			packagedWindows && updateChannel
+				? await findPortableInstallation(process.execPath, app.getVersion(), updateChannel.id)
+				: undefined;
+		if (exiting) return;
 		window = new BrowserWindow({
 			title: "Flower Desktop",
-			icon: fileURLToPath(new URL("./ui/flower-icon.png", import.meta.url)),
+			icon,
 			// 保存的是外框；首次启动沿用按内容区计算的默认尺寸。
 			...(restored ? { ...restored, useContentSize: false } : { width: 1282, height: 801, useContentSize: true }),
 			minWidth: 640,
@@ -2546,7 +2565,47 @@ export function launchWorkbench() {
 			window.flashFrame(false);
 			if (attention.clear(workbench.selected)) announce();
 		});
+		if (packagedWindows) {
+			const launcher = installation ? join(installation.root, "Flower Desktop.exe") : process.execPath;
+			window.setAppDetails({
+				appId: windowsAppId,
+				appIconPath: launcher,
+				appIconIndex: 0,
+				// 固定到任务栏后仍通过顶层启动器打开当前版本。
+				...(!app.commandLine.hasSwitch("user-data-dir") && {
+					relaunchCommand: `"${launcher}"`,
+					relaunchDisplayName: "Flower Desktop",
+				}),
+			});
+			try {
+				tray = new Tray(icon);
+				tray.setToolTip("Flower Desktop");
+				tray.setContextMenu(
+					Menu.buildFromTemplate([
+						{ label: "打开 Flower Desktop", click: showWorkbench },
+						{ type: "separator" },
+						{ label: "退出 Flower", click: () => app.quit() },
+					]),
+				);
+				tray.on("click", showWorkbench);
+			} catch (error) {
+				// 没有可用的恢复入口时，保留正常关窗和退出流程。
+				tray?.destroy();
+				tray = undefined;
+				console.warn("Flower 系统托盘初始化失败", error);
+			}
+			window.on("session-end", () => {
+				quitRequested = closeConfirmed = true;
+				saveWindowState();
+			});
+		}
 		window.on("close", (event) => {
+			if (tray && !quitRequested && !updateRestarting) {
+				event.preventDefault();
+				saveWindowState();
+				window.hide();
+				return;
+			}
 			// 已提交和接下来会自动派发的任务都要通过关闭确认。
 			const pending = pendingWork();
 			if (closeConfirmed || !pending) {
@@ -2556,6 +2615,7 @@ export function launchWorkbench() {
 			event.preventDefault();
 			if (askingToClose) return;
 			askingToClose = true;
+			if (tray && !window.isVisible()) showWorkbench();
 			void dialog
 				.showMessageBox(window, {
 					type: "warning",
@@ -2570,6 +2630,7 @@ export function launchWorkbench() {
 				.then(({ response }) => {
 					askingToClose = false;
 					if (response !== 0 || !window || window.isDestroyed()) {
+						quitRequested = false;
 						updateRestarting = false;
 						desktopUpdater?.cancelRestart();
 						return;
@@ -2610,6 +2671,7 @@ export function launchWorkbench() {
 				userData: app.getPath("userData"),
 				directory,
 				available: true,
+				findInstallation: () => installation,
 				notify: announce,
 				busy: updateBusy,
 				storage: safeStorage,
@@ -2646,9 +2708,9 @@ export function launchWorkbench() {
 			periodicUpdate = setInterval(check, 4 * 60 * 60 * 1000).unref();
 		}
 	});
-	app.on("second-instance", () => {
-		if (window?.isMinimized()) window.restore();
-		window?.focus();
+	app.on("second-instance", showWorkbench);
+	app.on("before-quit", () => {
+		quitRequested = true;
 	});
 	app.on("window-all-closed", () => {
 		// 原生更新器关闭最后一个窗口后仍需安排重新启动。
@@ -2656,6 +2718,8 @@ export function launchWorkbench() {
 	});
 	app.on("will-quit", (event) => {
 		exiting = true;
+		tray?.destroy();
+		tray = undefined;
 		clearInterval(automationTimer);
 		automation.close();
 		clearTimeout(startupUpdate);

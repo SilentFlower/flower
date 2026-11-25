@@ -104,8 +104,8 @@ Source: "{#Payload}\使用说明.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Payload}\current.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{userdesktop}\Flower Desktop"; Filename: "{app}\Flower Desktop.exe"; IconFilename: "{app}\Flower Desktop.exe"; Tasks: desktopicon
-Name: "{userprograms}\Flower Desktop"; Filename: "{app}\Flower Desktop.exe"; IconFilename: "{app}\Flower Desktop.exe"
+Name: "{userdesktop}\Flower Desktop"; Filename: "{app}\Flower Desktop.exe"; AppUserModelID: "Flower.Desktop.Open"; IconFilename: "{app}\Flower Desktop.exe"; Tasks: desktopicon
+Name: "{userprograms}\Flower Desktop"; Filename: "{app}\Flower Desktop.exe"; AppUserModelID: "Flower.Desktop.Open"; IconFilename: "{app}\Flower Desktop.exe"
 
 [Run]
 Filename: "{app}\Flower Desktop.exe"; Description: "{cm:LaunchProgram,Flower Desktop}"; Flags: nowait postinstall skipifsilent

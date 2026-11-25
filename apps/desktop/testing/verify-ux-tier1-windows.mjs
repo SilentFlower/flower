@@ -227,7 +227,7 @@ try {
 	await send("取消用例");
 	const cancelling = task("取消用例");
 	await cancelling.locator('.status[data-state="running"]').waitFor();
-	await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+	await app.evaluate(({ app }) => app.quit());
 	await until(() => qa(() => globalThis.flowerQA.boxes.length));
 	assert.match(await qa(() => globalThis.flowerQA.boxes[0]), /还有 1 个任务未完成/);
 	await setTimeout(300);

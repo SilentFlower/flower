@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -63,42 +63,25 @@ const systemRoot = nativeWindows
 	: execFileSync(cmd, ["/d", "/c", "echo %SystemRoot%"], { encoding: "utf8", cwd: dirname(cmd) }).trim();
 const csc = hostPath(win32.join(systemRoot, "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe"));
 const source = fileURLToPath(new URL("./PortableLauncher.cs", import.meta.url));
-const iconSource = fileURLToPath(new URL("../workbench/ui/flower-icon.png", import.meta.url));
+const iconSource = fileURLToPath(new URL("../installer/artwork/flower.ico", import.meta.url));
 
-async function compileLauncher(path) {
-	const scratch = await mkdtemp(join(output, ".launcher-"));
-	try {
-		// Windows 图标容器保留应用已有的 256 像素 PNG。
-		const png = await readFile(iconSource);
-		assert(png.readUInt32BE(16) === 256 && png.readUInt32BE(20) === 256, "应用图标必须是 256 像素 PNG");
-		const header = Buffer.alloc(22);
-		header.writeUInt16LE(1, 2);
-		header.writeUInt16LE(1, 4);
-		header.writeUInt16LE(1, 10);
-		header.writeUInt16LE(32, 12);
-		header.writeUInt32LE(png.length, 14);
-		header.writeUInt32LE(header.length, 18);
-		const icon = join(scratch, "flower.ico");
-		await writeFile(icon, Buffer.concat([header, png]));
-		execFileSync(
-			csc,
-			[
-				"/nologo",
-				"/target:winexe",
-				"/platform:x64",
-				"/optimize+",
-				"/codepage:65001",
-				"/r:System.Web.Extensions.dll",
-				"/r:System.Windows.Forms.dll",
-				`/win32icon:${pathForWindows(icon)}`,
-				`/out:${pathForWindows(path)}`,
-				pathForWindows(source),
-			],
-			{ cwd: scratch, stdio: "inherit" },
-		);
-	} finally {
-		await rm(scratch, { recursive: true, force: true });
-	}
+function compileLauncher(path) {
+	execFileSync(
+		csc,
+		[
+			"/nologo",
+			"/target:winexe",
+			"/platform:x64",
+			"/optimize+",
+			"/codepage:65001",
+			"/r:System.Web.Extensions.dll",
+			"/r:System.Windows.Forms.dll",
+			`/win32icon:${pathForWindows(iconSource)}`,
+			`/out:${pathForWindows(path)}`,
+			pathForWindows(source),
+		],
+		{ cwd: output, stdio: "inherit" },
+	);
 }
 
 await mkdir(output);
@@ -112,7 +95,7 @@ try {
 	await writeFile(join(managed, managedMarker), `${managedIdentity}\n`);
 	await writeFile(join(managed, "current.txt"), `${version}\n`);
 	await cp(join(payload, "使用说明.txt"), join(managed, "使用说明.txt"));
-	await compileLauncher(join(managed, `${product}.exe`));
+	compileLauncher(join(managed, `${product}.exe`));
 
 	const download = `Flower-Desktop-${version}-${platform}.zip`;
 	const archive = join(updates, download);

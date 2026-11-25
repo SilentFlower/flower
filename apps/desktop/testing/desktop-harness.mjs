@@ -132,7 +132,7 @@ export async function launchDesktop(root, { version = "test" } = {}) {
 	const key = randomUUID();
 	const fixture = Symbol.for(`flower.desktop-harness.electron.${key}`);
 	const moduleURL = `data:text/javascript,${encodeURIComponent(
-		`export const {app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, Notification, nativeImage, nativeTheme, safeStorage, screen, shell, utilityProcess} = globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(fixture))})];`,
+		`export const {app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, Notification, nativeImage, nativeTheme, safeStorage, screen, shell, Tray, utilityProcess} = globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(fixture))})];`,
 	)}`;
 	globalThis[fixture] = electron;
 	const hooks = registerHooks({

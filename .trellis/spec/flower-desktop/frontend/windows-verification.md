@@ -86,4 +86,6 @@ cmd.exe /c "python D:\…\flower-ui-private-desktop.py D:\…\run.log cmd /c D:\
 
 ## 公开发行的安装与升级验收
 
-Windows 首装运行 `verify-release-windows.ps1 -Version <版本> -Assets <制品目录>`。升级运行 `node apps/desktop/testing/verify-windows-update.mjs <旧版安装目录> <新版更新目录> <回环清单URL>`。Windows 的 `TEMP` 可含 8.3 用户名，工作台向启动器传入资料目录的真实绝对路径。验收触发窗口正常关闭，等候旧进程退出后读取版本指针。完整的三端验收和稳定频道规则见[开源发版规范](./public-release.md)。
+Windows 首装运行 `verify-release-windows.ps1 -Version <版本> -Assets <制品目录>`。再用 `node apps/desktop/testing/verify-tray-windows.mjs <受管理的安装目录>` 验证实际运行文件和启动器的品牌图标、关窗后的任务完成、恢复窗口、取消退出和真正退出。在隔离桌面使用真实 Electron 托盘并以程序方式触发左键和菜单回调。
+
+升级运行 `node apps/desktop/testing/verify-windows-update.mjs <旧版安装目录> <新版更新目录> <回环清单URL>`。Windows 的 `TEMP` 可含 8.3 用户名，工作台向启动器传入资料目录的真实绝对路径。验收先安排更新并关闭窗口，确认仍使用原版，再显式退出并等待切换版本，最后回读资料。完整的三端验收和稳定频道规则见[开源发版规范](./public-release.md)。

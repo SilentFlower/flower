@@ -89,6 +89,9 @@ jobs:
       - name: 从首装 ZIP 启动实际版本
         shell: pwsh
         run: ./apps/desktop/testing/verify-release-windows.ps1 -Version $env:VERSION -Assets (Join-Path $env:RUNNER_TEMP windows-release/updates)
+      - name: 验证 Windows 品牌图标、托盘与后台任务
+        shell: pwsh
+        run: node apps/desktop/testing/verify-tray-windows.mjs (Join-Path $env:RUNNER_TEMP windows-release/install)
       - name: 实测 Windows 后台下载、退出安装及重启回读
         shell: pwsh
         run: |

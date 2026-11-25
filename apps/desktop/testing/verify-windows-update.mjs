@@ -73,8 +73,13 @@ try {
 	await page.locator("#desktop-update-schedule").click();
 	await page.waitForFunction(async () => (await window.flower.state()).desktopUpdate.scheduled);
 	assert.equal(await current(), before);
-	const closed = app.waitForEvent("close", { timeout: 65000 });
 	await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+	assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false);
+	assert.equal(await current(), before);
+	const closed = app.waitForEvent("close", { timeout: 65000 });
+	await app.evaluate(({ app }) => {
+		setImmediate(() => app.quit());
+	});
 	await closed;
 	app = undefined;
 	const deadline = Date.now() + 60000;

@@ -4,6 +4,8 @@
 
 Windows x64 首次安装可下载 `*-win32-x64-setup.exe`，安装向导支持自选空文件夹或已有的 Flower Desktop 安装目录，默认勾选创建桌面快捷方式。也可从开始菜单启动。便携用户可下载 `*-win32-x64-portable.zip`，完整解压后双击顶层的 `Flower Desktop.exe`。两种安装方式使用同一个 Windows 稳定更新频道。
 
+Windows 从 0.1.6 起，点窗口右上角的 × 会将工作台收到系统托盘。后台任务继续执行。单击通知区域里的 Flower 图标可以恢复窗口，右键选择「退出 Flower」可以结束程序。已安排在退出时安装的更新会在这一步应用。
+
 macOS 免费分发版提供 `*-darwin-arm64-manual.dmg`（Apple Silicon）和 `*-darwin-x64-manual.dmg`（Intel）。打开 DMG 后把应用拖入“应用程序”。此版使用临时签名，首次打开可能提示无法验证开发者；确认下载来源后可按 Apple 的单应用打开流程操作。升级时退出旧版，用同架构新版 DMG 替换应用。启用 Developer ID 正式签名渠道的版本另提供原生自动更新。[GitHub Releases](https://github.com/SilentFlower/flower/releases) · [Apple 打开说明](https://support.apple.com/zh-cn/102445)
 
 ## 构建预演

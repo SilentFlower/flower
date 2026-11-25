@@ -29,6 +29,8 @@ try {
         if (!(Test-Path -LiteralPath $link -PathType Leaf)) { throw "缺少快捷方式 $link，程序位置 $entry" }
         $item = $shell.Namespace([IO.Path]::GetDirectoryName($link)).ParseName([IO.Path]::GetFileName($link))
         $target = $item.ExtendedProperty('System.Link.TargetParsingPath')
+        $appId = $item.ExtendedProperty('System.AppUserModel.ID')
+        if ($appId -ne 'Flower.Desktop.Open') { throw "快捷方式 $link 的任务栏标识错误 [$appId]" }
         $iconPath = ''
         $index = $item.GetLink.GetIconLocation([ref]$iconPath)
         if (!$iconPath) { $iconPath = $target }
@@ -48,7 +50,13 @@ try {
     } until ($process -or (Get-Date) -gt $deadline)
     if (!$process) { throw '桌面快捷方式未启动自选目录中的实际应用' }
     [void]$process.CloseMainWindow()
-    if (!$process.WaitForExit(10000)) { throw '测试窗口未正常退出' }
+    if (!$process.WaitForExit(1500)) {
+        $process.Refresh()
+        if ($process.MainWindowHandle -ne 0) { throw '关窗后仍显示工作台' }
+        # 新版本关窗后驻留托盘；这里只回收隔离账户下本次安装启动的进程。
+        $process.Kill()
+        if (!$process.WaitForExit(8000)) { throw '未能回收测试进程' }
+    }
     $custom = '/DIR="' + $root + '"'
     [IO.File]::WriteAllText($pointer, '65535.65535.65535')
     if ((Run-Installer $Setup $custom) -eq 0 -or (Get-Content -Raw $pointer) -ne '65535.65535.65535') { throw '旧安装包覆盖了新指针' }

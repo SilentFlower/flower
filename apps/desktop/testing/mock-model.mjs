@@ -135,7 +135,7 @@ export async function startMockModel({
 			res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
 			const filename = "orders.xlsx";
 			if (attachmentReply) {
-				const answer = attachmentReply(messages);
+				const answer = await attachmentReply(messages);
 				// 兼容网关以 reasoning_content 分片返回推理，先于正文或工具调用。
 				for (const [index, chunk] of (answer.reasoning ?? []).entries()) {
 					if (index) await setTimeout(answer.reasoningDelay ?? 0);
