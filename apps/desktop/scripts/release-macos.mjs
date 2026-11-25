@@ -103,7 +103,7 @@ try {
 	const pty = join(prebuilds, ptyTarget);
 	await chmod(join(pty, "spawn-helper"), 0o755);
 	for (const name of ["pty.node", "spawn-helper"]) {
-		run("/usr/bin/lipo", ["-verify_arch", arch === "x64" ? "x86_64" : arch, join(pty, name)]);
+		run("/usr/bin/lipo", [join(pty, name), "-verify_arch", arch === "x64" ? "x86_64" : arch]);
 	}
 
 	// PDF.js 在 Chromium 中预览，在 Node 工作者中仅提取文字，保留两个入口及其本地资源。
