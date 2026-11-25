@@ -42,6 +42,7 @@ WelcomeFontSize=18
 
 [Messages]
 ClickNext=
+ClickFinish=
 chinesesimplified.ButtonBack=上一步
 chinesesimplified.ButtonNext=继续
 chinesesimplified.ButtonInstall=开始安装
@@ -319,7 +320,7 @@ begin
   if CurPageID = wpWelcome then begin
     WizardForm.WelcomeLabel2.Caption := SetupMessage(msgWelcomeLabel2);
     LayoutHero(WizardForm.WelcomeLabel1, WizardForm.WelcomeLabel2, False);
-  end else if CurPageID = wpFinished then
+  end else if (CurPageID = wpFinished) and not WizardForm.YesRadio.Visible then
     LayoutHero(WizardForm.FinishedHeadingLabel, WizardForm.FinishedLabel, True)
   else if CurPageID = wpSelectTasks then begin
     SelectedFolder.Caption := WizardDirValue;

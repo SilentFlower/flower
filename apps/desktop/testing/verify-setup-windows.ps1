@@ -2,7 +2,7 @@
 param([Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)][string]$Setup)
 $ErrorActionPreference = 'Stop'
 $folder = Join-Path $env:RUNNER_TEMP ('Flower 安装验收 ' + [guid]::NewGuid())
-$root = Join-Path $folder '应用程序/Flower Desktop'
+$root = [IO.Path]::GetFullPath((Join-Path $folder '应用程序/Flower Desktop'))
 $profile = Join-Path $folder '使用者资料'
 $default = Join-Path $env:LOCALAPPDATA 'Programs/Flower Desktop'
 $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Flower Desktop.lnk'
@@ -26,8 +26,16 @@ try {
     $expected = Join-Path $root "versions/$Version/Flower Desktop.exe"
     $pointer = Join-Path $root 'current.txt'
     foreach ($link in @($desktop, $menu)) {
+        if (!(Test-Path -LiteralPath $link -PathType Leaf)) { throw "缺少快捷方式 $link，程序位置 $entry" }
         $shortcut = $shell.CreateShortcut($link)
-        if ($shortcut.TargetPath -ne $entry -or $shortcut.IconLocation -notlike "$entry,*") { throw "快捷方式目标或图标错误 $link" }
+        $target = [IO.Path]::GetFullPath($shortcut.TargetPath)
+        $iconPath = ($shortcut.IconLocation -replace ',\s*-?\d+$', '').Trim('"')
+        # Shell 可将与目标相同的图标记录为默认索引，此时直接使用目标 EXE 的资源。
+        if (!$iconPath) { $iconPath = $target }
+        $iconPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($iconPath))
+        if ($target -ne $entry -or $iconPath -ne $entry) {
+            throw "快捷方式 $link 实际目标 [$target]、图标 [$iconPath]，预期 [$entry]"
+        }
     }
     if ((Get-Content -Raw $pointer).Trim() -ne $Version) { throw '版本指针错误' }
     Start-Process -FilePath ($shell.CreateShortcut($desktop).TargetPath) -ArgumentList ('"--user-data-dir=' + $profile + '"')
