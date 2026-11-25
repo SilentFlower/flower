@@ -229,3 +229,13 @@ jobs:
           VERSION: ${{ needs.version.outputs.number }}
         run: |
           python3 apps/desktop/scripts/publish-desktop.py "$RUNNER_TEMP/release-assets" "$VERSION" --target "$RELEASE_TARGET" --publish-commit "$(git rev-parse HEAD)"
+
+  installers:
+    needs: [version, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    uses: ./.github/workflows/desktop-installers.yml
+    permissions:
+      contents: write
+    with:
+      version: ${{ needs.version.outputs.number }}
+      manual_mac: ${{ needs.version.outputs.target == 'windows' }}

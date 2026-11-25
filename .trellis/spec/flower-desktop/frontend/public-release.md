@@ -2,7 +2,7 @@
 
 本规范约定 `SilentFlower/flower` 如何把一个源码提交发布为 Windows x64、Apple Silicon 和 Intel Mac 三个平台的正式版本，以及已安装的客户端如何找到对应更新。维护者打标签和配置凭据的具体步骤见[发行操作说明](../../../../apps/desktop/RELEASE.md)。
 
-工作流的 `RELEASE_TARGET` 与源码标签一同固定。0.1.5 采用 `windows`，只投放 Windows x64。`all` 表示同时投放 Windows 和两种 Mac 架构，并启用 Apple 签名和公证验收。
+工作流的 `RELEASE_TARGET` 与源码标签一同固定。0.1.5 采用 `windows`，只推进 Windows x64 的稳定更新。免费 Mac DMG 使用手动安装渠道。`all` 表示同时投放 Windows 和两种 Mac 架构，并启用 Apple 签名和公证验收。
 
 ## 触发与版本
 
@@ -60,3 +60,10 @@ Mac 预演使用独立的 `.preview` 应用身份，客户端更新功能关闭�
   python3 -m unittest discover -s apps/desktop/testing -p 'test_desktop_release.py'
   python3 apps/desktop/scripts/publish-desktop.py "$ASSETS_DIR" "$VERSION" --target "$RELEASE_TARGET"
   ```
+
+
+## 首装 EXE 和手动更新的 Mac DMG
+
+版本 Release 发布后调用安装包工作流。历史版本使用 `flower-desktop-installers-vX.Y.Z` 补发。Windows 安装器输入为版本页的便携 ZIP 和原始 SHA-256，用户级安装后复用同一顶层启动器和更新指针。验收覆盖安装、开始菜单启动、防止旧包覆盖新指针、卸载与资料保留。两种 Mac 架构从原始源码标签分别组包、临时签名，在各自 runner 验收应用启动、终端与工作区，分发文件名带 `-manual.dmg`，应用内自动更新关闭。
+
+补发选定的全部附件及 `INSTALLER-SHA256SUMS.txt`，保留同名已发布制品作为重试依据。发布器只更新对应版本页，原有 `SHA256SUMS.txt` 和稳定频道独立。运行方式见[安装包工作流](../../../../.github/workflows/desktop-installers.yml)。

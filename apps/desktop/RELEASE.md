@@ -2,7 +2,9 @@
 
 维护发布流程时，标签、三端验收、稳定频道和故障恢复遵循[桌面发版规范](../../.trellis/spec/flower-desktop/frontend/public-release.md)。
 
-Windows x64 用户下载版本页的 `*-win32-x64-portable.zip`，完整解压到可写目录，双击顶层的 `Flower Desktop.exe`。0.1.5 仅发布 Windows x64。启用 Mac 发行时，Apple Silicon 下载 `*-darwin-arm64.dmg`，Intel Mac 下载 `*-darwin-x64.dmg`，打开后把 Flower Desktop 拖进「应用程序」。关闭磁盘映像后从「应用程序」启动，保留同一系统用户的资料目录。[GitHub Releases](https://github.com/SilentFlower/flower/releases)
+Windows x64 首次安装可下载 `*-win32-x64-setup.exe`，双击后安装到当前用户的程序目录，并从开始菜单打开 Flower Desktop。便携用户可下载 `*-win32-x64-portable.zip`，完整解压后双击顶层的 `Flower Desktop.exe`。两种安装方式使用同一个 Windows 稳定更新频道。
+
+macOS 免费分发版提供 `*-darwin-arm64-manual.dmg`（Apple Silicon）和 `*-darwin-x64-manual.dmg`（Intel）。打开 DMG 后把应用拖入“应用程序”。此版使用临时签名，首次打开可能提示无法验证开发者；确认下载来源后可按 Apple 的单应用打开流程操作。升级时退出旧版，用同架构新版 DMG 替换应用。启用 Developer ID 正式签名渠道的版本另提供原生自动更新。[GitHub Releases](https://github.com/SilentFlower/flower/releases) · [Apple 打开说明](https://support.apple.com/zh-cn/102445)
 
 ## 构建预演
 
@@ -36,5 +38,9 @@ Windows 首装 ZIP 含顶层启动器、版本指针及运行目录。稳定频�
 Mac 的 DMG 用于首次安装。应用内由 Electron 的原生 Squirrel 更新器按架构读取 `flower-desktop-mac-arm64.json` 或 `flower-desktop-mac-x64.json`，下载同一架构且签名匹配的应用 ZIP。正式标签构建会校验签名、公证票据，另以隔离身份演练两版签名应用的真实升级。原生更新就绪后，可立即重启或在正常退出时应用。
 
 本轮平台制品以及汇总核验全部成功后才进入发布作业。版本化更新包先上传并核对远端摘要，再逐个替换本轮平台的频道清单。Windows 单独发布时只推进 `flower-desktop-update.json`。若中途出错，在同一标签上重新运行失败作业即可。已发布版本作为重试时的制品来源；更高版本已经到达稳定频道后，较旧版本的发布会被拒绝。稳定 Release 的清单需要可编辑，仓库开启强制不可变 Release 前需先迁移固定频道地址。
+
+## 补发首装包
+
+版本页公开后，安装包工作流会从该版本的便携 ZIP 制作 Windows EXE，从原始源码标签构建两种免费 Mac DMG。已开启正式 Mac 更新的版本只补 Windows EXE。对历史版本可推送 `flower-desktop-installers-vX.Y.Z` 补发，首装包摘要另列于 `INSTALLER-SHA256SUMS.txt`。现有版本标签及更新清单继续使用原有内容。
 
 npm 库继续使用仓根的 Changesets 流程。桌面应用的版本由标签传给打包程序。
